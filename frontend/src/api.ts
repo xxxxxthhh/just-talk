@@ -1,6 +1,7 @@
 import type {
   Health,
   PassageIssue,
+  PhonemeStat,
   PracticeSession,
   ScoreResponse,
   SpeechResponse,
@@ -59,6 +60,13 @@ async function uploadRecording(
       body
     })
   );
+}
+
+export async function fetchPhonemeStats(minAttempts?: number): Promise<PhonemeStat[]> {
+  const url = minAttempts !== undefined
+    ? `/api/phoneme-stats?min_attempts=${minAttempts}`
+    : "/api/phoneme-stats";
+  return parseResponse<PhonemeStat[]>(await fetch(url));
 }
 
 export async function listWords(): Promise<VocabularyItem[]> {

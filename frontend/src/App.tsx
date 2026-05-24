@@ -8,11 +8,13 @@ import {
   History,
   Loader2,
   Mic,
+  Moon,
   Play,
   Plus,
   RefreshCw,
   Sparkles,
   Square,
+  Sun,
   Trash2,
   UploadCloud,
   Volume2
@@ -26,6 +28,7 @@ import {
   checkPassage,
   createWord,
   deleteWord,
+  fetchPhonemeStats,
   getSession,
   listSessions,
   listWords,
@@ -37,6 +40,7 @@ import { formatDuration, scoreTone, topAlternative, weakWordsFromResult } from "
 import type {
   Health,
   PassageIssue,
+  PhonemeStat,
   PracticeSession,
   ScoreMap,
   ScoreResult,
@@ -50,6 +54,7 @@ const DEFAULT_PASSAGE =
 type RecorderState = "idle" | "recording" | "recorded";
 type WordBankTab = "active" | "graduated";
 type PracticeMode = "short" | "long";
+type AppView = "practice" | "insights";
 
 function scoreValue(score: number | null | undefined): string {
   return score === null || score === undefined ? "--" : Math.round(score).toString();
@@ -59,7 +64,42 @@ function normalizedWord(word: string): string {
   return word.trim().toLocaleLowerCase();
 }
 
+function safeGetLocalStorage(key: string): string | null {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      return window.localStorage.getItem(key);
+    }
+  } catch (e) {
+    // Ignore security or accessibility errors in JSDOM sandbox
+  }
+  return null;
+}
+
+function safeSetLocalStorage(key: string, value: string): void {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.setItem(key, value);
+    }
+  } catch (e) {
+    // Ignore security or accessibility errors in JSDOM sandbox
+  }
+}
+
 function App() {
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const saved = safeGetLocalStorage("theme");
+    if (saved === "light" || saved === "dark") return saved;
+    if (typeof window !== "undefined" && window.matchMedia) {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    return "light";
+  });
+
+  useEffect(() => {
+    document.body.setAttribute("data-theme", theme);
+    safeSetLocalStorage("theme", theme);
+  }, [theme]);
+
   const [health, setHealth] = useState<Health | null>(null);
   const [sessions, setSessions] = useState<PracticeSession[]>([]);
   const [vocabulary, setVocabulary] = useState<VocabularyItem[]>([]);
@@ -72,6 +112,45 @@ function App() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    setIsAudioPlaying(false);
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
+  }, [audioUrl]);
+
+  function togglePlayAudio() {
+    if (!audioPlayerRef.current) return;
+    if (isAudioPlaying) {
+      audioPlayerRef.current.pause();
+    } else {
+      audioPlayerRef.current.play().catch(() => {});
+    }
+  }
+
+  function handleAudioScrub(val: number) {
+    if (!audioPlayerRef.current) return;
+    audioPlayerRef.current.currentTime = val;
+    setAudioCurrentTime(val);
+  }
+
+  function formatAudioTime(secs: number) {
+    if (isNaN(secs) || !isFinite(secs)) return "0:00";
+    const minutes = Math.floor(secs / 60);
+    const seconds = Math.floor(secs % 60);
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  }
+  const [appView, setAppView] = useState<AppView>("practice");
+  const [phonemeStats, setPhonemeStats] = useState<PhonemeStat[]>([]);
+  const [phonemeStatsLoading, setPhonemeStatsLoading] = useState(false);
+  const [phonemeStatsError, setPhonemeStatsError] = useState("");
+  const [expandedPhoneme, setExpandedPhoneme] = useState<string | null>(null);
+
   const [newWord, setNewWord] = useState("");
   const [wordBankTab, setWordBankTab] = useState<WordBankTab>("active");
   const [practiceMode, setPracticeMode] = useState<PracticeMode>("short");
@@ -424,6 +503,34 @@ function App() {
     setStatus("Word drill ready");
   }
 
+  async function loadPhonemeStats() {
+    setPhonemeStatsLoading(true);
+    setPhonemeStatsError("");
+    try {
+      setPhonemeStats(await fetchPhonemeStats());
+    } catch (err) {
+      setPhonemeStatsError(err instanceof Error ? err.message : "Could not load phoneme stats.");
+    } finally {
+      setPhonemeStatsLoading(false);
+    }
+  }
+
+  function startDrillFromInsights(word: string) {
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setPassage(word);
+    setPracticeMode("short");
+    setResult(null);
+    setCurrentSessionId("");
+    setIssues([]);
+    setSelectedWordIndex(0);
+    setAudioBlob(null);
+    setAudioUrl(null);
+    setRecorderState("idle");
+    setElapsedMs(0);
+    setStatus(`Drill ready: ${word}`);
+    setAppView("practice");
+  }
+
   function selectWeakWord(word: WordResult) {
     if (!result) {
       return;
@@ -446,8 +553,35 @@ function App() {
             <p>Pronunciation practice</p>
           </div>
         </div>
+        <nav className="view-switch" aria-label="App view">
+          <button
+            type="button"
+            className={`view-tab ${appView === "practice" ? "selected" : ""}`}
+            aria-pressed={appView === "practice"}
+            onClick={() => setAppView("practice")}
+          >
+            <Mic size={15} />
+            <span>Practice</span>
+          </button>
+          <button
+            type="button"
+            className={`view-tab ${appView === "insights" ? "selected" : ""}`}
+            aria-pressed={appView === "insights"}
+            onClick={() => { setAppView("insights"); void loadPhonemeStats(); }}
+          >
+            <Sparkles size={15} />
+            <span>Phoneme Insights</span>
+          </button>
+        </nav>
         <div className="topbar-actions">
           <StatusPill health={health} />
+          <button
+            className="icon-button"
+            onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+            title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+          >
+            {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
+          </button>
           <button className="icon-button" onClick={refreshServerState} title="Refresh">
             <RefreshCw size={18} />
           </button>
@@ -462,7 +596,18 @@ function App() {
       ) : null}
 
       <section className="workspace">
-        <aside className="history-panel side-panel">
+        {appView === "insights" ? (
+          <InsightsPanel
+            stats={phonemeStats}
+            loading={phonemeStatsLoading}
+            error={phonemeStatsError}
+            expandedPhoneme={expandedPhoneme}
+            setExpandedPhoneme={setExpandedPhoneme}
+            onDrill={startDrillFromInsights}
+            onRefresh={() => void loadPhonemeStats()}
+          />
+        ) : null}
+        <aside className="history-panel side-panel" hidden={appView === "insights"}>
           <section className="sidebar-section">
             <div className="panel-heading">
               <History size={18} />
@@ -535,7 +680,7 @@ function App() {
                   <div className="bank-row" key={item.id}>
                     <button
                       className={`bank-word ${
-                        item.status === "graduated" ? "graduated-word" : "active-word"
+                        item.status === "graduated" ? "graduated-word" : `active-word ${scoreTone(item.latest_score)}`
                       }`}
                       onClick={() => practiceVocabularyWord(item)}
                     >
@@ -565,7 +710,7 @@ function App() {
           </section>
         </aside>
 
-        <section className="practice-panel">
+        <section className="practice-panel" hidden={appView === "insights"}>
           <div className="mode-switch" aria-label="Practice mode">
             <button
               type="button"
@@ -617,25 +762,62 @@ function App() {
                 )}
                 Play
               </button>
-              <button
-                className="secondary-button"
-                onClick={runPassageCheck}
-                disabled={!health?.passage_check_configured || isChecking}
-              >
-                {isChecking ? <Loader2 className="spin" size={17} /> : <BookOpenCheck size={17} />}
-                Check
-              </button>
+              {result?.words?.length ? (
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    setResult(null);
+                    setCurrentSessionId("");
+                    setIssues([]);
+                  }}
+                  title="Edit Passage"
+                >
+                  ✏️ Edit
+                </button>
+              ) : (
+                <button
+                  className="secondary-button"
+                  onClick={runPassageCheck}
+                  disabled={!health?.passage_check_configured || isChecking}
+                >
+                  {isChecking ? <Loader2 className="spin" size={17} /> : <BookOpenCheck size={17} />}
+                  Check
+                </button>
+              )}
             </div>
           </div>
 
           <textarea
             value={passage}
             onChange={(event) => setPassage(event.target.value)}
-            className="passage-input"
+            className={`passage-input ${result?.words?.length ? "hidden-declutter" : ""}`}
             spellCheck
           />
 
-          {issues.length > 0 ? (
+          {result?.words?.length ? (
+            <div className="scored-passage-container">
+              <div className="scored-passage-box">
+                {result.words.map((word, index) => (
+                  <button
+                    type="button"
+                    key={`${word.word}-${index}`}
+                    className={`scored-word-token ${word.bucket} ${
+                      index === selectedWordIndex ? "selected" : ""
+                    }`}
+                    onClick={() => setSelectedWordIndex(index)}
+                  >
+                    <span>{word.word} </span>
+                    <strong>{scoreValue(word.accuracy)}</strong>
+                  </button>
+                ))}
+              </div>
+              <p className="muted" style={{ marginTop: "4px", fontSize: "11.5px" }}>
+                💡 Tip: Click any colored word token above to inspect its detailed sound/phoneme analysis.
+              </p>
+            </div>
+          ) : null}
+
+          {!result?.words?.length && issues.length > 0 ? (
             <div className="issues">
               {issues.map((issue, index) => (
                 <div className="issue" key={`${issue.span}-${index}`}>
@@ -669,7 +851,7 @@ function App() {
 
             <div className="record-actions">
               {recorderState === "recording" ? (
-                <button className="danger-button" onClick={stopRecording}>
+                <button className="danger-button recording-pulse" onClick={stopRecording}>
                   <Square size={18} />
                   Stop
                 </button>
@@ -693,15 +875,49 @@ function App() {
               {status ? <span className="inline-status">{status}</span> : null}
             </div>
 
-            {audioUrl ? <audio className="audio-player" controls src={audioUrl} /> : null}
+            {audioUrl ? (
+              <div className="custom-audio-player">
+                <button
+                  type="button"
+                  className="audio-play-button"
+                  onClick={togglePlayAudio}
+                  title={isAudioPlaying ? "Pause recording" : "Play recording"}
+                >
+                  {isAudioPlaying ? <Square size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" />}
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={audioDuration || 1}
+                  step={0.05}
+                  value={audioCurrentTime}
+                  onChange={(e) => handleAudioScrub(parseFloat(e.target.value))}
+                  className="audio-slider"
+                  aria-label="Audio progress slider"
+                />
+                <span className="audio-time-label">
+                  {formatAudioTime(audioCurrentTime)} / {formatAudioTime(audioDuration)}
+                </span>
+                <audio
+                  ref={audioPlayerRef}
+                  src={audioUrl}
+                  style={{ display: "none" }}
+                  onPlay={() => setIsAudioPlaying(true)}
+                  onPause={() => setIsAudioPlaying(false)}
+                  onTimeUpdate={(e) => setAudioCurrentTime(e.currentTarget.currentTime)}
+                  onDurationChange={(e) => setAudioDuration(e.currentTarget.duration || 0)}
+                  onEnded={() => setIsAudioPlaying(false)}
+                />
+              </div>
+            ) : null}
           </div>
         </section>
 
-        <section className="results-panel">
+        <section className="results-panel" hidden={appView === "insights"}>
           <div className="panel-heading split">
             <div>
               <h2>Score</h2>
-              <p className="result-transcript">
+              <p className="result-transcript hidden-declutter">
                 {result?.transcript || "Waiting for recording"}
               </p>
             </div>
@@ -779,27 +995,14 @@ function App() {
             </section>
           ) : null}
 
-          <div className="words">
-            {result?.words.length ? (
-              result.words.map((word, index) => (
-                <button
-                  className={`word-chip ${word.bucket} ${
-                    index === selectedWordIndex ? "selected" : ""
-                  }`}
-                  key={`${word.word}-${index}`}
-                  onClick={() => setSelectedWordIndex(index)}
-                >
-                  <span>{word.word}</span>
-                  <strong>{scoreValue(word.accuracy)}</strong>
-                </button>
-              ))
-            ) : (
+          {!result?.words.length ? (
+            <div className="words">
               <div className="empty-state">
                 <Play size={22} />
                 <p>Record a passage to see word and phoneme feedback.</p>
               </div>
-            )}
-          </div>
+            </div>
+          ) : null}
 
           {selectedWord ? (
             <PhonemeInspector
@@ -811,6 +1014,103 @@ function App() {
         </section>
       </section>
     </main>
+  );
+}
+
+function InsightsPanel({
+  stats,
+  loading,
+  error,
+  expandedPhoneme,
+  setExpandedPhoneme,
+  onDrill,
+  onRefresh,
+}: {
+  stats: PhonemeStat[];
+  loading: boolean;
+  error: string;
+  expandedPhoneme: string | null;
+  setExpandedPhoneme: (p: string | null) => void;
+  onDrill: (word: string) => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <section className="insights-panel">
+      <div className="panel-heading split">
+        <div>
+          <h2>Phoneme Insights</h2>
+          <p className="muted">Weakest sounds across all sessions</p>
+        </div>
+        <button className="icon-button" onClick={onRefresh} title="Refresh">
+          <RefreshCw size={18} />
+        </button>
+      </div>
+
+      {error ? (
+        <div className="banner" role="alert">
+          <AlertCircle size={18} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {loading ? (
+        <div className="empty-state">
+          <Loader2 className="spin" size={22} />
+          <p>Loading…</p>
+        </div>
+      ) : stats.length === 0 ? (
+        <div className="empty-state">
+          <Sparkles size={22} />
+          <p>Practice a few passages to start seeing phoneme trends. We need at least 3 attempts per sound.</p>
+        </div>
+      ) : (
+        <ol className="phoneme-stat-list">
+          {stats.map((stat) => {
+            const isOpen = expandedPhoneme === stat.phoneme;
+            return (
+              <li key={stat.phoneme} className={`phoneme-stat-row ${stat.bucket}`}>
+                <button
+                  type="button"
+                  className="phoneme-stat-header"
+                  aria-expanded={isOpen}
+                  onClick={() => setExpandedPhoneme(isOpen ? null : stat.phoneme)}
+                >
+                  <span className={`phoneme-symbol ${stat.bucket}`}>{stat.phoneme}</span>
+                  <div className="phoneme-bar-wrap">
+                    <div
+                      className="phoneme-bar"
+                      style={{ width: `${Math.max(stat.average_accuracy, 4)}%` }}
+                    />
+                  </div>
+                  <strong>{Math.round(stat.average_accuracy)}</strong>
+                  <small>{stat.attempts} tries · {stat.needs_work_count} weak</small>
+                  <ChevronRight size={18} className={isOpen ? "chevron-open" : "chevron-closed"} />
+                </button>
+                {isOpen ? (
+                  <ul className="phoneme-examples">
+                    {stat.example_words.map((ex) => (
+                      <li key={`${stat.phoneme}-${ex.word}-${ex.session_id}`}>
+                        <button
+                          type="button"
+                          className={`phoneme-example ${scoreTone(ex.accuracy)}`}
+                          onClick={() => onDrill(ex.word)}
+                          title={`Drill "${ex.word}"`}
+                        >
+                          <strong>{ex.word}</strong>
+                          <span>{Math.round(ex.accuracy)}</span>
+                          <em>{new Date(ex.created_at).toLocaleDateString()}</em>
+                          <Mic size={14} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
   );
 }
 

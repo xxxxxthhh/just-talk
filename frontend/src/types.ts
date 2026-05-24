@@ -94,3 +94,23 @@ export type SpeechResponse = {
   audio_base64: string;
   content_type: string;
 };
+
+export type PhonemeStatExample = {
+  word: string;
+  accuracy: number;
+  session_id: string;
+  reference_text: string;
+  created_at: string;
+};
+
+export type PhonemeStat = {
+  phoneme: string;
+  average_accuracy: number;
+  attempts: number;
+  needs_work_count: number;
+  watch_count: number;
+  good_count: number;
+  bucket: string;
+  last_seen_at: string;
+  example_words: PhonemeStatExample[];
+};
