@@ -509,6 +509,7 @@ function App() {
     try {
       setPhonemeStats(await fetchPhonemeStats());
     } catch (err) {
+      setPhonemeStats([]);
       setPhonemeStatsError(err instanceof Error ? err.message : "Could not load phoneme stats.");
     } finally {
       setPhonemeStatsLoading(false);
@@ -567,6 +568,8 @@ function App() {
             type="button"
             className={`view-tab ${appView === "insights" ? "selected" : ""}`}
             aria-pressed={appView === "insights"}
+            disabled={recorderState === "recording"}
+            title={recorderState === "recording" ? "Stop recording before switching views" : undefined}
             onClick={() => { setAppView("insights"); void loadPhonemeStats(); }}
           >
             <Sparkles size={15} />

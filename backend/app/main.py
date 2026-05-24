@@ -196,6 +196,12 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.get("/api/phoneme-stats")
+    def list_phoneme_stats(min_attempts: int | None = None) -> list[dict[str, Any]]:
+        if min_attempts is None:
+            return active_store.list_phoneme_stats()
+        return active_store.list_phoneme_stats(min_attempts=max(min_attempts, 1))
+
     @app.post("/api/words")
     def create_word(request: WordCreateRequest) -> dict[str, Any]:
         try:

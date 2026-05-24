@@ -331,5 +331,71 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(scorer.continuous_reference_text, "Quiet streets. We kept walking.")
 
 
+class PhonemeStatsApiTests(unittest.TestCase):
+    def test_phoneme_stats_endpoint_returns_aggregated_and_sorted_data(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        def make_phoneme(symbol, accuracy):
+            return {"phoneme": symbol, "accuracy": accuracy, "bucket": "good", "offset_ms": 0, "duration_ms": 100, "n_best": []}
+
+        def make_word(word_text, phonemes):
+            return {"word": word_text, "accuracy": 70.0, "bucket": "watch", "error_type": "None", "phonemes": phonemes}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+            store.initialize()
+            # "th" at ~40 avg, "r" at ~75 avg — 3+ each
+            for _ in range(3):
+                store.create_session(
+                    reference_text="think",
+                    audio_duration_ms=1000,
+                    normalized_result={
+                        "scores": {},
+                        "words": [make_word("think", [make_phoneme("th", 40.0)])],
+                        "raw": {},
+                    },
+                )
+                store.create_session(
+                    reference_text="right",
+                    audio_duration_ms=1000,
+                    normalized_result={
+                        "scores": {},
+                        "words": [make_word("right", [make_phoneme("r", 75.0)])],
+                        "raw": {},
+                    },
+                )
+
+            app = create_app(
+                settings=Settings(database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}"),
+                store=store,
+            )
+            client = TestClient(app)
+
+            response_default = client.get("/api/phoneme-stats")
+            response_filter = client.get("/api/phoneme-stats?min_attempts=10")
+
+        self.assertEqual(response_default.status_code, 200)
+        data = response_default.json()
+        self.assertIsInstance(data, list)
+        # Sorted ascending by average_accuracy — "th" (40) before "r" (75)
+        phonemes = [item["phoneme"] for item in data]
+        self.assertIn("th", phonemes)
+        self.assertIn("r", phonemes)
+        self.assertLess(phonemes.index("th"), phonemes.index("r"))
+        for item in data:
+            self.assertIn("phoneme", item)
+            self.assertIn("average_accuracy", item)
+            self.assertIn("attempts", item)
+            self.assertIn("bucket", item)
+            self.assertIn("example_words", item)
+
+        # min_attempts=10 should return empty (only 3 of each)
+        self.assertEqual(response_filter.json(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1599,6 +1599,11 @@ body[data-theme="dark"] .mode-option.selected {
   box-shadow: var(--shadow-sm);
 }
 
+.view-tab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ── Phoneme Insights panel ─────────────────────────────────────────────── */
 .insights-panel {
   display: flex;

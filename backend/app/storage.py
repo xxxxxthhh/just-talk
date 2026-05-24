@@ -5,8 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .scoring import score_bucket
+
 
 VOCABULARY_STATUSES = {"active", "graduated"}
+PHONEME_STAT_MIN_ATTEMPTS = 3
+PHONEME_STAT_MAX_EXAMPLES = 5
 
 
 class SessionStore:
@@ -320,6 +324,93 @@ class SessionStore:
             )
             added.append(item)
         return added
+
+    def list_phoneme_stats(
+        self,
+        *,
+        min_attempts: int = PHONEME_STAT_MIN_ATTEMPTS,
+        max_examples_per_phoneme: int = PHONEME_STAT_MAX_EXAMPLES,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, created_at, reference_text, words_json
+                FROM practice_sessions
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
+
+        aggregates: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            session_id = row["id"]
+            created_at = row["created_at"]
+            reference_text = row["reference_text"]
+            words = json.loads(row["words_json"])
+            for word in words:
+                word_text = str(word.get("word", "")).strip()
+                for phoneme in word.get("phonemes", []) or []:
+                    symbol = str(phoneme.get("phoneme", "")).strip()
+                    accuracy = phoneme.get("accuracy")
+                    if not symbol or accuracy is None:
+                        continue
+                    score = float(accuracy)
+                    bucket = score_bucket(score)
+                    if symbol not in aggregates:
+                        aggregates[symbol] = {
+                            "phoneme": symbol,
+                            "score_sum": 0.0,
+                            "attempts": 0,
+                            "needs_work_count": 0,
+                            "watch_count": 0,
+                            "good_count": 0,
+                            "last_seen_at": created_at,
+                            "_examples_by_word": {},
+                        }
+                    entry = aggregates[symbol]
+                    entry["score_sum"] += score
+                    entry["attempts"] += 1
+                    if bucket == "good":
+                        entry["good_count"] += 1
+                    elif bucket == "watch":
+                        entry["watch_count"] += 1
+                    else:
+                        entry["needs_work_count"] += 1
+                    if created_at > entry["last_seen_at"]:
+                        entry["last_seen_at"] = created_at
+                    if word_text:
+                        word_key = word_text.casefold()
+                        existing_example = entry["_examples_by_word"].get(word_key)
+                        if existing_example is None or score < existing_example["accuracy"]:
+                            entry["_examples_by_word"][word_key] = {
+                                "word": word_text,
+                                "accuracy": score,
+                                "session_id": session_id,
+                                "reference_text": reference_text,
+                                "created_at": created_at,
+                            }
+
+        results: list[dict[str, Any]] = []
+        for entry in aggregates.values():
+            if entry["attempts"] < min_attempts:
+                continue
+            average = round(entry["score_sum"] / entry["attempts"], 2)
+            examples = sorted(
+                entry["_examples_by_word"].values(),
+                key=lambda x: (x["accuracy"], x["word"].casefold()),
+            )[:max_examples_per_phoneme]
+            results.append({
+                "phoneme": entry["phoneme"],
+                "average_accuracy": average,
+                "attempts": entry["attempts"],
+                "needs_work_count": entry["needs_work_count"],
+                "watch_count": entry["watch_count"],
+                "good_count": entry["good_count"],
+                "bucket": score_bucket(average),
+                "last_seen_at": entry["last_seen_at"],
+                "example_words": examples,
+            })
+        results.sort(key=lambda x: (x["average_accuracy"], x["phoneme"]))
+        return results
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path)

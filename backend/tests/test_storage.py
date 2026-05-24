@@ -141,5 +141,145 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(graduated_words, [])
 
 
+class PhonemeStatsTests(unittest.TestCase):
+    def _make_phoneme(self, symbol, accuracy):
+        return {"phoneme": symbol, "accuracy": accuracy, "bucket": "good", "offset_ms": 0, "duration_ms": 100, "n_best": []}
+
+    def _make_session(self, store, words):
+        return store.create_session(
+            reference_text="test",
+            audio_duration_ms=1000,
+            normalized_result={"scores": {}, "words": words, "raw": {}},
+        )
+
+    def _make_word(self, word_text, phonemes):
+        return {"word": word_text, "accuracy": 80.0, "bucket": "good", "error_type": "None", "phonemes": phonemes}
+
+    def test_phoneme_stats_empty_database_returns_empty_list(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'db.db'}")
+            store.initialize()
+            result = store.list_phoneme_stats()
+        self.assertEqual(result, [])
+
+    def test_phoneme_stats_aggregates_single_session_phonemes(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'db.db'}")
+            store.initialize()
+            self._make_session(store, [
+                self._make_word("think", [
+                    self._make_phoneme("th", 30.0),
+                    self._make_phoneme("th", 40.0),
+                    self._make_phoneme("th", 50.0),
+                ]),
+            ])
+            result = store.list_phoneme_stats(min_attempts=3)
+
+        self.assertEqual(len(result), 1)
+        stat = result[0]
+        self.assertEqual(stat["phoneme"], "th")
+        self.assertAlmostEqual(stat["average_accuracy"], 40.0)
+        self.assertEqual(stat["attempts"], 3)
+        self.assertEqual(stat["needs_work_count"], 3)
+        self.assertEqual(stat["watch_count"], 0)
+        self.assertEqual(stat["good_count"], 0)
+        self.assertEqual(stat["bucket"], "needs-work")
+        self.assertEqual(len(stat["example_words"]), 1)
+        self.assertEqual(stat["example_words"][0]["word"], "think")
+        self.assertAlmostEqual(stat["example_words"][0]["accuracy"], 30.0)
+
+    def test_phoneme_stats_aggregates_across_multiple_sessions(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'db.db'}")
+            store.initialize()
+            self._make_session(store, [self._make_word("think", [self._make_phoneme("th", 40.0)])])
+            self._make_session(store, [self._make_word("through", [self._make_phoneme("th", 50.0)])])
+            self._make_session(store, [self._make_word("there", [self._make_phoneme("th", 60.0)])])
+            result = store.list_phoneme_stats(min_attempts=3)
+
+        self.assertEqual(len(result), 1)
+        stat = result[0]
+        self.assertEqual(stat["attempts"], 3)
+        self.assertAlmostEqual(stat["average_accuracy"], 50.0)
+        # last_seen_at should be from the latest session
+        self.assertIsNotNone(stat["last_seen_at"])
+
+    def test_phoneme_stats_min_attempts_filter_excludes_under_threshold(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'db.db'}")
+            store.initialize()
+            # "k" appears 2 times, "p" appears 4 times
+            self._make_session(store, [
+                self._make_word("kick", [self._make_phoneme("k", 70.0), self._make_phoneme("k", 72.0)]),
+                self._make_word("pop", [
+                    self._make_phoneme("p", 65.0),
+                    self._make_phoneme("p", 67.0),
+                    self._make_phoneme("p", 69.0),
+                    self._make_phoneme("p", 71.0),
+                ]),
+            ])
+
+            default_result = store.list_phoneme_stats()  # default min=3
+            low_result = store.list_phoneme_stats(min_attempts=2)
+
+        phonemes_default = {r["phoneme"] for r in default_result}
+        phonemes_low = {r["phoneme"] for r in low_result}
+        self.assertNotIn("k", phonemes_default)
+        self.assertIn("p", phonemes_default)
+        self.assertIn("k", phonemes_low)
+        self.assertIn("p", phonemes_low)
+
+    def test_phoneme_stats_example_words_dedupe_by_word_keep_worst(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'db.db'}")
+            store.initialize()
+            # "think" appears twice with different scores for phoneme "th"
+            self._make_session(store, [self._make_word("think", [self._make_phoneme("th", 80.0)])])
+            self._make_session(store, [self._make_word("think", [self._make_phoneme("th", 30.0)])])
+            self._make_session(store, [self._make_word("through", [self._make_phoneme("th", 55.0)])])
+            result = store.list_phoneme_stats(min_attempts=3)
+
+        self.assertEqual(len(result), 1)
+        stat = result[0]
+        # Should dedupe "think" — keep only the worst occurrence (30.0)
+        words = {ex["word"].casefold(): ex["accuracy"] for ex in stat["example_words"]}
+        self.assertIn("think", words)
+        self.assertAlmostEqual(words["think"], 30.0)
+        self.assertIn("through", words)
+        self.assertEqual(len(stat["example_words"]), 2)
+
+    def test_phoneme_stats_ignores_none_accuracy_and_empty_phoneme(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'db.db'}")
+            store.initialize()
+            phonemes_with_noise = [
+                {"phoneme": "th", "accuracy": None, "bucket": "unknown", "offset_ms": 0, "duration_ms": 0, "n_best": []},
+                {"phoneme": "", "accuracy": 50.0, "bucket": "watch", "offset_ms": 0, "duration_ms": 0, "n_best": []},
+                self._make_phoneme("th", 45.0),
+                self._make_phoneme("th", 50.0),
+                self._make_phoneme("th", 55.0),
+            ]
+            self._make_session(store, [self._make_word("think", phonemes_with_noise)])
+            result = store.list_phoneme_stats(min_attempts=3)
+
+        # Only 3 valid "th" phonemes should be counted (None and "" filtered)
+        self.assertEqual(len(result), 1)
+        stat = result[0]
+        self.assertEqual(stat["attempts"], 3)
+        self.assertAlmostEqual(stat["average_accuracy"], 50.0)
+
+
 if __name__ == "__main__":
     unittest.main()
