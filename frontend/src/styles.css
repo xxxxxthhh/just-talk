@@ -474,7 +474,7 @@ h2 {
 
 .meter {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
 }
@@ -490,8 +490,8 @@ h2 {
 }
 
 .wave span {
-  width: 100%;
-  min-width: 4px;
+  flex: 1 1 0;
+  min-width: 2px;
   border-radius: 999px;
   background: linear-gradient(180deg, #65d6ad, #4a9fe8);
   opacity: 0.58;
@@ -504,9 +504,18 @@ h2 {
 
 .timer {
   gap: 8px;
-  min-width: 82px;
+  min-width: 112px;
+  justify-content: flex-end;
   color: #3b4650;
   font-weight: 750;
+}
+
+.result-transcript {
+  display: -webkit-box;
+  max-height: 5.8em;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
 }
 
 .record-actions {

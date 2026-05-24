@@ -660,7 +660,10 @@ function App() {
               </div>
               <div className="timer">
                 <Clock3 size={17} />
-                <span>{(elapsedMs / 1000).toFixed(1)}s</span>
+                <span>
+                  {(elapsedMs / 1000).toFixed(1)}s /{" "}
+                  {isLongMode ? longLimitSeconds : shortLimitSeconds}s
+                </span>
               </div>
             </div>
 
@@ -698,7 +701,9 @@ function App() {
           <div className="panel-heading split">
             <div>
               <h2>Score</h2>
-              <p>{result?.transcript || "Waiting for recording"}</p>
+              <p className="result-transcript">
+                {result?.transcript || "Waiting for recording"}
+              </p>
             </div>
             <Sparkles size={20} />
           </div>
