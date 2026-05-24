@@ -48,6 +48,7 @@ const DEFAULT_PASSAGE =
 
 type RecorderState = "idle" | "recording" | "recorded";
 type WordBankTab = "active" | "graduated";
+type PracticeMode = "short" | "long";
 
 function scoreValue(score: number | null | undefined): string {
   return score === null || score === undefined ? "--" : Math.round(score).toString();
@@ -72,6 +73,7 @@ function App() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [newWord, setNewWord] = useState("");
   const [wordBankTab, setWordBankTab] = useState<WordBankTab>("active");
+  const [practiceMode, setPracticeMode] = useState<PracticeMode>("short");
   const [status, setStatus] = useState("");
   const [isChecking, setIsChecking] = useState(false);
   const [isScoring, setIsScoring] = useState(false);
@@ -87,7 +89,9 @@ function App() {
   const speechUrlRef = useRef("");
 
   const selectedWord = result?.words[selectedWordIndex] ?? null;
-  const maxMs = (health?.max_audio_seconds ?? 30) * 1000;
+  const shortLimitSeconds = health?.max_audio_seconds ?? 30;
+  const maxMs = shortLimitSeconds * 1000;
+  const isLongMode = practiceMode === "long";
   const weakWords = useMemo(() => (result ? weakWordsFromResult(result) : []), [result]);
   const savedWords = useMemo(
     () => new Set(vocabulary.map((item) => normalizedWord(item.word))),
@@ -153,6 +157,10 @@ function App() {
   async function startRecording() {
     setError("");
     setStatus("");
+    if (isLongMode) {
+      setStatus("Long Passage scoring is coming next");
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
       setError("This browser cannot access the microphone.");
       return;
@@ -557,6 +565,39 @@ function App() {
         </aside>
 
         <section className="practice-panel">
+          <div className="mode-switch" aria-label="Practice mode">
+            <button
+              type="button"
+              className={`mode-option ${practiceMode === "short" ? "selected" : ""}`}
+              aria-pressed={practiceMode === "short"}
+              onClick={() => setPracticeMode("short")}
+              disabled={recorderState === "recording"}
+            >
+              <Clock3 size={17} />
+              <span>
+                <strong>Short Drill</strong>
+                <small>{shortLimitSeconds} seconds max</small>
+              </span>
+            </button>
+            <button
+              type="button"
+              className={`mode-option ${practiceMode === "long" ? "selected" : ""}`}
+              aria-pressed={practiceMode === "long"}
+              onClick={() => setPracticeMode("long")}
+              disabled={recorderState === "recording"}
+            >
+              <BookOpenCheck size={17} />
+              <span>
+                <strong>Long Passage</strong>
+                <small>continuous scoring next</small>
+              </span>
+            </button>
+          </div>
+          <p className="mode-note">
+            {isLongMode
+              ? "Long Passage scoring is coming next."
+              : `Short Drill is limited to ${shortLimitSeconds} seconds.`}
+          </p>
           <div className="panel-heading split">
             <div>
               <h2>Passage</h2>
@@ -629,14 +670,18 @@ function App() {
                   Stop
                 </button>
               ) : (
-                <button className="primary-button" onClick={startRecording}>
+                <button
+                  className="primary-button"
+                  onClick={startRecording}
+                  disabled={isLongMode}
+                >
                   <Mic size={18} />
                   Record
                 </button>
               )}
               <button
                 className="secondary-button"
-                disabled={!audioBlob || isScoring}
+                disabled={!audioBlob || isScoring || isLongMode}
                 onClick={submitRecording}
               >
                 {isScoring ? <Loader2 className="spin" size={18} /> : <UploadCloud size={18} />}

@@ -159,6 +159,26 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: /quiet.*73/i })).not.toBeInTheDocument();
   });
 
+  test("shows a practice mode switch with the short drill time limit", async () => {
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": []
+    });
+
+    render(<App />);
+
+    const shortDrill = await screen.findByRole("button", {
+      name: /Short Drill.*30 seconds max/i
+    });
+    expect(shortDrill).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.click(screen.getByRole("button", { name: /Long Passage/i }));
+
+    expect(screen.getByText(/Long Passage scoring is coming next/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Record$/ })).toBeDisabled();
+  });
+
   test("stops the previous pronunciation audio before playing another one", async () => {
     const audioInstances: { play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn>; currentTime: number }[] = [];
     vi.stubGlobal(
