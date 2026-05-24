@@ -1,0 +1,107 @@
+# Just Talk
+
+Just Talk is a local-first pronunciation coaching app. It records speech in the browser, scores pronunciation with Azure AI Speech, shows word and phoneme feedback, plays standard pronunciation with Azure Text-to-Speech, and keeps a local word bank for targeted practice.
+
+The app is designed for personal learning workflows: read a passage, inspect weak words, save them to the word bank, then drill one word at a time.
+
+## Features
+
+- Browser recording with a configurable duration limit.
+- Azure Pronunciation Assessment scoring for accuracy, fluency, completeness, prosody, and overall pronunciation.
+- Word-level and phoneme-level review, including likely heard alternatives when Azure returns them.
+- Standard pronunciation playback for passages and selected words.
+- Local history stored in SQLite.
+- Local word bank for weak words and manual vocabulary practice.
+- Optional passage quality check through an OpenAI-compatible LLM endpoint.
+
+## Tech Stack
+
+- Frontend: React, TypeScript, Vite, Vitest, Testing Library.
+- Backend: FastAPI, SQLite, Azure Cognitive Services Speech SDK.
+- Audio processing: browser `MediaRecorder` plus server-side ffmpeg conversion to 16 kHz mono WAV.
+
+## Run
+
+1. Install prerequisites:
+
+- Python 3.11
+- Node.js
+- ffmpeg
+
+2. Create a local environment file:
+
+```bash
+cp .env.example .env
+```
+
+3. Fill the Azure values in `.env`:
+
+```env
+AZURE_SPEECH_KEY=...
+AZURE_SPEECH_REGION=...
+```
+
+`AZURE_TTS_VOICE` is optional and defaults to `en-US-JennyNeural`.
+
+4. Start both services:
+
+```bash
+./scripts/dev.sh
+```
+
+5. Open http://127.0.0.1:5173.
+
+The app records in the browser, sends the audio to FastAPI, converts it to 16 kHz mono WAV with ffmpeg, scores it with Azure, saves local history in SQLite, and can play correct pronunciation through Azure Text-to-Speech.
+
+History rows restore full word and phoneme feedback. Low-scoring words can be saved into the local word bank, then clicked to practice one word at a time.
+
+## Optional Passage Check
+
+The passage check button stays disabled unless these are set in `.env`:
+
+```env
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=...
+LLM_MODEL=gpt-4o-mini
+```
+
+## Test
+
+```bash
+./scripts/test.sh
+```
+
+The test script runs backend unit tests, frontend unit/component tests, and a production frontend build.
+
+## Project Layout
+
+```text
+backend/             FastAPI app, Azure adapters, scoring normalization, SQLite storage
+backend/tests/       Backend unittest suite
+frontend/            React/Vite app
+frontend/src/        Frontend components, API client, types, and tests
+scripts/dev.sh       Starts FastAPI and Vite together
+scripts/test.sh      Runs backend tests, frontend tests, and frontend build
+docs/research/       Initial technical research and provider evaluation
+docs/design/         Product and architecture design notes
+docs/development/    Implementation planning notes
+```
+
+## Configuration
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `AZURE_SPEECH_KEY` | Yes | Azure AI Speech resource key. |
+| `AZURE_SPEECH_REGION` | Yes | Azure AI Speech resource region, such as `eastus`. |
+| `AZURE_TTS_VOICE` | No | Azure neural voice used for standard pronunciation playback. |
+| `DATABASE_URL` | No | SQLite database URL. Defaults to `sqlite:///./data/just_talk.db`. |
+| `MAX_AUDIO_SECONDS` | No | Recording duration limit for the current short-practice mode. |
+| `LLM_BASE_URL` | No | OpenAI-compatible endpoint for optional passage review. |
+| `LLM_API_KEY` | No | API key for optional passage review. |
+| `LLM_MODEL` | No | Model name for optional passage review. |
+
+## Notes
+
+- Keep recordings at or under `MAX_AUDIO_SECONDS` because v1 uses Azure's single-shot scripted assessment path with miscue enabled.
+- Do not put the Azure key in frontend code. The browser only talks to the local FastAPI backend.
+- `.env`, local SQLite data, virtual environments, dependencies, and build outputs are intentionally ignored by git.
