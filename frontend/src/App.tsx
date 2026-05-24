@@ -47,6 +47,7 @@ const DEFAULT_PASSAGE =
   "The weather changed quickly, but we kept walking through the quiet streets and talked about the plans we wanted to finish this week.";
 
 type RecorderState = "idle" | "recording" | "recorded";
+type WordBankTab = "active" | "graduated";
 
 function scoreValue(score: number | null | undefined): string {
   return score === null || score === undefined ? "--" : Math.round(score).toString();
@@ -70,6 +71,7 @@ function App() {
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [newWord, setNewWord] = useState("");
+  const [wordBankTab, setWordBankTab] = useState<WordBankTab>("active");
   const [status, setStatus] = useState("");
   const [isChecking, setIsChecking] = useState(false);
   const [isScoring, setIsScoring] = useState(false);
@@ -91,6 +93,17 @@ function App() {
     () => new Set(vocabulary.map((item) => normalizedWord(item.word))),
     [vocabulary]
   );
+  const requiredSuccesses = health?.vocabulary_graduation_streak ?? 2;
+  const activeVocabulary = useMemo(
+    () => vocabulary.filter((item) => item.status !== "graduated"),
+    [vocabulary]
+  );
+  const graduatedVocabulary = useMemo(
+    () => vocabulary.filter((item) => item.status === "graduated"),
+    [vocabulary]
+  );
+  const visibleVocabulary =
+    wordBankTab === "active" ? activeVocabulary : graduatedVocabulary;
 
   useEffect(() => {
     void refreshServerState();
@@ -330,6 +343,7 @@ function App() {
     try {
       await createWord(word);
       setNewWord("");
+      setWordBankTab("active");
       await refreshVocabulary();
       setStatus(`${word} added to word bank`);
     } catch (err) {
@@ -344,6 +358,7 @@ function App() {
     setError("");
     try {
       await createWord(word.word);
+      setWordBankTab("active");
       await refreshVocabulary();
       setStatus(`${word.word} saved`);
     } catch (err) {
@@ -365,6 +380,7 @@ function App() {
       } else {
         await Promise.all(weakWords.map((word) => createWord(word.word)));
       }
+      setWordBankTab("active");
       await refreshVocabulary();
       setStatus("Weak words saved");
     } catch (err) {
@@ -478,19 +494,53 @@ function App() {
                 {isSavingWords ? <Loader2 className="spin" size={17} /> : <Plus size={17} />}
               </button>
             </form>
+            <div className="word-tabs" aria-label="Word bank status">
+              <button
+                type="button"
+                className={`word-tab ${wordBankTab === "active" ? "selected" : ""}`}
+                aria-pressed={wordBankTab === "active"}
+                onClick={() => setWordBankTab("active")}
+              >
+                In Progress <span>{activeVocabulary.length}</span>
+              </button>
+              <button
+                type="button"
+                className={`word-tab ${wordBankTab === "graduated" ? "selected" : ""}`}
+                aria-pressed={wordBankTab === "graduated"}
+                onClick={() => setWordBankTab("graduated")}
+              >
+                Graduated <span>{graduatedVocabulary.length}</span>
+              </button>
+            </div>
             <div className="word-bank-list">
               {vocabulary.length === 0 ? (
                 <p className="muted">No saved words yet.</p>
+              ) : visibleVocabulary.length === 0 ? (
+                <p className="muted">
+                  {wordBankTab === "active"
+                    ? "No in-progress words."
+                    : "No graduated words yet."}
+                </p>
               ) : (
-                vocabulary.map((item) => (
+                visibleVocabulary.map((item) => (
                   <div className="bank-row" key={item.id}>
                     <button
-                      className="bank-word"
+                      className={`bank-word ${
+                        item.status === "graduated" ? "graduated-word" : "active-word"
+                      }`}
                       onClick={() => practiceVocabularyWord(item)}
                     >
                       <strong>{item.word}</strong>
                       <span>{scoreValue(item.latest_score)}</span>
-                      <small>{item.practice_count} reps</small>
+                      <small>
+                        {item.status === "graduated"
+                          ? "Graduated"
+                          : `${Math.min(
+                              item.consecutive_successes ?? 0,
+                              requiredSuccesses
+                            )}/${requiredSuccesses} streak`}{" "}
+                        · {item.practice_count} reps
+                      </small>
                     </button>
                     <button
                       className="icon-button small"

@@ -83,6 +83,61 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(words[0]["source"], "weak-word")
         self.assertEqual(words[0]["latest_score"], 73.0)
 
+    def test_graduates_word_after_consecutive_successful_practice_scores(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "sessions.db"
+            store = SessionStore(f"sqlite:///{database_path}")
+            store.initialize()
+            store.create_word("quiet")
+
+            first_practice = store.record_word_practice("quiet", latest_score=86.0)
+            second_practice = store.record_word_practice("quiet", latest_score=90.0)
+            active_words = store.list_words(status="active")
+            graduated_words = store.list_words(status="graduated")
+
+        self.assertEqual(first_practice["status"], "active")
+        self.assertEqual(first_practice["consecutive_successes"], 1)
+        self.assertEqual(second_practice["status"], "graduated")
+        self.assertEqual(second_practice["consecutive_successes"], 2)
+        self.assertIsNotNone(second_practice["graduated_at"])
+        self.assertEqual(active_words, [])
+        self.assertEqual(graduated_words[0]["word"], "quiet")
+
+    def test_low_scoring_session_word_reactivates_graduated_word(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "sessions.db"
+            store = SessionStore(f"sqlite:///{database_path}")
+            store.initialize()
+            store.create_word("Quiet")
+            store.record_word_practice("quiet", latest_score=90.0)
+            store.record_word_practice("quiet", latest_score=91.0)
+            session = store.create_session(
+                reference_text="Quiet streets.",
+                audio_duration_ms=1400,
+                normalized_result={
+                    "scores": {"pronunciation": 82.0},
+                    "words": [
+                        {"word": "Quiet", "accuracy": 73.0, "phonemes": []},
+                    ],
+                    "raw": {"ok": True},
+                },
+            )
+
+            added = store.create_words_from_session(session["id"], max_score=85.0)
+            active_words = store.list_words(status="active")
+            graduated_words = store.list_words(status="graduated")
+
+        self.assertEqual(added[0]["word"], "Quiet")
+        self.assertEqual(added[0]["status"], "active")
+        self.assertEqual(added[0]["consecutive_successes"], 0)
+        self.assertIsNone(added[0]["graduated_at"])
+        self.assertEqual(active_words[0]["word"], "Quiet")
+        self.assertEqual(graduated_words, [])
+
 
 if __name__ == "__main__":
     unittest.main()

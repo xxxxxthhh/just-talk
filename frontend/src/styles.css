@@ -163,7 +163,7 @@ h2 {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(180px, 230px) minmax(420px, 1fr) minmax(360px, 520px);
+  grid-template-columns: minmax(220px, 260px) minmax(420px, 1fr) minmax(360px, 520px);
   gap: 16px;
   max-width: 1440px;
   margin: 0 auto;
@@ -220,6 +220,9 @@ h2 {
 .history-list {
   display: grid;
   gap: 8px;
+  max-height: min(36vh, 440px);
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .history-row {
@@ -266,9 +269,61 @@ h2 {
   box-shadow: 0 0 0 3px rgba(39, 117, 201, 0.12);
 }
 
+.word-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 10px;
+  padding: 3px;
+  border: 1px solid #dfe4e9;
+  border-radius: 8px;
+  background: #f5f7f9;
+}
+
+.word-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #52606b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.word-tab.selected {
+  background: #ffffff;
+  color: #172026;
+  box-shadow: 0 1px 2px rgba(23, 32, 38, 0.08);
+}
+
+.word-tab span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #e1e7ed;
+  color: #29333d;
+  font-size: 11px;
+}
+
+.word-tab.selected span {
+  background: #172026;
+  color: #ffffff;
+}
+
 .word-bank-list {
   display: grid;
   gap: 8px;
+  max-height: min(36vh, 520px);
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .bank-row {
@@ -301,6 +356,14 @@ h2 {
 .bank-word span {
   color: #1f8a5b;
   font-weight: 800;
+}
+
+.bank-word.graduated-word {
+  background: #f6fbff;
+}
+
+.bank-word.graduated-word span {
+  color: #2775c9;
 }
 
 .bank-word small {

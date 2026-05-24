@@ -3,6 +3,8 @@ export type Health = {
   azure_configured: boolean;
   passage_check_configured: boolean;
   max_audio_seconds: number;
+  vocabulary_graduation_score: number;
+  vocabulary_graduation_streak: number;
 };
 
 export type ScoreMap = {
@@ -61,6 +63,8 @@ export type PassageIssue = {
   explanation: string;
 };
 
+export type VocabularyStatus = "active" | "graduated";
+
 export type VocabularyItem = {
   id: string;
   word: string;
@@ -69,6 +73,9 @@ export type VocabularyItem = {
   latest_score: number | null;
   practice_count: number;
   last_practiced_at: string | null;
+  status: VocabularyStatus;
+  consecutive_successes: number;
+  graduated_at: string | null;
   created_at: string;
   updated_at: string;
 };

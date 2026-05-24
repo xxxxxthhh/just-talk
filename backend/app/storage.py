@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Any
 
 
+VOCABULARY_STATUSES = {"active", "graduated"}
+
+
 class SessionStore:
     def __init__(self, database_url: str) -> None:
         if not database_url.startswith("sqlite:///"):
@@ -39,11 +42,15 @@ class SessionStore:
                     latest_score REAL,
                     practice_count INTEGER NOT NULL,
                     last_practiced_at TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    consecutive_successes INTEGER NOT NULL DEFAULT 0,
+                    graduated_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
                 """
             )
+            self._ensure_vocabulary_columns(connection)
 
     def create_session(
         self,
@@ -149,10 +156,13 @@ class SessionStore:
                     latest_score,
                     practice_count,
                     last_practiced_at,
+                    status,
+                    consecutive_successes,
+                    graduated_at,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     word_id,
@@ -161,6 +171,9 @@ class SessionStore:
                     source,
                     notes.strip(),
                     None,
+                    0,
+                    None,
+                    "active",
                     0,
                     None,
                     now,
@@ -172,17 +185,29 @@ class SessionStore:
             raise KeyError(display_word)
         return self._row_to_word(created)
 
-    def list_words(self) -> list[dict[str, Any]]:
+    def list_words(self, status: str | None = None) -> list[dict[str, Any]]:
+        if status is not None and status not in VOCABULARY_STATUSES:
+            raise ValueError("status must be active or graduated.")
+
+        where_clause = ""
+        parameters: tuple[str, ...] = ()
+        if status is not None:
+            where_clause = "WHERE status = ?"
+            parameters = (status,)
+
         with self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT *
                 FROM vocabulary_items
+                {where_clause}
                 ORDER BY
+                    CASE status WHEN 'active' THEN 0 ELSE 1 END,
                     CASE WHEN latest_score IS NULL THEN 1 ELSE 0 END,
                     latest_score ASC,
                     updated_at DESC
-                """
+                """,
+                parameters,
             ).fetchall()
         return [self._row_to_word(row) for row in rows]
 
@@ -203,6 +228,8 @@ class SessionStore:
         *,
         latest_score: float | None,
         increment: bool = True,
+        graduation_score: float = 85.0,
+        graduation_streak: int = 2,
     ) -> dict[str, Any]:
         display_word, normalized_word = self._normalize_word(word)
         with self._connect() as connection:
@@ -215,12 +242,34 @@ class SessionStore:
 
             now = datetime.now(timezone.utc).isoformat()
             next_count = int(existing["practice_count"]) + (1 if increment else 0)
+            next_status = existing["status"]
+            next_streak = int(existing["consecutive_successes"])
+            next_graduated_at = existing["graduated_at"]
+            if latest_score is not None:
+                if float(latest_score) > graduation_score:
+                    next_streak += 1 if increment else 0
+                    next_status = "graduated" if next_streak >= graduation_streak else "active"
+                    next_graduated_at = (
+                        next_graduated_at
+                        if next_status == "graduated" and next_graduated_at
+                        else now
+                        if next_status == "graduated"
+                        else None
+                    )
+                else:
+                    next_status = "active"
+                    next_streak = 0
+                    next_graduated_at = None
+
             connection.execute(
                 """
                 UPDATE vocabulary_items
                 SET latest_score = ?,
                     practice_count = ?,
                     last_practiced_at = ?,
+                    status = ?,
+                    consecutive_successes = ?,
+                    graduated_at = ?,
                     updated_at = ?
                 WHERE normalized_word = ?
                 """,
@@ -228,6 +277,9 @@ class SessionStore:
                     latest_score,
                     next_count,
                     now if increment else existing["last_practiced_at"],
+                    next_status,
+                    next_streak,
+                    next_graduated_at,
                     now,
                     normalized_word,
                 ),
@@ -269,6 +321,22 @@ class SessionStore:
         connection.row_factory = sqlite3.Row
         return connection
 
+    def _ensure_vocabulary_columns(self, connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(vocabulary_items)").fetchall()
+        }
+        if "status" not in columns:
+            connection.execute(
+                "ALTER TABLE vocabulary_items ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
+            )
+        if "consecutive_successes" not in columns:
+            connection.execute(
+                "ALTER TABLE vocabulary_items ADD COLUMN consecutive_successes INTEGER NOT NULL DEFAULT 0"
+            )
+        if "graduated_at" not in columns:
+            connection.execute("ALTER TABLE vocabulary_items ADD COLUMN graduated_at TEXT")
+
     def _find_word(
         self,
         connection: sqlite3.Connection,
@@ -298,6 +366,9 @@ class SessionStore:
             "latest_score": row["latest_score"],
             "practice_count": row["practice_count"],
             "last_practiced_at": row["last_practiced_at"],
+            "status": row["status"],
+            "consecutive_successes": row["consecutive_successes"],
+            "graduated_at": row["graduated_at"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }

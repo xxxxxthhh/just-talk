@@ -28,7 +28,9 @@ const health = {
   ok: true,
   azure_configured: true,
   passage_check_configured: false,
-  max_audio_seconds: 30
+  max_audio_seconds: 30,
+  vocabulary_graduation_score: 85,
+  vocabulary_graduation_streak: 2
 };
 
 describe("App", () => {
@@ -93,6 +95,9 @@ describe("App", () => {
           latest_score: 73,
           practice_count: 2,
           last_practiced_at: "2026-05-24T10:00:00Z",
+          status: "active",
+          consecutive_successes: 0,
+          graduated_at: null,
           created_at: "2026-05-24T09:00:00Z",
           updated_at: "2026-05-24T10:00:00Z"
         }
@@ -105,6 +110,53 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue("quiet")).toBeInTheDocument();
     });
+  });
+
+  test("separates in-progress and graduated word bank entries into tabs", async () => {
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [
+        {
+          id: "word-1",
+          word: "quiet",
+          source: "manual",
+          notes: "",
+          latest_score: 73,
+          practice_count: 2,
+          last_practiced_at: "2026-05-24T10:00:00Z",
+          status: "active",
+          consecutive_successes: 0,
+          graduated_at: null,
+          created_at: "2026-05-24T09:00:00Z",
+          updated_at: "2026-05-24T10:00:00Z"
+        },
+        {
+          id: "word-2",
+          word: "through",
+          source: "practice",
+          notes: "",
+          latest_score: 91,
+          practice_count: 4,
+          last_practiced_at: "2026-05-24T10:20:00Z",
+          status: "graduated",
+          consecutive_successes: 2,
+          graduated_at: "2026-05-24T10:20:00Z",
+          created_at: "2026-05-24T09:30:00Z",
+          updated_at: "2026-05-24T10:20:00Z"
+        }
+      ]
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: /quiet.*73.*0\/2/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /through.*91/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /Graduated\s*1/i }));
+
+    expect(await screen.findByRole("button", { name: /through.*91.*graduated/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /quiet.*73/i })).not.toBeInTheDocument();
   });
 
   test("stops the previous pronunciation audio before playing another one", async () => {

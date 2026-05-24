@@ -201,6 +201,49 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(words.json()[0]["latest_score"], 90.0)
         self.assertEqual(words.json()[0]["practice_count"], 1)
 
+    def test_single_word_practice_graduates_word_and_status_filter_separates_it(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+            scorer = FakeScorer()
+            app = create_app(
+                settings=Settings(
+                    database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}",
+                    max_audio_seconds=30,
+                ),
+                store=store,
+                scorer=scorer,
+            )
+            client = TestClient(app)
+            client.post("/api/words", json={"word": "quiet"})
+
+            first = client.post(
+                "/api/score",
+                data={"reference_text": "quiet"},
+                files={"audio": ("sample.wav", make_wav_bytes(), "audio/wav")},
+            )
+            second = client.post(
+                "/api/score",
+                data={"reference_text": "quiet"},
+                files={"audio": ("sample.wav", make_wav_bytes(), "audio/wav")},
+            )
+            active_words = client.get("/api/words?status=active")
+            graduated_words = client.get("/api/words?status=graduated")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(active_words.status_code, 200)
+        self.assertEqual(active_words.json(), [])
+        self.assertEqual(graduated_words.status_code, 200)
+        self.assertEqual(graduated_words.json()[0]["word"], "quiet")
+        self.assertEqual(graduated_words.json()[0]["status"], "graduated")
+        self.assertEqual(graduated_words.json()[0]["consecutive_successes"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

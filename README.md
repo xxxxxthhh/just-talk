@@ -11,7 +11,7 @@ The app is designed for personal learning workflows: read a passage, inspect wea
 - Word-level and phoneme-level review, including likely heard alternatives when Azure returns them.
 - Standard pronunciation playback for passages and selected words.
 - Local history stored in SQLite.
-- Local word bank for weak words and manual vocabulary practice.
+- Local word bank for weak words and manual vocabulary practice, with in-progress and graduated views.
 - Optional passage quality check through an OpenAI-compatible LLM endpoint.
 
 ## Tech Stack
@@ -53,7 +53,7 @@ AZURE_SPEECH_REGION=...
 
 The app records in the browser, sends the audio to FastAPI, converts it to 16 kHz mono WAV with ffmpeg, scores it with Azure, saves local history in SQLite, and can play correct pronunciation through Azure Text-to-Speech.
 
-History rows restore full word and phoneme feedback. Low-scoring words can be saved into the local word bank, then clicked to practice one word at a time.
+History rows restore full word and phoneme feedback. Low-scoring words can be saved into the local word bank, then clicked to practice one word at a time. Word drills graduate automatically after repeated scores above the configured threshold, and later low-scoring passage results move them back into the in-progress list.
 
 ## Optional Passage Check
 
@@ -96,6 +96,8 @@ docs/development/    Implementation planning notes
 | `AZURE_TTS_VOICE` | No | Azure neural voice used for standard pronunciation playback. |
 | `DATABASE_URL` | No | SQLite database URL. Defaults to `sqlite:///./data/just_talk.db`. |
 | `MAX_AUDIO_SECONDS` | No | Recording duration limit for the current short-practice mode. |
+| `VOCABULARY_GRADUATION_SCORE` | No | Score threshold a word must exceed to count as a successful drill. Defaults to `85`. |
+| `VOCABULARY_GRADUATION_STREAK` | No | Consecutive successful single-word drills required before graduation. Defaults to `2`. |
 | `LLM_BASE_URL` | No | OpenAI-compatible endpoint for optional passage review. |
 | `LLM_API_KEY` | No | API key for optional passage review. |
 | `LLM_MODEL` | No | Model name for optional passage review. |

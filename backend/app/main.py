@@ -64,6 +64,8 @@ def create_app(
             "azure_configured": active_settings.azure_configured,
             "passage_check_configured": active_settings.passage_check_configured,
             "max_audio_seconds": active_settings.max_audio_seconds,
+            "vocabulary_graduation_score": active_settings.vocabulary_graduation_score,
+            "vocabulary_graduation_streak": active_settings.vocabulary_graduation_streak,
         }
 
     @app.post("/api/score")
@@ -115,6 +117,8 @@ def create_app(
             active_store.record_word_practice(
                 single_word,
                 latest_score=normalized.get("scores", {}).get("accuracy"),
+                graduation_score=active_settings.vocabulary_graduation_score,
+                graduation_streak=active_settings.vocabulary_graduation_streak,
             )
         return {"result": normalized, "session": session}
 
@@ -130,8 +134,11 @@ def create_app(
             raise HTTPException(status_code=404, detail="Session not found.") from exc
 
     @app.get("/api/words")
-    def list_words() -> list[dict[str, Any]]:
-        return active_store.list_words()
+    def list_words(status: str | None = None) -> list[dict[str, Any]]:
+        try:
+            return active_store.list_words(status=status)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/words")
     def create_word(request: WordCreateRequest) -> dict[str, Any]:
@@ -151,10 +158,15 @@ def create_app(
     @app.post("/api/words/from-session/{session_id}")
     def create_words_from_session(
         session_id: str,
-        max_score: float = 85.0,
+        max_score: float | None = None,
     ) -> list[dict[str, Any]]:
         try:
-            return active_store.create_words_from_session(session_id, max_score=max_score)
+            cutoff = (
+                active_settings.vocabulary_graduation_score
+                if max_score is None
+                else max_score
+            )
+            return active_store.create_words_from_session(session_id, max_score=cutoff)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
 
