@@ -79,3 +79,50 @@ def normalize_azure_result(raw_result: dict[str, Any]) -> dict[str, Any]:
         "words": words,
         "raw": raw_result,
     }
+
+
+def normalize_continuous_azure_results(raw_results: list[dict[str, Any]]) -> dict[str, Any]:
+    segments = []
+    words = []
+    transcripts = []
+
+    for index, raw_result in enumerate(raw_results, start=1):
+        normalized = normalize_azure_result(raw_result)
+        segment = {
+            "index": index,
+            "transcript": normalized["transcript"],
+            "scores": normalized["scores"],
+            "words": normalized["words"],
+        }
+        segments.append(segment)
+        words.extend(normalized["words"])
+        if normalized["transcript"]:
+            transcripts.append(normalized["transcript"])
+
+    return {
+        "transcript": " ".join(transcripts),
+        "scores": {
+            "accuracy": _average_segment_score(segments, "accuracy"),
+            "fluency": _average_segment_score(segments, "fluency"),
+            "completeness": _average_segment_score(segments, "completeness"),
+            "prosody": _average_segment_score(segments, "prosody"),
+            "pronunciation": _average_segment_score(segments, "pronunciation"),
+        },
+        "words": words,
+        "segments": segments,
+        "raw": {"segments": raw_results},
+    }
+
+
+def _average_segment_score(
+    segments: list[dict[str, Any]],
+    score_name: str,
+) -> float | None:
+    values = [
+        segment["scores"][score_name]
+        for segment in segments
+        if segment["scores"].get(score_name) is not None
+    ]
+    if not values:
+        return None
+    return round(sum(values) / len(values), 2)

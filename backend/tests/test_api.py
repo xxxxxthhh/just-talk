@@ -36,6 +36,53 @@ class FakeScorer:
             ],
         }
 
+    def score_continuous(self, wav_path: Path, reference_text: str) -> list[dict]:
+        self.continuous_wav_path = wav_path
+        self.continuous_reference_text = reference_text
+        return [
+            {
+                "RecognitionStatus": "Success",
+                "DisplayText": "Quiet streets.",
+                "NBest": [
+                    {
+                        "PronunciationAssessment": {
+                            "AccuracyScore": 80,
+                            "FluencyScore": 76,
+                            "CompletenessScore": 100,
+                            "ProsodyScore": 74,
+                            "PronScore": 79,
+                        },
+                        "Words": [
+                            {
+                                "Word": "quiet",
+                                "PronunciationAssessment": {
+                                    "AccuracyScore": 72,
+                                    "ErrorType": "None",
+                                },
+                                "Phonemes": [],
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "RecognitionStatus": "Success",
+                "DisplayText": "We kept walking.",
+                "NBest": [
+                    {
+                        "PronunciationAssessment": {
+                            "AccuracyScore": 90,
+                            "FluencyScore": 88,
+                            "CompletenessScore": 100,
+                            "ProsodyScore": 82,
+                            "PronScore": 89,
+                        },
+                        "Words": [],
+                    }
+                ],
+            },
+        ]
+
 
 class FakeSynthesizer:
     def synthesize(self, text: str) -> tuple[bytes, str]:
@@ -91,6 +138,7 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["azure_configured"], False)
+        self.assertEqual(response.json()["max_long_audio_seconds"], 180)
 
     def test_word_bank_endpoints_create_list_auto_add_and_delete_words(self):
         from fastapi.testclient import TestClient
@@ -243,6 +291,44 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(graduated_words.json()[0]["word"], "quiet")
         self.assertEqual(graduated_words.json()[0]["status"], "graduated")
         self.assertEqual(graduated_words.json()[0]["consecutive_successes"], 2)
+
+    def test_long_score_endpoint_uses_continuous_scorer_and_saves_segmented_result(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+            scorer = FakeScorer()
+            app = create_app(
+                settings=Settings(
+                    database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}",
+                    max_audio_seconds=30,
+                    max_long_audio_seconds=180,
+                ),
+                store=store,
+                scorer=scorer,
+            )
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/score/long",
+                data={"reference_text": "Quiet streets. We kept walking."},
+                files={"audio": ("sample.wav", make_wav_bytes(), "audio/wav")},
+            )
+            history = client.get("/api/sessions")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["result"]["transcript"], "Quiet streets. We kept walking.")
+        self.assertEqual(response.json()["result"]["scores"]["pronunciation"], 84.0)
+        self.assertEqual(response.json()["result"]["segments"][0]["transcript"], "Quiet streets.")
+        self.assertEqual(response.json()["result"]["words"][0]["word"], "quiet")
+        self.assertEqual(response.json()["session"]["reference_text"], "Quiet streets. We kept walking.")
+        self.assertEqual(response.json()["session"]["segments"][0]["transcript"], "Quiet streets.")
+        self.assertEqual(history.json()[0]["scores"]["pronunciation"], 84.0)
+        self.assertEqual(scorer.continuous_reference_text, "Quiet streets. We kept walking.")
 
 
 if __name__ == "__main__":

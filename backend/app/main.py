@@ -18,7 +18,7 @@ from .audio import (
 from .azure_client import AzurePronunciationScorer
 from .config import Settings
 from .passage import check_passage
-from .scoring import normalize_azure_result
+from .scoring import normalize_azure_result, normalize_continuous_azure_results
 from .storage import SessionStore
 from .tts import AzureTextToSpeechSynthesizer
 
@@ -64,6 +64,7 @@ def create_app(
             "azure_configured": active_settings.azure_configured,
             "passage_check_configured": active_settings.passage_check_configured,
             "max_audio_seconds": active_settings.max_audio_seconds,
+            "max_long_audio_seconds": active_settings.max_long_audio_seconds,
             "vocabulary_graduation_score": active_settings.vocabulary_graduation_score,
             "vocabulary_graduation_streak": active_settings.vocabulary_graduation_streak,
         }
@@ -120,6 +121,61 @@ def create_app(
                 graduation_score=active_settings.vocabulary_graduation_score,
                 graduation_streak=active_settings.vocabulary_graduation_streak,
             )
+        return {"result": normalized, "session": session}
+
+    @app.post("/api/score/long")
+    async def score_long(
+        reference_text: str = Form(...),
+        audio: UploadFile = File(...),
+    ) -> dict[str, Any]:
+        cleaned_reference = reference_text.strip()
+        if not cleaned_reference:
+            raise HTTPException(status_code=400, detail="reference_text is required.")
+        if active_scorer is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Azure Speech is not configured. Fill AZURE_SPEECH_KEY and AZURE_SPEECH_REGION in .env.",
+            )
+        continuous_score = getattr(active_scorer, "score_continuous", None)
+        if continuous_score is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Long Passage scoring is not available for this scorer.",
+            )
+
+        suffix = Path(audio.filename or "recording.webm").suffix or ".webm"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = Path(temp_dir) / f"upload{suffix}"
+            wav_path = Path(temp_dir) / "recording.wav"
+            with input_path.open("wb") as destination:
+                shutil.copyfileobj(audio.file, destination)
+
+            try:
+                duration_seconds = probe_audio_duration_seconds(input_path)
+                ensure_audio_duration_allowed(
+                    duration_seconds=duration_seconds,
+                    max_seconds=active_settings.max_long_audio_seconds,
+                )
+                convert_to_wav_16k_mono(input_path, wav_path)
+            except AudioTooLongError as exc:
+                raise HTTPException(status_code=413, detail=str(exc)) from exc
+            except (subprocess.CalledProcessError, KeyError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Could not read the uploaded audio. Please record again.",
+                ) from exc
+
+            try:
+                raw_results = continuous_score(wav_path, cleaned_reference)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        normalized = normalize_continuous_azure_results(raw_results)
+        session = active_store.create_session(
+            reference_text=cleaned_reference,
+            audio_duration_ms=round(duration_seconds * 1000),
+            normalized_result=normalized,
+        )
         return {"result": normalized, "session": session}
 
     @app.get("/api/sessions")

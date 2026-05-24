@@ -3,6 +3,7 @@ export type Health = {
   azure_configured: boolean;
   passage_check_configured: boolean;
   max_audio_seconds: number;
+  max_long_audio_seconds: number;
   vocabulary_graduation_score: number;
   vocabulary_graduation_streak: number;
 };
@@ -38,7 +39,15 @@ export type ScoreResult = {
   transcript: string;
   scores: ScoreMap;
   words: WordResult[];
+  segments?: ScoreSegment[];
   raw: unknown;
+};
+
+export type ScoreSegment = {
+  index: number;
+  transcript: string;
+  scores: ScoreMap;
+  words: WordResult[];
 };
 
 export type PracticeSession = {
@@ -47,6 +56,7 @@ export type PracticeSession = {
   reference_text: string;
   audio_duration_ms: number;
   scores: ScoreMap;
+  segments?: ScoreSegment[];
   words?: WordResult[];
   raw?: unknown;
 };

@@ -35,11 +35,26 @@ export async function scoreRecording(
   referenceText: string,
   audioBlob: Blob
 ): Promise<ScoreResponse> {
+  return uploadRecording("/api/score", referenceText, audioBlob);
+}
+
+export async function scoreLongRecording(
+  referenceText: string,
+  audioBlob: Blob
+): Promise<ScoreResponse> {
+  return uploadRecording("/api/score/long", referenceText, audioBlob);
+}
+
+async function uploadRecording(
+  endpoint: string,
+  referenceText: string,
+  audioBlob: Blob
+): Promise<ScoreResponse> {
   const body = new FormData();
   body.append("reference_text", referenceText);
   body.append("audio", audioBlob, "recording.webm");
   return parseResponse<ScoreResponse>(
-    await fetch("/api/score", {
+    await fetch(endpoint, {
       method: "POST",
       body
     })

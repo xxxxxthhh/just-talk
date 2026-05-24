@@ -1,4 +1,5 @@
 import json
+import threading
 from pathlib import Path
 
 from .config import Settings
@@ -48,3 +49,65 @@ class AzurePronunciationScorer:
             speechsdk.PropertyId.SpeechServiceResponse_JsonResult
         )
         return json.loads(payload)
+
+    def score_continuous(self, wav_path: Path, reference_text: str) -> list[dict]:
+        import azure.cognitiveservices.speech as speechsdk
+
+        speech_config = speechsdk.SpeechConfig(
+            subscription=self.settings.azure_speech_key,
+            region=self.settings.azure_speech_region,
+        )
+        speech_config.speech_recognition_language = "en-US"
+
+        audio_config = speechsdk.audio.AudioConfig(filename=str(wav_path))
+        recognizer = speechsdk.SpeechRecognizer(
+            speech_config=speech_config,
+            audio_config=audio_config,
+            language="en-US",
+        )
+
+        pronunciation_config = speechsdk.PronunciationAssessmentConfig(
+            reference_text=reference_text,
+            grading_system=speechsdk.PronunciationAssessmentGradingSystem.HundredMark,
+            granularity=speechsdk.PronunciationAssessmentGranularity.Phoneme,
+            enable_miscue=False,
+        )
+        pronunciation_config.phoneme_alphabet = "IPA"
+        pronunciation_config.nbest_phoneme_count = 5
+        pronunciation_config.enable_prosody_assessment()
+        pronunciation_config.apply_to(recognizer)
+
+        done = threading.Event()
+        segments: list[dict] = []
+        errors: list[str] = []
+
+        def on_recognized(event: object) -> None:
+            result = event.result
+            if result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                payload = result.properties.get(
+                    speechsdk.PropertyId.SpeechServiceResponse_JsonResult
+                )
+                if payload:
+                    segments.append(json.loads(payload))
+
+        def on_canceled(event: object) -> None:
+            errors.append(str(event.reason))
+            done.set()
+
+        def on_session_stopped(event: object) -> None:
+            done.set()
+
+        recognizer.recognized.connect(on_recognized)
+        recognizer.canceled.connect(on_canceled)
+        recognizer.session_stopped.connect(on_session_stopped)
+
+        recognizer.start_continuous_recognition()
+        timeout_seconds = max(30, self.settings.max_long_audio_seconds + 30)
+        finished = done.wait(timeout_seconds)
+        recognizer.stop_continuous_recognition()
+
+        if not finished:
+            raise RuntimeError("Timed out while scoring long passage audio.")
+        if errors and not segments:
+            raise RuntimeError("Azure Speech canceled long passage scoring.")
+        return segments

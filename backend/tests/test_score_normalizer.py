@@ -76,6 +76,77 @@ class ScoreNormalizerTests(unittest.TestCase):
         self.assertEqual(result["words"], [])
         self.assertEqual(result["transcript"], "")
 
+    def test_normalizes_continuous_results_into_segments_and_overall_scores(self):
+        from app.scoring import normalize_continuous_azure_results
+
+        raw_results = [
+            {
+                "RecognitionStatus": "Success",
+                "DisplayText": "Quiet streets.",
+                "NBest": [
+                    {
+                        "PronunciationAssessment": {
+                            "AccuracyScore": 80,
+                            "FluencyScore": 70,
+                            "CompletenessScore": 100,
+                            "ProsodyScore": 75,
+                            "PronScore": 78,
+                        },
+                        "Words": [
+                            {
+                                "Word": "quiet",
+                                "Offset": 1_000_000,
+                                "Duration": 3_000_000,
+                                "PronunciationAssessment": {
+                                    "AccuracyScore": 72,
+                                    "ErrorType": "None",
+                                },
+                                "Phonemes": [],
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "RecognitionStatus": "Success",
+                "DisplayText": "We kept walking.",
+                "NBest": [
+                    {
+                        "PronunciationAssessment": {
+                            "AccuracyScore": 90,
+                            "FluencyScore": 84,
+                            "CompletenessScore": 100,
+                            "ProsodyScore": 80,
+                            "PronScore": 88,
+                        },
+                        "Words": [
+                            {
+                                "Word": "walking",
+                                "Offset": 5_000_000,
+                                "Duration": 4_000_000,
+                                "PronunciationAssessment": {
+                                    "AccuracyScore": 92,
+                                    "ErrorType": "None",
+                                },
+                                "Phonemes": [],
+                            }
+                        ],
+                    }
+                ],
+            },
+        ]
+
+        result = normalize_continuous_azure_results(raw_results)
+
+        self.assertEqual(result["transcript"], "Quiet streets. We kept walking.")
+        self.assertEqual(result["scores"]["accuracy"], 85.0)
+        self.assertEqual(result["scores"]["fluency"], 77.0)
+        self.assertEqual(result["scores"]["pronunciation"], 83.0)
+        self.assertEqual([word["word"] for word in result["words"]], ["quiet", "walking"])
+        self.assertEqual(len(result["segments"]), 2)
+        self.assertEqual(result["segments"][0]["index"], 1)
+        self.assertEqual(result["segments"][0]["scores"]["pronunciation"], 78.0)
+
 
 if __name__ == "__main__":
     unittest.main()

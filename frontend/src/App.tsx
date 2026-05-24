@@ -29,6 +29,7 @@ import {
   getSession,
   listSessions,
   listWords,
+  scoreLongRecording,
   scoreRecording,
   speakText
 } from "./api";
@@ -90,8 +91,9 @@ function App() {
 
   const selectedWord = result?.words[selectedWordIndex] ?? null;
   const shortLimitSeconds = health?.max_audio_seconds ?? 30;
-  const maxMs = shortLimitSeconds * 1000;
+  const longLimitSeconds = health?.max_long_audio_seconds ?? 180;
   const isLongMode = practiceMode === "long";
+  const maxMs = (isLongMode ? longLimitSeconds : shortLimitSeconds) * 1000;
   const weakWords = useMemo(() => (result ? weakWordsFromResult(result) : []), [result]);
   const savedWords = useMemo(
     () => new Set(vocabulary.map((item) => normalizedWord(item.word))),
@@ -157,10 +159,6 @@ function App() {
   async function startRecording() {
     setError("");
     setStatus("");
-    if (isLongMode) {
-      setStatus("Long Passage scoring is coming next");
-      return;
-    }
     if (!navigator.mediaDevices?.getUserMedia) {
       setError("This browser cannot access the microphone.");
       return;
@@ -230,9 +228,11 @@ function App() {
     }
     setIsScoring(true);
     setError("");
-    setStatus("Scoring pronunciation");
+    setStatus(isLongMode ? "Scoring long passage" : "Scoring pronunciation");
     try {
-      const response = await scoreRecording(passage, audioBlob);
+      const response = isLongMode
+        ? await scoreLongRecording(passage, audioBlob)
+        : await scoreRecording(passage, audioBlob);
       setResult(response.result);
       setCurrentSessionId(response.session.id);
       setSelectedWordIndex(0);
@@ -273,6 +273,7 @@ function App() {
       setResult({
         transcript: loaded.reference_text,
         scores: loaded.scores,
+        segments: loaded.segments ?? [],
         words: loaded.words ?? [],
         raw: loaded.raw ?? {}
       });
@@ -589,13 +590,13 @@ function App() {
               <BookOpenCheck size={17} />
               <span>
                 <strong>Long Passage</strong>
-                <small>continuous scoring next</small>
+                <small>{longLimitSeconds} seconds max</small>
               </span>
             </button>
           </div>
           <p className="mode-note">
             {isLongMode
-              ? "Long Passage scoring is coming next."
+              ? `Long Passage allows manual stop up to ${longLimitSeconds} seconds.`
               : `Short Drill is limited to ${shortLimitSeconds} seconds.`}
           </p>
           <div className="panel-heading split">
@@ -673,7 +674,6 @@ function App() {
                 <button
                   className="primary-button"
                   onClick={startRecording}
-                  disabled={isLongMode}
                 >
                   <Mic size={18} />
                   Record
@@ -681,7 +681,7 @@ function App() {
               )}
               <button
                 className="secondary-button"
-                disabled={!audioBlob || isScoring || isLongMode}
+                disabled={!audioBlob || isScoring}
                 onClick={submitRecording}
               >
                 {isScoring ? <Loader2 className="spin" size={18} /> : <UploadCloud size={18} />}
@@ -704,6 +704,28 @@ function App() {
           </div>
 
           <ScoreGrid scores={result?.scores ?? null} />
+
+          {result?.segments?.length ? (
+            <section className="segment-section">
+              <div className="section-heading">
+                <div>
+                  <h3>Passage segments</h3>
+                  <p>{result.segments.length} continuous scoring segments</p>
+                </div>
+              </div>
+              <div className="segment-list">
+                {result.segments.map((segment) => (
+                  <div className="segment-row" key={segment.index}>
+                    <div>
+                      <strong>Segment {segment.index}</strong>
+                      <p>{segment.transcript || "No transcript"}</p>
+                    </div>
+                    <span>{scoreValue(segment.scores.pronunciation)}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           {weakWords.length ? (
             <section className="weak-section">

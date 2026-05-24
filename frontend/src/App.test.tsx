@@ -29,6 +29,7 @@ const health = {
   azure_configured: true,
   passage_check_configured: false,
   max_audio_seconds: 30,
+  max_long_audio_seconds: 180,
   vocabulary_graduation_score: 85,
   vocabulary_graduation_streak: 2
 };
@@ -159,7 +160,7 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: /quiet.*73/i })).not.toBeInTheDocument();
   });
 
-  test("shows a practice mode switch with the short drill time limit", async () => {
+  test("shows practice mode limits and keeps long passage recording available", async () => {
     mockApi({
       "/api/health": health,
       "/api/sessions": [],
@@ -175,8 +176,12 @@ describe("App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Long Passage/i }));
 
-    expect(screen.getByText(/Long Passage scoring is coming next/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Record$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Long Passage.*180 seconds max/i })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.getByText(/Long Passage allows manual stop up to 180 seconds/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Record$/ })).not.toBeDisabled();
   });
 
   test("stops the previous pronunciation audio before playing another one", async () => {

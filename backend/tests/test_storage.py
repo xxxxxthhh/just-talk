@@ -17,6 +17,7 @@ class StorageTests(unittest.TestCase):
                 audio_duration_ms=1200,
                 normalized_result={
                     "scores": {"pronunciation": 86.0},
+                    "segments": [{"index": 1, "transcript": "Hello world."}],
                     "words": [{"word": "hello"}],
                     "raw": {"ok": True},
                 },
@@ -28,6 +29,7 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(created["reference_text"], "Hello world.")
         self.assertEqual(sessions[0]["id"], created["id"])
         self.assertEqual(loaded["scores"]["pronunciation"], 86.0)
+        self.assertEqual(loaded["segments"][0]["transcript"], "Hello world.")
         self.assertEqual(loaded["words"][0]["word"], "hello")
 
     def test_creates_dedupes_updates_and_deletes_vocabulary_words(self):

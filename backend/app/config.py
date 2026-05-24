@@ -31,6 +31,7 @@ class Settings:
     azure_tts_voice: str = "en-US-JennyNeural"
     database_url: str = "sqlite:///./data/just_talk.db"
     max_audio_seconds: int = 30
+    max_long_audio_seconds: int = 180
     vocabulary_graduation_score: float = 85.0
     vocabulary_graduation_streak: int = 2
     llm_base_url: str = ""
@@ -54,6 +55,7 @@ class Settings:
             azure_tts_voice=env.get("AZURE_TTS_VOICE", "en-US-JennyNeural"),
             database_url=env.get("DATABASE_URL", "sqlite:///./data/just_talk.db"),
             max_audio_seconds=int(env.get("MAX_AUDIO_SECONDS", "30")),
+            max_long_audio_seconds=int(env.get("MAX_LONG_AUDIO_SECONDS", "180")),
             vocabulary_graduation_score=float(env.get("VOCABULARY_GRADUATION_SCORE", "85")),
             vocabulary_graduation_streak=int(env.get("VOCABULARY_GRADUATION_STREAK", "2")),
             llm_base_url=env.get("LLM_BASE_URL", ""),

@@ -7,6 +7,7 @@ The app is designed for personal learning workflows: read a passage, inspect wea
 ## Features
 
 - Browser recording with a configurable duration limit.
+- Short Drill mode for focused practice and Long Passage mode for continuous scoring.
 - Azure Pronunciation Assessment scoring for accuracy, fluency, completeness, prosody, and overall pronunciation.
 - Word-level and phoneme-level review, including likely heard alternatives when Azure returns them.
 - Standard pronunciation playback for passages and selected words.
@@ -53,7 +54,7 @@ AZURE_SPEECH_REGION=...
 
 The app records in the browser, sends the audio to FastAPI, converts it to 16 kHz mono WAV with ffmpeg, scores it with Azure, saves local history in SQLite, and can play correct pronunciation through Azure Text-to-Speech.
 
-History rows restore full word and phoneme feedback. Low-scoring words can be saved into the local word bank, then clicked to practice one word at a time. Word drills graduate automatically after repeated scores above the configured threshold, and later low-scoring passage results move them back into the in-progress list.
+Short Drill is limited by `MAX_AUDIO_SECONDS` and uses Azure single-shot pronunciation assessment. Long Passage is limited by `MAX_LONG_AUDIO_SECONDS` and uses Azure continuous pronunciation assessment for longer readings. History rows restore full word and phoneme feedback. Low-scoring words can be saved into the local word bank, then clicked to practice one word at a time. Word drills graduate automatically after repeated scores above the configured threshold, and later low-scoring passage results move them back into the in-progress list.
 
 ## Optional Passage Check
 
@@ -96,6 +97,7 @@ docs/development/    Implementation planning notes
 | `AZURE_TTS_VOICE` | No | Azure neural voice used for standard pronunciation playback. |
 | `DATABASE_URL` | No | SQLite database URL. Defaults to `sqlite:///./data/just_talk.db`. |
 | `MAX_AUDIO_SECONDS` | No | Recording duration limit for the current short-practice mode. |
+| `MAX_LONG_AUDIO_SECONDS` | No | Recording duration limit for Long Passage continuous scoring. Defaults to `180`. |
 | `VOCABULARY_GRADUATION_SCORE` | No | Score threshold a word must exceed to count as a successful drill. Defaults to `85`. |
 | `VOCABULARY_GRADUATION_STREAK` | No | Consecutive successful single-word drills required before graduation. Defaults to `2`. |
 | `LLM_BASE_URL` | No | OpenAI-compatible endpoint for optional passage review. |

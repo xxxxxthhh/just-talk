@@ -27,6 +27,7 @@ class SessionStore:
                     audio_duration_ms INTEGER NOT NULL,
                     overall_scores_json TEXT NOT NULL,
                     words_json TEXT NOT NULL,
+                    segments_json TEXT NOT NULL DEFAULT '[]',
                     raw_azure_json TEXT NOT NULL
                 )
                 """
@@ -50,6 +51,7 @@ class SessionStore:
                 )
                 """
             )
+            self._ensure_practice_session_columns(connection)
             self._ensure_vocabulary_columns(connection)
 
     def create_session(
@@ -71,9 +73,10 @@ class SessionStore:
                     audio_duration_ms,
                     overall_scores_json,
                     words_json,
+                    segments_json,
                     raw_azure_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -82,6 +85,7 @@ class SessionStore:
                     audio_duration_ms,
                     json.dumps(normalized_result.get("scores", {})),
                     json.dumps(normalized_result.get("words", [])),
+                    json.dumps(normalized_result.get("segments", [])),
                     json.dumps(normalized_result.get("raw", {})),
                 ),
             )
@@ -126,6 +130,7 @@ class SessionStore:
             "reference_text": row["reference_text"],
             "audio_duration_ms": row["audio_duration_ms"],
             "scores": json.loads(row["overall_scores_json"]),
+            "segments": json.loads(row["segments_json"]),
             "words": json.loads(row["words_json"]),
             "raw": json.loads(row["raw_azure_json"]),
         }
@@ -320,6 +325,16 @@ class SessionStore:
         connection = sqlite3.connect(self.database_path)
         connection.row_factory = sqlite3.Row
         return connection
+
+    def _ensure_practice_session_columns(self, connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(practice_sessions)").fetchall()
+        }
+        if "segments_json" not in columns:
+            connection.execute(
+                "ALTER TABLE practice_sessions ADD COLUMN segments_json TEXT NOT NULL DEFAULT '[]'"
+            )
 
     def _ensure_vocabulary_columns(self, connection: sqlite3.Connection) -> None:
         columns = {

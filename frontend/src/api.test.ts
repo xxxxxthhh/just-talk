@@ -7,6 +7,7 @@ import {
   deleteWord,
   getSession,
   listWords,
+  scoreLongRecording,
   scoreRecording,
   speakText
 } from "./api";
@@ -48,6 +49,25 @@ describe("api client", () => {
       expect.objectContaining({ method: "POST", body: expect.any(FormData) })
     );
     expect(response.result.scores.pronunciation).toBe(91);
+  });
+
+  test("uploads long passage recordings to the continuous scoring endpoint", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ result: { segments: [{ transcript: "Long passage." }] } })
+      })
+    );
+
+    const audio = new Blob(["abc"], { type: "audio/webm" });
+    const response = await scoreLongRecording("Long passage.", audio);
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/score/long",
+      expect.objectContaining({ method: "POST", body: expect.any(FormData) })
+    );
+    expect(response.result.segments?.[0].transcript).toBe("Long passage.");
   });
 
   test("loads a full session by id", async () => {
