@@ -103,6 +103,13 @@ export type PhonemeStatExample = {
   created_at: string;
 };
 
+export type PhonemeAttempt = {
+  accuracy: number;
+  word: string;
+  created_at: string;
+  session_id: string;
+};
+
 export type PhonemeStat = {
   phoneme: string;
   average_accuracy: number;
@@ -113,4 +120,5 @@ export type PhonemeStat = {
   bucket: string;
   last_seen_at: string;
   example_words: PhonemeStatExample[];
+  attempts_history?: PhonemeAttempt[];
 };

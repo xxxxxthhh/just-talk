@@ -190,7 +190,9 @@ class PhonemeStatsTests(unittest.TestCase):
         self.assertEqual(stat["bucket"], "needs-work")
         self.assertEqual(len(stat["example_words"]), 1)
         self.assertEqual(stat["example_words"][0]["word"], "think")
-        self.assertAlmostEqual(stat["example_words"][0]["accuracy"], 30.0)
+        self.assertAlmostEqual(stat["example_words"][0]["accuracy"], 50.0)
+        self.assertEqual([item["accuracy"] for item in stat["attempts_history"]], [30.0, 40.0, 50.0])
+        self.assertEqual([item["word"] for item in stat["attempts_history"]], ["think", "think", "think"])
 
     def test_phoneme_stats_aggregates_across_multiple_sessions(self):
         from app.storage import SessionStore
@@ -237,24 +239,24 @@ class PhonemeStatsTests(unittest.TestCase):
         self.assertIn("k", phonemes_low)
         self.assertIn("p", phonemes_low)
 
-    def test_phoneme_stats_example_words_dedupe_by_word_keep_worst(self):
+    def test_phoneme_stats_example_words_dedupe_by_word_keep_latest(self):
         from app.storage import SessionStore
 
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SessionStore(f"sqlite:///{Path(temp_dir) / 'db.db'}")
             store.initialize()
-            # "think" appears twice with different scores for phoneme "th"
-            self._make_session(store, [self._make_word("think", [self._make_phoneme("th", 80.0)])])
+            # "think" appears twice with different scores for phoneme "th" - keep latest (80.0)
             self._make_session(store, [self._make_word("think", [self._make_phoneme("th", 30.0)])])
+            self._make_session(store, [self._make_word("think", [self._make_phoneme("th", 80.0)])])
             self._make_session(store, [self._make_word("through", [self._make_phoneme("th", 55.0)])])
             result = store.list_phoneme_stats(min_attempts=3)
 
         self.assertEqual(len(result), 1)
         stat = result[0]
-        # Should dedupe "think" — keep only the worst occurrence (30.0)
+        # Should dedupe "think" — keep only the latest occurrence (80.0)
         words = {ex["word"].casefold(): ex["accuracy"] for ex in stat["example_words"]}
         self.assertIn("think", words)
-        self.assertAlmostEqual(words["think"], 30.0)
+        self.assertAlmostEqual(words["think"], 80.0)
         self.assertIn("through", words)
         self.assertEqual(len(stat["example_words"]), 2)
 

@@ -332,10 +332,16 @@ class SessionStore:
         max_examples_per_phoneme: int = PHONEME_STAT_MAX_EXAMPLES,
     ) -> list[dict[str, Any]]:
         with self._connect() as connection:
+            # Select the 100 most recent sessions, then sort them chronologically (ascending)
             rows = connection.execute(
                 """
                 SELECT id, created_at, reference_text, words_json
-                FROM practice_sessions
+                FROM (
+                    SELECT id, created_at, reference_text, words_json
+                    FROM practice_sessions
+                    ORDER BY created_at DESC
+                    LIMIT 100
+                )
                 ORDER BY created_at ASC
                 """
             ).fetchall()
@@ -365,10 +371,17 @@ class SessionStore:
                             "good_count": 0,
                             "last_seen_at": created_at,
                             "_examples_by_word": {},
+                            "attempts_history": [],
                         }
                     entry = aggregates[symbol]
                     entry["score_sum"] += score
                     entry["attempts"] += 1
+                    entry["attempts_history"].append({
+                        "accuracy": score,
+                        "word": word_text,
+                        "created_at": created_at,
+                        "session_id": session_id,
+                    })
                     if bucket == "good":
                         entry["good_count"] += 1
                     elif bucket == "watch":
@@ -379,15 +392,14 @@ class SessionStore:
                         entry["last_seen_at"] = created_at
                     if word_text:
                         word_key = word_text.casefold()
-                        existing_example = entry["_examples_by_word"].get(word_key)
-                        if existing_example is None or score < existing_example["accuracy"]:
-                            entry["_examples_by_word"][word_key] = {
-                                "word": word_text,
-                                "accuracy": score,
-                                "session_id": session_id,
-                                "reference_text": reference_text,
-                                "created_at": created_at,
-                            }
+                        # Overwrite with latest chronological attempt (since rows are sorted ASC)
+                        entry["_examples_by_word"][word_key] = {
+                            "word": word_text,
+                            "accuracy": score,
+                            "session_id": session_id,
+                            "reference_text": reference_text,
+                            "created_at": created_at,
+                        }
 
         results: list[dict[str, Any]] = []
         for entry in aggregates.values():
@@ -398,6 +410,8 @@ class SessionStore:
                 entry["_examples_by_word"].values(),
                 key=lambda x: (x["accuracy"], x["word"].casefold()),
             )[:max_examples_per_phoneme]
+            # Extract last 12 attempts chronologically
+            history = entry["attempts_history"][-12:]
             results.append({
                 "phoneme": entry["phoneme"],
                 "average_accuracy": average,
@@ -408,6 +422,7 @@ class SessionStore:
                 "bucket": score_bucket(average),
                 "last_seen_at": entry["last_seen_at"],
                 "example_words": examples,
+                "attempts_history": history,
             })
         results.sort(key=lambda x: (x["average_accuracy"], x["phoneme"]))
         return results
