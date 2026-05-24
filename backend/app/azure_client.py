@@ -17,7 +17,9 @@ class AzurePronunciationScorer:
             )
         self.settings = settings
 
-    def score(self, wav_path: Path, reference_text: str) -> dict:
+    def _build_recognizer(
+        self, wav_path: Path, reference_text: str, enable_miscue: bool
+    ) -> object:
         import azure.cognitiveservices.speech as speechsdk
 
         speech_config = speechsdk.SpeechConfig(
@@ -37,13 +39,19 @@ class AzurePronunciationScorer:
             reference_text=reference_text,
             grading_system=speechsdk.PronunciationAssessmentGradingSystem.HundredMark,
             granularity=speechsdk.PronunciationAssessmentGranularity.Phoneme,
-            enable_miscue=True,
+            enable_miscue=enable_miscue,
         )
         pronunciation_config.phoneme_alphabet = "IPA"
         pronunciation_config.nbest_phoneme_count = 5
         pronunciation_config.enable_prosody_assessment()
         pronunciation_config.apply_to(recognizer)
 
+        return recognizer
+
+    def score(self, wav_path: Path, reference_text: str) -> dict:
+        import azure.cognitiveservices.speech as speechsdk
+
+        recognizer = self._build_recognizer(wav_path, reference_text, enable_miscue=True)
         result = recognizer.recognize_once()
         payload = result.properties.get(
             speechsdk.PropertyId.SpeechServiceResponse_JsonResult
@@ -53,29 +61,7 @@ class AzurePronunciationScorer:
     def score_continuous(self, wav_path: Path, reference_text: str) -> list[dict]:
         import azure.cognitiveservices.speech as speechsdk
 
-        speech_config = speechsdk.SpeechConfig(
-            subscription=self.settings.azure_speech_key,
-            region=self.settings.azure_speech_region,
-        )
-        speech_config.speech_recognition_language = "en-US"
-
-        audio_config = speechsdk.audio.AudioConfig(filename=str(wav_path))
-        recognizer = speechsdk.SpeechRecognizer(
-            speech_config=speech_config,
-            audio_config=audio_config,
-            language="en-US",
-        )
-
-        pronunciation_config = speechsdk.PronunciationAssessmentConfig(
-            reference_text=reference_text,
-            grading_system=speechsdk.PronunciationAssessmentGradingSystem.HundredMark,
-            granularity=speechsdk.PronunciationAssessmentGranularity.Phoneme,
-            enable_miscue=False,
-        )
-        pronunciation_config.phoneme_alphabet = "IPA"
-        pronunciation_config.nbest_phoneme_count = 5
-        pronunciation_config.enable_prosody_assessment()
-        pronunciation_config.apply_to(recognizer)
+        recognizer = self._build_recognizer(wav_path, reference_text, enable_miscue=False)
 
         done = threading.Event()
         segments: list[dict] = []

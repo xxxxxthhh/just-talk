@@ -2,6 +2,10 @@ import type { ScoreResult, WordResult } from "./types";
 
 export type ScoreTone = "good" | "watch" | "needs-work" | "unknown";
 
+export function scoreValue(score: number | null | undefined): string {
+  return score === null || score === undefined ? "--" : Math.round(score).toString();
+}
+
 export type PhonemeCandidate = {
   phoneme: string;
   score: number | null;
