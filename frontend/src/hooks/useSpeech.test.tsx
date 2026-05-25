@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { useSpeech } from "./useSpeech";
@@ -17,6 +17,53 @@ function mockSpeechApi() {
 describe("useSpeech", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  test("preloads speech audio and reuses it when played", async () => {
+    const audioInstances: {
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      currentTime: number;
+    }[] = [];
+    const createObjectURL = vi.fn(() => "blob:pronunciation");
+
+    mockSpeechApi();
+    vi.stubGlobal("URL", {
+      createObjectURL,
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0,
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+
+    let controls: ReturnType<typeof useSpeech> | null = null;
+    function SpeechHarness() {
+      controls = useSpeech(vi.fn());
+      return null;
+    }
+
+    render(<SpeechHarness />);
+
+    await act(async () => {
+      await controls?.preloadSpeech("quiet");
+    });
+    await act(async () => {
+      await controls?.playCorrect("quiet");
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(Audio).toHaveBeenCalledWith("blob:pronunciation");
+    expect(audioInstances[0].play).toHaveBeenCalledTimes(1);
   });
 
   test("stops current speech and revokes its object URL when unmounted", async () => {

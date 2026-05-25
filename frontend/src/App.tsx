@@ -126,7 +126,8 @@ function App() {
   const [isSavingWords, setIsSavingWords] = useState(false);
   const [error, setError] = useState("");
 
-  const { speakingText, playCorrect, stopCurrentSpeech } = useSpeech(setError);
+  const { speakingText, preloadSpeech, playCorrect, stopCurrentSpeech } =
+    useSpeech(setError);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -169,7 +170,19 @@ function App() {
       }
       stopCurrentSpeech();
     };
-  }, [audioUrl]);
+  }, [audioUrl, stopCurrentSpeech]);
+
+  useEffect(() => {
+    if (selectedWord?.word) {
+      void preloadSpeech(selectedWord.word);
+    }
+  }, [selectedWord?.word, preloadSpeech]);
+
+  useEffect(() => {
+    for (const word of weakWords.slice(0, 5)) {
+      void preloadSpeech(word.word);
+    }
+  }, [weakWords, preloadSpeech]);
 
   const waveBars = useMemo(
     () =>
@@ -454,6 +467,10 @@ function App() {
     }
   }
 
+  function preloadCurrentPassage() {
+    void preloadSpeech(passage);
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -707,6 +724,7 @@ function App() {
           <textarea
             value={passage}
             onChange={(event) => setPassage(event.target.value)}
+            onBlur={preloadCurrentPassage}
             className={`passage-input ${result?.words?.length ? "hidden-declutter" : ""}`}
             spellCheck
           />

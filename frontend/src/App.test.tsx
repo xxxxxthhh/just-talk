@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -36,6 +36,7 @@ const health = {
 
 describe("App", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -182,6 +183,40 @@ describe("App", () => {
     );
     expect(screen.getByText(/Long Passage allows manual stop up to 180 seconds/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Record$/ })).not.toBeDisabled();
+  });
+
+  test("preloads passage speech only after the passage input loses focus", async () => {
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/speak": { audio_base64: "YXVkaW8=", content_type: "audio/mpeg" }
+    });
+
+    render(<App />);
+    await screen.findByRole("button", { name: /^Play$/ });
+    const passageInput = screen.getByDisplayValue(/The weather changed quickly/);
+
+    const speechCalls = () =>
+      vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/speak");
+
+    await new Promise((resolve) => window.setTimeout(resolve, 900));
+    expect(speechCalls()).toHaveLength(0);
+
+    fireEvent.change(passageInput, { target: { value: "Quiet streets." } });
+    await new Promise((resolve) => window.setTimeout(resolve, 900));
+    expect(speechCalls()).toHaveLength(0);
+
+    fireEvent.blur(passageInput);
+
+    await waitFor(() => expect(speechCalls()).toHaveLength(1));
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/speak",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ text: "Quiet streets." })
+      })
+    );
   });
 
   test("stops the previous pronunciation audio before playing another one", async () => {
