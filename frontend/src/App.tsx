@@ -17,7 +17,7 @@ import {
   UploadCloud,
   Volume2
 } from "lucide-react";
-import type { FormEvent } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -28,6 +28,8 @@ import {
   deleteWord,
   fetchPhonemeStats,
   getSession,
+  importMaterialPack,
+  listMaterials,
   listSessions,
   listWords,
   scoreLongRecording,
@@ -35,6 +37,7 @@ import {
 } from "./api";
 import { AudioPlayer } from "./components/AudioPlayer";
 import { InsightsPanel } from "./components/InsightsPanel";
+import { MaterialLibrary } from "./components/MaterialLibrary";
 import { PhonemeInspector } from "./components/PhonemeInspector";
 import { ScoreGrid } from "./components/ScoreGrid";
 import { StatusPill } from "./components/StatusPill";
@@ -42,6 +45,8 @@ import { useSpeech } from "./hooks/useSpeech";
 import { formatDuration, scoreTone, scoreValue, weakWordsFromResult } from "./scoreUtils";
 import type {
   Health,
+  MaterialItem,
+  MaterialPackImportPayload,
   PassageIssue,
   PhonemeStat,
   PracticeSession,
@@ -101,6 +106,7 @@ function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [sessions, setSessions] = useState<PracticeSession[]>([]);
   const [vocabulary, setVocabulary] = useState<VocabularyItem[]>([]);
+  const [materials, setMaterials] = useState<MaterialItem[]>([]);
   const [passage, setPassage] = useState(DEFAULT_PASSAGE);
   const [issues, setIssues] = useState<PassageIssue[]>([]);
   const [selectedWordIndex, setSelectedWordIndex] = useState(0);
@@ -124,6 +130,7 @@ function App() {
   const [isChecking, setIsChecking] = useState(false);
   const [isScoring, setIsScoring] = useState(false);
   const [isSavingWords, setIsSavingWords] = useState(false);
+  const [isImportingMaterials, setIsImportingMaterials] = useState(false);
   const [error, setError] = useState("");
 
   const { speakingText, preloadSpeech, playCorrect, stopCurrentSpeech } =
@@ -196,14 +203,16 @@ function App() {
   async function refreshServerState() {
     try {
       setError("");
-      const [nextHealth, nextSessions, nextWords] = await Promise.all([
+      const [nextHealth, nextSessions, nextWords, nextMaterials] = await Promise.all([
         checkHealth(),
         listSessions(),
-        listWords()
+        listWords(),
+        listMaterials()
       ]);
       setHealth(nextHealth);
       setSessions(nextSessions);
       setVocabulary(nextWords);
+      setMaterials(nextMaterials);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Backend is not reachable.");
     }
@@ -211,6 +220,10 @@ function App() {
 
   async function refreshVocabulary() {
     setVocabulary(await listWords());
+  }
+
+  async function refreshMaterials() {
+    setMaterials(await listMaterials());
   }
 
   async function startRecording() {
@@ -426,6 +439,49 @@ function App() {
     setStatus("Word drill ready");
   }
 
+  function practiceMaterial(material: MaterialItem) {
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+    }
+    setPassage(material.text);
+    setResult(null);
+    setCurrentSessionId("");
+    setIssues([]);
+    setSelectedWordIndex(0);
+    setAudioBlob(null);
+    setAudioUrl(null);
+    setRecorderState("idle");
+    setElapsedMs(0);
+    setStatus(`Material ready: ${material.title}`);
+  }
+
+  async function importMaterialFile(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) {
+      return;
+    }
+    setIsImportingMaterials(true);
+    setError("");
+    try {
+      const payload = JSON.parse(await file.text()) as MaterialPackImportPayload;
+      const imported = await importMaterialPack(payload);
+      await refreshMaterials();
+      setStatus(`${imported.materials.length} materials imported`);
+    } catch (err) {
+      setError(
+        err instanceof SyntaxError
+          ? "Material JSON is invalid."
+          : err instanceof Error
+          ? err.message
+          : "Could not import materials."
+      );
+    } finally {
+      input.value = "";
+      setIsImportingMaterials(false);
+    }
+  }
+
   async function loadPhonemeStats() {
     setPhonemeStatsLoading(true);
     setPhonemeStatsError("");
@@ -540,6 +596,13 @@ function App() {
           />
         ) : null}
         <aside className="history-panel side-panel" hidden={appView === "insights"}>
+          <MaterialLibrary
+            materials={materials}
+            isImporting={isImportingMaterials}
+            onSelect={practiceMaterial}
+            onImport={(event) => void importMaterialFile(event)}
+          />
+
           <section className="sidebar-section">
             <div className="panel-heading">
               <History size={18} />

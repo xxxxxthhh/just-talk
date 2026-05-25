@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .audio import (
     AudioTooLongError,
@@ -30,6 +30,28 @@ class WordCreateRequest(BaseModel):
 
 class SpeakRequest(BaseModel):
     text: str
+
+
+class MaterialPackMetaRequest(BaseModel):
+    id: str
+    title: str
+    source: str = "user-imported"
+    license: str = "user-provided"
+
+
+class MaterialLessonRequest(BaseModel):
+    id: str
+    title: str
+    text: str
+    book: str | int | None = None
+    lesson: str | int | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class MaterialPackImportRequest(BaseModel):
+    schema_version: int
+    pack: MaterialPackMetaRequest
+    lessons: list[MaterialLessonRequest]
 
 
 def create_app(
@@ -201,6 +223,18 @@ def create_app(
         if min_attempts is None:
             return active_store.list_phoneme_stats()
         return active_store.list_phoneme_stats(min_attempts=max(min_attempts, 1))
+
+    @app.get("/api/materials")
+    def list_materials() -> list[dict[str, Any]]:
+        return active_store.list_materials()
+
+    @app.post("/api/material-packs/import")
+    def import_material_pack(request: MaterialPackImportRequest) -> dict[str, Any]:
+        payload = request.model_dump()
+        try:
+            return active_store.import_material_pack(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/words")
     def create_word(request: WordCreateRequest) -> dict[str, Any]:

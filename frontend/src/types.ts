@@ -122,3 +122,50 @@ export type PhonemeStat = {
   example_words: PhonemeStatExample[];
   attempts_history?: PhonemeAttempt[];
 };
+
+export type MaterialItem = {
+  id: string;
+  pack_id: string;
+  pack_title: string;
+  title: string;
+  text: string;
+  book: string;
+  lesson: string;
+  tags: string[];
+  source: string;
+  license: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MaterialPack = {
+  id: string;
+  title: string;
+  source: string;
+  license: string;
+  imported_at?: string;
+  updated_at?: string;
+};
+
+export type MaterialPackImportPayload = {
+  schema_version: 1;
+  pack: {
+    id: string;
+    title: string;
+    source?: string;
+    license?: string;
+  };
+  lessons: {
+    id: string;
+    title: string;
+    text: string;
+    book?: string | number | null;
+    lesson?: string | number | null;
+    tags?: string[];
+  }[];
+};
+
+export type MaterialPackImportResponse = {
+  pack: MaterialPack;
+  materials: MaterialItem[];
+};

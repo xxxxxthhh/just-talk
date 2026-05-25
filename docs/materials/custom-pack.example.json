@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "pack": {
+    "id": "custom-pack",
+    "title": "Custom Pack",
+    "source": "user-imported",
+    "license": "user-provided"
+  },
+  "lessons": [
+    {
+      "id": "custom-1",
+      "title": "Clear Morning",
+      "book": "Custom",
+      "lesson": 1,
+      "text": "A clear morning is a good time to practice careful speaking.",
+      "tags": ["short", "custom"]
+    },
+    {
+      "id": "custom-2",
+      "title": "Evening Review",
+      "book": "Custom",
+      "lesson": 2,
+      "text": "After dinner, we reviewed the message and corrected every unclear sentence.",
+      "tags": ["short", "custom"]
+    }
+  ]
+}

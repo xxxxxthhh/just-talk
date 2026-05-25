@@ -1,5 +1,8 @@
 import type {
   Health,
+  MaterialItem,
+  MaterialPackImportPayload,
+  MaterialPackImportResponse,
   PassageIssue,
   PhonemeStat,
   PracticeSession,
@@ -67,6 +70,22 @@ export async function fetchPhonemeStats(minAttempts?: number): Promise<PhonemeSt
     ? `/api/phoneme-stats?min_attempts=${minAttempts}`
     : "/api/phoneme-stats";
   return parseResponse<PhonemeStat[]>(await fetch(url));
+}
+
+export async function listMaterials(): Promise<MaterialItem[]> {
+  return parseResponse<MaterialItem[]>(await fetch("/api/materials"));
+}
+
+export async function importMaterialPack(
+  payload: MaterialPackImportPayload
+): Promise<MaterialPackImportResponse> {
+  return parseResponse<MaterialPackImportResponse>(
+    await fetch("/api/material-packs/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+  );
 }
 
 export async function listWords(): Promise<VocabularyItem[]> {

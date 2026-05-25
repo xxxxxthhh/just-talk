@@ -11,6 +11,52 @@ from .scoring import score_bucket
 VOCABULARY_STATUSES = {"active", "graduated"}
 PHONEME_STAT_MIN_ATTEMPTS = 3
 PHONEME_STAT_MAX_EXAMPLES = 5
+MATERIAL_SCHEMA_VERSION = 1
+
+BUILTIN_MATERIAL_PACK: dict[str, Any] = {
+    "schema_version": MATERIAL_SCHEMA_VERSION,
+    "pack": {
+        "id": "just-talk-starter",
+        "title": "Just Talk Starter",
+        "source": "built-in",
+        "license": "Just Talk original",
+    },
+    "lessons": [
+        {
+            "id": "jt-starter-quiet-streets",
+            "title": "Quiet Streets",
+            "book": "Starter",
+            "lesson": 1,
+            "text": (
+                "The weather changed quickly, but we kept walking through the "
+                "quiet streets and talked about the plans we wanted to finish this week."
+            ),
+            "tags": ["starter", "long-passage"],
+        },
+        {
+            "id": "jt-starter-clear-morning",
+            "title": "Clear Morning",
+            "book": "Starter",
+            "lesson": 2,
+            "text": (
+                "A clear morning is a good time to practice careful speaking, "
+                "steady breathing, and simple sentences."
+            ),
+            "tags": ["starter", "short"],
+        },
+        {
+            "id": "jt-starter-small-project",
+            "title": "Small Project",
+            "book": "Starter",
+            "lesson": 3,
+            "text": (
+                "We finished a small project after dinner, then reviewed every "
+                "detail before sending the final message."
+            ),
+            "tags": ["starter", "short"],
+        },
+    ],
+}
 
 
 class SessionStore:
@@ -19,7 +65,7 @@ class SessionStore:
             raise ValueError("Only sqlite:/// DATABASE_URL values are supported.")
         self.database_path = Path(database_url.removeprefix("sqlite:///"))
 
-    def initialize(self) -> None:
+    def initialize(self, *, seed_builtin_materials: bool = True) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.execute(
@@ -55,8 +101,45 @@ class SessionStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS material_packs (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    license TEXT NOT NULL,
+                    imported_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS materials (
+                    id TEXT PRIMARY KEY,
+                    pack_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    book TEXT NOT NULL,
+                    lesson TEXT NOT NULL,
+                    tags_json TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(pack_id) REFERENCES material_packs(id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_materials_pack_position
+                ON materials (pack_id, position)
+                """
+            )
             self._ensure_practice_session_columns(connection)
             self._ensure_vocabulary_columns(connection)
+        if seed_builtin_materials:
+            self.import_material_pack(BUILTIN_MATERIAL_PACK)
 
     def create_session(
         self,
@@ -137,6 +220,145 @@ class SessionStore:
             "segments": json.loads(row["segments_json"]),
             "words": json.loads(row["words_json"]),
             "raw": json.loads(row["raw_azure_json"]),
+        }
+
+    def list_materials(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    materials.*,
+                    material_packs.title AS pack_title,
+                    material_packs.source AS source,
+                    material_packs.license AS license
+                FROM materials
+                JOIN material_packs ON material_packs.id = materials.pack_id
+                ORDER BY material_packs.title COLLATE NOCASE ASC,
+                         materials.position ASC,
+                         materials.title COLLATE NOCASE ASC
+                """
+            ).fetchall()
+        return [self._row_to_material(row) for row in rows]
+
+    def import_material_pack(self, payload: dict[str, Any]) -> dict[str, Any]:
+        pack, lessons = self._normalize_material_pack(payload)
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            existing_pack = connection.execute(
+                """
+                SELECT imported_at
+                FROM material_packs
+                WHERE id = ?
+                """,
+                (pack["id"],),
+            ).fetchone()
+            imported_at = existing_pack["imported_at"] if existing_pack else now
+            connection.execute(
+                """
+                INSERT INTO material_packs (
+                    id,
+                    title,
+                    source,
+                    license,
+                    imported_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    source = excluded.source,
+                    license = excluded.license,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    pack["id"],
+                    pack["title"],
+                    pack["source"],
+                    pack["license"],
+                    imported_at,
+                    now,
+                ),
+            )
+            lesson_ids = [lesson["id"] for lesson in lessons]
+            placeholders = ", ".join("?" for _ in lesson_ids)
+            conflicting_lesson = connection.execute(
+                f"""
+                SELECT id
+                FROM materials
+                WHERE id IN ({placeholders})
+                  AND pack_id != ?
+                LIMIT 1
+                """,
+                (*lesson_ids, pack["id"]),
+            ).fetchone()
+            if conflicting_lesson is not None:
+                raise ValueError(
+                    f"lesson id already exists in another material pack: {conflicting_lesson['id']}"
+                )
+            connection.execute(
+                """
+                DELETE FROM materials
+                WHERE pack_id = ?
+                """,
+                (pack["id"],),
+            )
+            for position, lesson in enumerate(lessons):
+                connection.execute(
+                    """
+                    INSERT INTO materials (
+                        id,
+                        pack_id,
+                        title,
+                        text,
+                        book,
+                        lesson,
+                        tags_json,
+                        position,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        lesson["id"],
+                        pack["id"],
+                        lesson["title"],
+                        lesson["text"],
+                        lesson["book"],
+                        lesson["lesson"],
+                        json.dumps(lesson["tags"]),
+                        position,
+                        now,
+                        now,
+                    ),
+                )
+            pack_row = connection.execute(
+                """
+                SELECT *
+                FROM material_packs
+                WHERE id = ?
+                """,
+                (pack["id"],),
+            ).fetchone()
+            material_rows = connection.execute(
+                """
+                SELECT
+                    materials.*,
+                    material_packs.title AS pack_title,
+                    material_packs.source AS source,
+                    material_packs.license AS license
+                FROM materials
+                JOIN material_packs ON material_packs.id = materials.pack_id
+                WHERE materials.pack_id = ?
+                ORDER BY materials.position ASC
+                """,
+                (pack["id"],),
+            ).fetchall()
+        if pack_row is None:
+            raise KeyError(pack["id"])
+        return {
+            "pack": self._row_to_material_pack(pack_row),
+            "materials": [self._row_to_material(row) for row in material_rows],
         }
 
     def create_word(
@@ -490,6 +712,100 @@ class SessionStore:
             "status": row["status"],
             "consecutive_successes": row["consecutive_successes"],
             "graduated_at": row["graduated_at"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _normalize_material_pack(
+        self,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, str], list[dict[str, Any]]]:
+        if payload.get("schema_version") != MATERIAL_SCHEMA_VERSION:
+            raise ValueError("schema_version must be 1.")
+        pack_payload = payload.get("pack")
+        if not isinstance(pack_payload, dict):
+            raise ValueError("pack is required.")
+        pack = {
+            "id": self._required_text(pack_payload.get("id"), "pack id is required."),
+            "title": self._required_text(pack_payload.get("title"), "pack title is required."),
+            "source": self._optional_text(pack_payload.get("source")) or "user-imported",
+            "license": self._optional_text(pack_payload.get("license")) or "user-provided",
+        }
+
+        lesson_payloads = payload.get("lessons")
+        if not isinstance(lesson_payloads, list) or not lesson_payloads:
+            raise ValueError("lessons are required.")
+
+        lessons: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for lesson_payload in lesson_payloads:
+            if not isinstance(lesson_payload, dict):
+                raise ValueError("lesson must be an object.")
+            lesson_id = self._required_text(
+                lesson_payload.get("id"),
+                "lesson id is required.",
+            )
+            if lesson_id in seen_ids:
+                raise ValueError("lesson id must be unique.")
+            seen_ids.add(lesson_id)
+            tags_payload = lesson_payload.get("tags", [])
+            if tags_payload is None:
+                tags_payload = []
+            if not isinstance(tags_payload, list):
+                raise ValueError("lesson tags must be a list.")
+            lessons.append({
+                "id": lesson_id,
+                "title": self._required_text(
+                    lesson_payload.get("title"),
+                    "lesson title is required.",
+                ),
+                "text": self._required_text(
+                    lesson_payload.get("text"),
+                    "lesson text is required.",
+                ),
+                "book": self._optional_text(lesson_payload.get("book")),
+                "lesson": self._optional_text(lesson_payload.get("lesson")),
+                "tags": [
+                    tag
+                    for tag in (self._optional_text(item) for item in tags_payload)
+                    if tag
+                ],
+            })
+        return pack, lessons
+
+    def _required_text(self, value: Any, message: str) -> str:
+        text = self._optional_text(value)
+        if not text:
+            raise ValueError(message)
+        return text
+
+    def _optional_text(self, value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    def _row_to_material_pack(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "source": row["source"],
+            "license": row["license"],
+            "imported_at": row["imported_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _row_to_material(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "pack_id": row["pack_id"],
+            "pack_title": row["pack_title"],
+            "title": row["title"],
+            "text": row["text"],
+            "book": row["book"],
+            "lesson": row["lesson"],
+            "tags": json.loads(row["tags_json"]),
+            "source": row["source"],
+            "license": row["license"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }

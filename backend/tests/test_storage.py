@@ -10,7 +10,7 @@ class StorageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "sessions.db"
             store = SessionStore(f"sqlite:///{database_path}")
-            store.initialize()
+            store.initialize(seed_builtin_materials=False)
 
             created = store.create_session(
                 reference_text="Hello world.",
@@ -38,7 +38,7 @@ class StorageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "sessions.db"
             store = SessionStore(f"sqlite:///{database_path}")
-            store.initialize()
+            store.initialize(seed_builtin_materials=False)
 
             created = store.create_word(" Quiet ", source="manual")
             duplicate = store.create_word("quiet", source="manual")
@@ -61,7 +61,7 @@ class StorageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "sessions.db"
             store = SessionStore(f"sqlite:///{database_path}")
-            store.initialize()
+            store.initialize(seed_builtin_materials=False)
             session = store.create_session(
                 reference_text="Quiet streets quickly.",
                 audio_duration_ms=1400,
@@ -91,7 +91,7 @@ class StorageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "sessions.db"
             store = SessionStore(f"sqlite:///{database_path}")
-            store.initialize()
+            store.initialize(seed_builtin_materials=False)
             store.create_word("quiet")
 
             first_practice = store.record_word_practice("quiet", latest_score=86.0)
@@ -113,7 +113,7 @@ class StorageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "sessions.db"
             store = SessionStore(f"sqlite:///{database_path}")
-            store.initialize()
+            store.initialize(seed_builtin_materials=False)
             store.create_word("Quiet")
             store.record_word_practice("quiet", latest_score=90.0)
             store.record_word_practice("quiet", latest_score=91.0)
@@ -139,6 +139,135 @@ class StorageTests(unittest.TestCase):
         self.assertIsNone(added[0]["graduated_at"])
         self.assertEqual(active_words[0]["word"], "Quiet")
         self.assertEqual(graduated_words, [])
+
+    def test_imports_material_pack_and_lists_materials_in_pack_order(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "sessions.db"
+            store = SessionStore(f"sqlite:///{database_path}")
+            store.initialize(seed_builtin_materials=False)
+
+            imported = store.import_material_pack({
+                "schema_version": 1,
+                "pack": {
+                    "id": "starter-originals",
+                    "title": "Starter Originals",
+                    "source": "built-in",
+                    "license": "CC0",
+                },
+                "lessons": [
+                    {
+                        "id": "starter-1",
+                        "title": "Morning Walk",
+                        "book": "Starter",
+                        "lesson": 1,
+                        "text": "The morning air was cool and clear.",
+                        "tags": ["short", "starter"],
+                    },
+                    {
+                        "id": "starter-2",
+                        "title": "Small Plans",
+                        "book": "Starter",
+                        "lesson": 2,
+                        "text": "We made small plans before lunch.",
+                        "tags": ["short"],
+                    },
+                ],
+            })
+            materials = store.list_materials()
+
+        self.assertEqual(imported["pack"]["id"], "starter-originals")
+        self.assertEqual([item["id"] for item in imported["materials"]], ["starter-1", "starter-2"])
+        self.assertEqual([item["id"] for item in materials], ["starter-1", "starter-2"])
+        self.assertEqual(materials[0]["pack_title"], "Starter Originals")
+        self.assertEqual(materials[0]["source"], "built-in")
+        self.assertEqual(materials[0]["license"], "CC0")
+        self.assertEqual(materials[0]["tags"], ["short", "starter"])
+
+    def test_reimporting_material_pack_replaces_existing_pack_contents(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "sessions.db"
+            store = SessionStore(f"sqlite:///{database_path}")
+            store.initialize(seed_builtin_materials=False)
+
+            store.import_material_pack({
+                "schema_version": 1,
+                "pack": {"id": "custom", "title": "Custom Pack"},
+                "lessons": [
+                    {"id": "old-lesson", "title": "Old", "text": "Old text."},
+                    {"id": "shared-lesson", "title": "Shared", "text": "Before."},
+                ],
+            })
+            imported = store.import_material_pack({
+                "schema_version": 1,
+                "pack": {"id": "custom", "title": "Custom Pack Updated"},
+                "lessons": [
+                    {"id": "shared-lesson", "title": "Shared Updated", "text": "After."},
+                ],
+            })
+            materials = store.list_materials()
+
+        self.assertEqual(imported["pack"]["title"], "Custom Pack Updated")
+        self.assertEqual(len(materials), 1)
+        self.assertEqual(materials[0]["id"], "shared-lesson")
+        self.assertEqual(materials[0]["title"], "Shared Updated")
+        self.assertEqual(materials[0]["text"], "After.")
+
+    def test_material_pack_import_rejects_empty_lesson_text(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "sessions.db"
+            store = SessionStore(f"sqlite:///{database_path}")
+            store.initialize(seed_builtin_materials=False)
+
+            with self.assertRaisesRegex(ValueError, "lesson text is required"):
+                store.import_material_pack({
+                    "schema_version": 1,
+                    "pack": {"id": "broken", "title": "Broken"},
+                    "lessons": [
+                        {"id": "empty", "title": "Empty", "text": "   "},
+                    ],
+                })
+
+    def test_material_pack_import_rejects_lesson_id_from_another_pack(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "sessions.db"
+            store = SessionStore(f"sqlite:///{database_path}")
+            store.initialize()
+
+            with self.assertRaisesRegex(ValueError, "lesson id already exists"):
+                store.import_material_pack({
+                    "schema_version": 1,
+                    "pack": {"id": "custom", "title": "Custom"},
+                    "lessons": [
+                        {
+                            "id": "jt-starter-clear-morning",
+                            "title": "Collision",
+                            "text": "This id belongs to the built-in starter pack.",
+                        },
+                    ],
+                })
+
+    def test_initialization_seeds_original_builtin_materials(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "sessions.db"
+            store = SessionStore(f"sqlite:///{database_path}")
+            store.initialize()
+
+            materials = store.list_materials()
+
+        self.assertGreaterEqual(len(materials), 3)
+        self.assertEqual(materials[0]["pack_id"], "just-talk-starter")
+        self.assertEqual(materials[0]["source"], "built-in")
+        self.assertEqual(materials[0]["license"], "Just Talk original")
 
 
 class PhonemeStatsTests(unittest.TestCase):

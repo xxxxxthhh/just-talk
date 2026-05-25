@@ -9,7 +9,9 @@ function mockApi(payloads: Record<string, unknown>) {
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      const payload = payloads[url];
+      const payload = url === "/api/materials" && payloads[url] === undefined
+        ? []
+        : payloads[url];
       if (payload === undefined) {
         return {
           ok: false,
@@ -112,6 +114,120 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue("quiet")).toBeInTheDocument();
     });
+  });
+
+  test("uses a material as the next practice passage", async () => {
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/materials": [
+        {
+          id: "starter-clear-morning",
+          pack_id: "just-talk-starter",
+          pack_title: "Just Talk Starter",
+          title: "Clear Morning",
+          text: "A clear morning is a good time to practice careful speaking.",
+          book: "Starter",
+          lesson: "2",
+          tags: ["starter", "short"],
+          source: "built-in",
+          license: "Just Talk original",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        }
+      ]
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Clear Morning/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByDisplayValue("A clear morning is a good time to practice careful speaking.")
+      ).toBeInTheDocument();
+    });
+  });
+
+  test("imports a material JSON file and refreshes the material list", async () => {
+    const user = userEvent.setup();
+    const importedMaterial = {
+      id: "custom-1",
+      pack_id: "custom-pack",
+      pack_title: "Custom Pack",
+      title: "Imported Lesson",
+      text: "Imported practice text.",
+      book: "",
+      lesson: "",
+      tags: [],
+      source: "user-imported",
+      license: "user-provided",
+      created_at: "2026-05-25T00:00:00Z",
+      updated_at: "2026-05-25T00:00:00Z"
+    };
+    let materialListCalls = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/health") {
+        return { ok: true, json: async () => health };
+      }
+      if (url === "/api/sessions" || url === "/api/words") {
+        return { ok: true, json: async () => [] };
+      }
+      if (url === "/api/materials") {
+        materialListCalls += 1;
+        return {
+          ok: true,
+          json: async () => (materialListCalls === 1 ? [] : [importedMaterial])
+        };
+      }
+      if (url === "/api/material-packs/import") {
+        return {
+          ok: true,
+          json: async () => ({
+            pack: { id: "custom-pack", title: "Custom Pack" },
+            materials: [importedMaterial]
+          })
+        };
+      }
+      return {
+        ok: false,
+        json: async () => ({ detail: `No mock for ${url}` })
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    const file = new File(
+      [
+        JSON.stringify({
+          schema_version: 1,
+          pack: { id: "custom-pack", title: "Custom Pack" },
+          lessons: [{ id: "custom-1", title: "Imported Lesson", text: "Imported practice text." }]
+        })
+      ],
+      "materials.json",
+      { type: "application/json" }
+    );
+
+    await user.upload(await screen.findByLabelText(/Import material JSON/i), file);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/material-packs/import",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining("Imported Lesson")
+        })
+      );
+      expect(screen.getByRole("button", { name: /Imported Lesson/i })).toBeInTheDocument();
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/material-packs/import",
+      expect.objectContaining({
+        body: expect.stringContaining("Imported practice text.")
+      })
+    );
   });
 
   test("separates in-progress and graduated word bank entries into tabs", async () => {

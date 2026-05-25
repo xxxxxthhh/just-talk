@@ -330,6 +330,83 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(history.json()[0]["scores"]["pronunciation"], 84.0)
         self.assertEqual(scorer.continuous_reference_text, "Quiet streets. We kept walking.")
 
+    def test_material_endpoints_import_and_list_materials(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+            app = create_app(
+                settings=Settings(database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}"),
+                store=store,
+            )
+            client = TestClient(app)
+
+            initial = client.get("/api/materials")
+            imported = client.post(
+                "/api/material-packs/import",
+                json={
+                    "schema_version": 1,
+                    "pack": {
+                        "id": "custom-pack",
+                        "title": "Custom Pack",
+                        "source": "user-imported",
+                        "license": "user-provided",
+                    },
+                    "lessons": [
+                        {
+                            "id": "custom-1",
+                            "title": "Clear Morning",
+                            "book": "Custom",
+                            "lesson": 1,
+                            "text": "A clear morning is a good time to practice.",
+                            "tags": ["custom", "short"],
+                        }
+                    ],
+                },
+            )
+            materials = client.get("/api/materials")
+
+        self.assertEqual(initial.status_code, 200)
+        self.assertTrue(any(item["pack_id"] == "just-talk-starter" for item in initial.json()))
+        self.assertEqual(imported.status_code, 200)
+        self.assertEqual(imported.json()["pack"]["id"], "custom-pack")
+        self.assertEqual(imported.json()["materials"][0]["id"], "custom-1")
+        self.assertEqual(materials.status_code, 200)
+        custom_material = next(item for item in materials.json() if item["id"] == "custom-1")
+        self.assertEqual(custom_material["title"], "Clear Morning")
+        self.assertEqual(custom_material["pack_title"], "Custom Pack")
+
+    def test_material_import_endpoint_returns_400_for_invalid_pack(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+            app = create_app(
+                settings=Settings(database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}"),
+                store=store,
+            )
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/material-packs/import",
+                json={
+                    "schema_version": 1,
+                    "pack": {"id": "broken", "title": "Broken"},
+                    "lessons": [{"id": "empty", "title": "Empty", "text": " "}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("lesson text is required", response.json()["detail"])
+
 
 class PhonemeStatsApiTests(unittest.TestCase):
     def test_phoneme_stats_endpoint_returns_aggregated_and_sorted_data(self):

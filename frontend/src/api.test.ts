@@ -6,11 +6,14 @@ import {
   createWord,
   deleteWord,
   getSession,
+  importMaterialPack,
+  listMaterials,
   listWords,
   scoreLongRecording,
   scoreRecording,
   speakText
 } from "./api";
+import type { MaterialPackImportPayload } from "./types";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -130,6 +133,44 @@ describe("api client", () => {
       4,
       "/api/words/word-2",
       expect.objectContaining({ method: "DELETE" })
+    );
+  });
+
+  test("manages material library entries", async () => {
+    const payload: MaterialPackImportPayload = {
+      schema_version: 1,
+      pack: { id: "custom-pack", title: "Custom Pack" },
+      lessons: [{ id: "custom-1", title: "Custom Lesson", text: "Practice clearly." }]
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ id: "starter-1", title: "Starter", text: "Start here." }]
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          pack: { id: "custom-pack", title: "Custom Pack" },
+          materials: [{ id: "custom-1", title: "Custom Lesson", text: "Practice clearly." }]
+        })
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const materials = await listMaterials();
+    const imported = await importMaterialPack(payload);
+
+    expect(materials[0].title).toBe("Starter");
+    expect(imported.materials[0].id).toBe("custom-1");
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/materials");
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/material-packs/import",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
     );
   });
 

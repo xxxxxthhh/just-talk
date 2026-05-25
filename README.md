@@ -11,6 +11,7 @@ The app is designed for personal learning workflows: read a passage, inspect wea
 - Azure Pronunciation Assessment scoring for accuracy, fluency, completeness, prosody, and overall pronunciation.
 - Word-level and phoneme-level review, including likely heard alternatives when Azure returns them.
 - Standard pronunciation playback for passages and selected words.
+- Built-in original practice materials plus local JSON material import.
 - Local history stored in SQLite.
 - Local word bank for weak words and manual vocabulary practice, with in-progress and graduated views.
 - Optional passage quality check through an OpenAI-compatible LLM endpoint.
@@ -56,6 +57,36 @@ The app records in the browser, sends the audio to FastAPI, converts it to 16 kH
 
 Short Drill is limited by `MAX_AUDIO_SECONDS` and uses Azure single-shot pronunciation assessment. Long Passage is limited by `MAX_LONG_AUDIO_SECONDS` and uses Azure continuous pronunciation assessment for longer readings. History rows restore full word and phoneme feedback. Low-scoring words can be saved into the local word bank, then clicked to practice one word at a time. Word drills graduate automatically after repeated scores above the configured threshold, and later low-scoring passage results move them back into the in-progress list.
 
+## Material Import
+
+The Materials panel includes a few original built-in passages and accepts local JSON imports. Imported materials stay in the local SQLite database and can be selected as the current passage.
+
+Use `schema_version: 1`:
+
+```json
+{
+  "schema_version": 1,
+  "pack": {
+    "id": "custom-pack",
+    "title": "Custom Pack",
+    "source": "user-imported",
+    "license": "user-provided"
+  },
+  "lessons": [
+    {
+      "id": "custom-1",
+      "title": "Clear Morning",
+      "book": "Custom",
+      "lesson": 1,
+      "text": "A clear morning is a good time to practice careful speaking.",
+      "tags": ["short", "custom"]
+    }
+  ]
+}
+```
+
+Only import material you have the right to use. The project does not vendor third-party copyrighted course text or audio.
+
 ## Optional Passage Check
 
 The passage check button stays disabled unless these are set in `.env`:
@@ -83,6 +114,7 @@ frontend/            React/Vite app
 frontend/src/        Frontend components, API client, types, and tests
 scripts/dev.sh       Starts FastAPI and Vite together
 scripts/test.sh      Runs backend tests, frontend tests, and frontend build
+docs/materials/      Example material import files
 docs/research/       Initial technical research and provider evaluation
 docs/design/         Product and architecture design notes
 docs/development/    Implementation planning notes
