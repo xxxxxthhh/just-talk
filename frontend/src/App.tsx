@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   BookmarkPlus,
+  BookOpen,
   BookOpenCheck,
   Clock3,
   History,
@@ -37,9 +38,10 @@ import {
 } from "./api";
 import { AudioPlayer } from "./components/AudioPlayer";
 import { InsightsPanel } from "./components/InsightsPanel";
-import { MaterialLibrary } from "./components/MaterialLibrary";
+import { MaterialImportAction, MaterialLibrary } from "./components/MaterialLibrary";
 import { PhonemeInspector } from "./components/PhonemeInspector";
 import { ScoreGrid } from "./components/ScoreGrid";
+import { SidebarSection } from "./components/SidebarSection";
 import { StatusPill } from "./components/StatusPill";
 import { useSpeech } from "./hooks/useSpeech";
 import { formatDuration, scoreTone, scoreValue, weakWordsFromResult } from "./scoreUtils";
@@ -62,6 +64,7 @@ type RecorderState = "idle" | "recording" | "recorded";
 type WordBankTab = "active" | "graduated";
 type PracticeMode = "short" | "long";
 type AppView = "practice" | "insights";
+type SidebarPanel = "materials" | "history" | "word-bank";
 
 function normalizedWord(word: string): string {
   return word.trim().toLocaleLowerCase();
@@ -118,6 +121,7 @@ function App() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
   const [appView, setAppView] = useState<AppView>("practice");
+  const [expandedSidebarPanel, setExpandedSidebarPanel] = useState<SidebarPanel | null>("materials");
   const [phonemeStats, setPhonemeStats] = useState<PhonemeStat[]>([]);
   const [phonemeStatsLoading, setPhonemeStatsLoading] = useState(false);
   const [phonemeStatsError, setPhonemeStatsError] = useState("");
@@ -527,6 +531,10 @@ function App() {
     void preloadSpeech(passage);
   }
 
+  function toggleSidebarPanel(panel: SidebarPanel) {
+    setExpandedSidebarPanel((current) => (current === panel ? null : panel));
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -596,18 +604,31 @@ function App() {
           />
         ) : null}
         <aside className="history-panel side-panel" hidden={appView === "insights"}>
-          <MaterialLibrary
-            materials={materials}
-            isImporting={isImportingMaterials}
-            onSelect={practiceMaterial}
-            onImport={(event) => void importMaterialFile(event)}
-          />
+          <SidebarSection
+            id="materials-section"
+            title="Materials"
+            icon={<BookOpen size={18} />}
+            count={materials.length}
+            isExpanded={expandedSidebarPanel === "materials"}
+            onToggle={() => toggleSidebarPanel("materials")}
+            actions={
+              <MaterialImportAction
+                isImporting={isImportingMaterials}
+                onImport={(event) => void importMaterialFile(event)}
+              />
+            }
+          >
+            <MaterialLibrary materials={materials} onSelect={practiceMaterial} />
+          </SidebarSection>
 
-          <section className="sidebar-section">
-            <div className="panel-heading">
-              <History size={18} />
-              <h2>History</h2>
-            </div>
+          <SidebarSection
+            id="history-section"
+            title="History"
+            icon={<History size={18} />}
+            count={sessions.length}
+            isExpanded={expandedSidebarPanel === "history"}
+            onToggle={() => toggleSidebarPanel("history")}
+          >
             <div className="history-list">
               {sessions.length === 0 ? (
                 <p className="muted">No sessions yet.</p>
@@ -625,13 +646,16 @@ function App() {
                 ))
               )}
             </div>
-          </section>
+          </SidebarSection>
 
-          <section className="sidebar-section">
-            <div className="panel-heading">
-              <BookmarkPlus size={18} />
-              <h2>Word Bank</h2>
-            </div>
+          <SidebarSection
+            id="word-bank-section"
+            title="Word Bank"
+            icon={<BookmarkPlus size={18} />}
+            count={vocabulary.length}
+            isExpanded={expandedSidebarPanel === "word-bank"}
+            onToggle={() => toggleSidebarPanel("word-bank")}
+          >
             <form className="word-form" onSubmit={(event) => void addManualWord(event)}>
               <input
                 value={newWord}
@@ -704,7 +728,7 @@ function App() {
                 ))
               )}
             </div>
-          </section>
+          </SidebarSection>
         </aside>
 
         <section className="practice-panel" hidden={appView === "insights"}>

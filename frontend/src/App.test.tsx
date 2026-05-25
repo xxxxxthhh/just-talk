@@ -77,6 +77,7 @@ describe("App", () => {
     });
 
     render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /History/i }));
     await userEvent.click(await screen.findByRole("button", { name: /90/ }));
 
     await waitFor(() => {
@@ -109,6 +110,7 @@ describe("App", () => {
     });
 
     render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Word Bank/i }));
     await userEvent.click(await screen.findByRole("button", { name: /quiet.*73.*2/i }));
 
     await waitFor(() => {
@@ -230,6 +232,80 @@ describe("App", () => {
     );
   });
 
+  test("collapses left sidebar sections and expands one section at a time", async () => {
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [
+        {
+          id: "session-1",
+          created_at: "2026-05-24T10:00:00Z",
+          reference_text: "Quiet streets.",
+          audio_duration_ms: 1400,
+          scores: { pronunciation: 90, accuracy: 88, fluency: 91, completeness: 100, prosody: 84 }
+        }
+      ],
+      "/api/words": [
+        {
+          id: "word-1",
+          word: "quiet",
+          source: "manual",
+          notes: "",
+          latest_score: 73,
+          practice_count: 2,
+          last_practiced_at: "2026-05-24T10:00:00Z",
+          status: "active",
+          consecutive_successes: 0,
+          graduated_at: null,
+          created_at: "2026-05-24T09:00:00Z",
+          updated_at: "2026-05-24T10:00:00Z"
+        }
+      ],
+      "/api/materials": [
+        {
+          id: "starter-clear-morning",
+          pack_id: "just-talk-starter",
+          pack_title: "Just Talk Starter",
+          title: "Clear Morning",
+          text: "A clear morning is a good time to practice careful speaking.",
+          book: "Starter",
+          lesson: "2",
+          tags: ["starter", "short"],
+          source: "built-in",
+          license: "Just Talk original",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        }
+      ]
+    });
+
+    render(<App />);
+
+    const materialsToggle = await screen.findByRole("button", { name: /Materials\s*1/i });
+    const historyToggle = screen.getByRole("button", { name: /History\s*1/i });
+    const wordBankToggle = screen.getByRole("button", { name: /Word Bank\s*1/i });
+
+    expect(materialsToggle).toHaveAttribute("aria-expanded", "true");
+    expect(historyToggle).toHaveAttribute("aria-expanded", "false");
+    expect(wordBankToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: /Clear Morning/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /90/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /quiet.*73/i })).not.toBeInTheDocument();
+
+    await userEvent.click(historyToggle);
+
+    expect(historyToggle).toHaveAttribute("aria-expanded", "true");
+    expect(materialsToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: /90/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Clear Morning/i })).not.toBeInTheDocument();
+
+    await userEvent.click(wordBankToggle);
+
+    expect(wordBankToggle).toHaveAttribute("aria-expanded", "true");
+    expect(historyToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: /quiet.*73.*0\/2/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /90/ })).not.toBeInTheDocument();
+  });
+
   test("separates in-progress and graduated word bank entries into tabs", async () => {
     mockApi({
       "/api/health": health,
@@ -267,6 +343,7 @@ describe("App", () => {
     });
 
     render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Word Bank/i }));
 
     expect(await screen.findByRole("button", { name: /quiet.*73.*0\/2/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /through.*91/i })).not.toBeInTheDocument();
