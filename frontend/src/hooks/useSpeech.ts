@@ -9,6 +9,8 @@ type SpeechCacheEntry = {
   lastUsed: number;
 };
 
+type SpeechStatus = "idle" | "loading" | "playing";
+
 function normalizedSpeechText(text: string): string {
   return text.trim();
 }
@@ -21,11 +23,13 @@ function responseToObjectUrl(response: Awaited<ReturnType<typeof speakText>>): s
 
 export function useSpeech(setError: (msg: string) => void) {
   const [speakingText, setSpeakingText] = useState("");
+  const [speechStatus, setSpeechStatus] = useState<SpeechStatus>("idle");
   const speechAudioRef = useRef<HTMLAudioElement | null>(null);
   const currentSpeechKeyRef = useRef("");
+  const playbackRequestRef = useRef(0);
   const cacheRef = useRef<Map<string, SpeechCacheEntry>>(new Map());
 
-  const stopCurrentSpeech = useCallback(() => {
+  const pauseCurrentSpeechAudio = useCallback(() => {
     if (speechAudioRef.current) {
       speechAudioRef.current.pause();
       speechAudioRef.current.currentTime = 0;
@@ -33,6 +37,13 @@ export function useSpeech(setError: (msg: string) => void) {
     }
     currentSpeechKeyRef.current = "";
   }, []);
+
+  const stopCurrentSpeech = useCallback(() => {
+    playbackRequestRef.current += 1;
+    pauseCurrentSpeechAudio();
+    setSpeakingText("");
+    setSpeechStatus("idle");
+  }, [pauseCurrentSpeechAudio]);
 
   const evictOldSpeech = useCallback(() => {
     const cache = cacheRef.current;
@@ -100,7 +111,8 @@ export function useSpeech(setError: (msg: string) => void) {
 
   useEffect(() => {
     return () => {
-      stopCurrentSpeech();
+      playbackRequestRef.current += 1;
+      pauseCurrentSpeechAudio();
       for (const entry of cacheRef.current.values()) {
         if (entry.url) {
           URL.revokeObjectURL(entry.url);
@@ -108,41 +120,44 @@ export function useSpeech(setError: (msg: string) => void) {
       }
       cacheRef.current.clear();
     };
-  }, [stopCurrentSpeech]);
+  }, [pauseCurrentSpeechAudio]);
 
   const playCorrect = useCallback(async (text: string) => {
     const spokenText = normalizedSpeechText(text);
     if (!spokenText) return;
     setError("");
+    playbackRequestRef.current += 1;
+    const requestId = playbackRequestRef.current;
+    pauseCurrentSpeechAudio();
     setSpeakingText(spokenText);
+    setSpeechStatus("loading");
     try {
-      stopCurrentSpeech();
       const speechUrl = await loadSpeechUrl(spokenText);
+      if (playbackRequestRef.current !== requestId) {
+        return;
+      }
       const audio = new Audio(speechUrl);
       speechAudioRef.current = audio;
       currentSpeechKeyRef.current = spokenText;
-      audio.onended = () => {
-        if (speechAudioRef.current === audio) {
+      const clearIfCurrent = () => {
+        if (speechAudioRef.current === audio && playbackRequestRef.current === requestId) {
           speechAudioRef.current = null;
           currentSpeechKeyRef.current = "";
           setSpeakingText("");
+          setSpeechStatus("idle");
         }
       };
-      audio.onerror = () => {
-        if (speechAudioRef.current === audio) {
-          speechAudioRef.current = null;
-          currentSpeechKeyRef.current = "";
-          setSpeakingText("");
-        }
-      };
+      audio.onended = clearIfCurrent;
+      audio.onerror = clearIfCurrent;
+      setSpeechStatus("playing");
       await audio.play();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not play pronunciation.");
-      stopCurrentSpeech();
-    } finally {
-      setSpeakingText("");
+      if (playbackRequestRef.current === requestId) {
+        setError(err instanceof Error ? err.message : "Could not play pronunciation.");
+        stopCurrentSpeech();
+      }
     }
-  }, [loadSpeechUrl, setError, stopCurrentSpeech]);
+  }, [loadSpeechUrl, pauseCurrentSpeechAudio, setError, stopCurrentSpeech]);
 
-  return { speakingText, preloadSpeech, playCorrect, stopCurrentSpeech };
+  return { speakingText, speechStatus, preloadSpeech, playCorrect, stopCurrentSpeech };
 }

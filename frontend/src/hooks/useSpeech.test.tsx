@@ -45,7 +45,7 @@ describe("useSpeech", () => {
       })
     );
 
-    let controls: ReturnType<typeof useSpeech> | null = null;
+    let controls!: ReturnType<typeof useSpeech>;
     function SpeechHarness() {
       controls = useSpeech(vi.fn());
       return null;
@@ -108,5 +108,161 @@ describe("useSpeech", () => {
     expect(audioInstances[0].pause).toHaveBeenCalledTimes(1);
     expect(audioInstances[0].currentTime).toBe(0);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:pronunciation");
+  });
+
+  test("keeps speech active until it is stopped", async () => {
+    const audioInstances: {
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      currentTime: number;
+    }[] = [];
+
+    mockSpeechApi();
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0,
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+
+    let controls!: ReturnType<typeof useSpeech>;
+    function SpeechHarness() {
+      controls = useSpeech(vi.fn());
+      return null;
+    }
+
+    render(<SpeechHarness />);
+
+    await act(async () => {
+      await controls.playCorrect("quiet");
+    });
+
+    expect(controls.speakingText).toBe("quiet");
+    expect(controls.speechStatus).toBe("playing");
+
+    act(() => {
+      controls.stopCurrentSpeech();
+    });
+
+    expect(audioInstances[0].pause).toHaveBeenCalledTimes(1);
+    expect(audioInstances[0].currentTime).toBe(0);
+    expect(controls.speakingText).toBe("");
+    expect(controls.speechStatus).toBe("idle");
+  });
+
+  test("does not start playback when stopped before synthesis finishes", async () => {
+    let resolveSpeech!: (value: {
+      ok: boolean;
+      json: () => Promise<{ audio_base64: string; content_type: string }>;
+    }) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveSpeech = resolve;
+          })
+      )
+    );
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        return {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0,
+        };
+      })
+    );
+
+    let controls!: ReturnType<typeof useSpeech>;
+    function SpeechHarness() {
+      controls = useSpeech(vi.fn());
+      return null;
+    }
+
+    render(<SpeechHarness />);
+
+    let playPromise: Promise<void>;
+    act(() => {
+      playPromise = controls.playCorrect("quiet");
+    });
+    expect(controls.speakingText).toBe("quiet");
+    expect(controls.speechStatus).toBe("loading");
+
+    act(() => {
+      controls.stopCurrentSpeech();
+    });
+
+    await act(async () => {
+      resolveSpeech({
+        ok: true,
+        json: async () => ({ audio_base64: "YXVkaW8=", content_type: "audio/mpeg" }),
+      });
+      await playPromise;
+    });
+
+    expect(Audio).not.toHaveBeenCalled();
+    expect(controls.speakingText).toBe("");
+    expect(controls.speechStatus).toBe("idle");
+  });
+
+  test("stops current speech before playing a different pronunciation", async () => {
+    const audioInstances: {
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      currentTime: number;
+    }[] = [];
+
+    mockSpeechApi();
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0,
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+
+    let controls!: ReturnType<typeof useSpeech>;
+    function SpeechHarness() {
+      controls = useSpeech(vi.fn());
+      return null;
+    }
+
+    render(<SpeechHarness />);
+
+    await act(async () => {
+      await controls.playCorrect("quiet");
+      await controls.playCorrect("streets");
+    });
+
+    expect(audioInstances).toHaveLength(2);
+    expect(audioInstances[0].pause).toHaveBeenCalledTimes(1);
+    expect(audioInstances[0].currentTime).toBe(0);
+    expect(audioInstances[1].play).toHaveBeenCalledTimes(1);
+    expect(controls.speakingText).toBe("streets");
   });
 });

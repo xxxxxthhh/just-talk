@@ -8,7 +8,15 @@ function formatAudioTime(secs: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-export function AudioPlayer({ audioUrl }: { audioUrl: string }) {
+export function AudioPlayer({
+  audioUrl,
+  onPlayStart,
+  stopSignal,
+}: {
+  audioUrl: string;
+  onPlayStart?: () => void;
+  stopSignal?: number;
+}) {
   const {
     isAudioPlaying,
     audioCurrentTime,
@@ -19,7 +27,7 @@ export function AudioPlayer({ audioUrl }: { audioUrl: string }) {
     setIsAudioPlaying,
     setAudioCurrentTime,
     setAudioDuration,
-  } = useAudioPlayer(audioUrl);
+  } = useAudioPlayer(audioUrl, { onPlayStart, stopSignal });
 
   return (
     <div className="custom-audio-player">

@@ -119,6 +119,7 @@ function App() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [recordingPlaybackStopSignal, setRecordingPlaybackStopSignal] = useState(0);
 
   const [appView, setAppView] = useState<AppView>("practice");
   const [expandedSidebarPanel, setExpandedSidebarPanel] = useState<SidebarPanel | null>("materials");
@@ -137,7 +138,7 @@ function App() {
   const [isImportingMaterials, setIsImportingMaterials] = useState(false);
   const [error, setError] = useState("");
 
-  const { speakingText, preloadSpeech, playCorrect, stopCurrentSpeech } =
+  const { speakingText, speechStatus, preloadSpeech, playCorrect, stopCurrentSpeech } =
     useSpeech(setError);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -151,6 +152,8 @@ function App() {
   const isLongMode = practiceMode === "long";
   const maxMs = (isLongMode ? longLimitSeconds : shortLimitSeconds) * 1000;
   const weakWords = useMemo(() => (result ? weakWordsFromResult(result) : []), [result]);
+  const trimmedPassage = passage.trim();
+  const isPassageSpeechActive = Boolean(trimmedPassage && speakingText === trimmedPassage);
   const savedWords = useMemo(
     () => new Set(vocabulary.map((item) => normalizedWord(item.word))),
     [vocabulary]
@@ -233,6 +236,8 @@ function App() {
   async function startRecording() {
     setError("");
     setStatus("");
+    stopCurrentSpeech();
+    stopRecordingPlayback();
     if (!navigator.mediaDevices?.getUserMedia) {
       setError("This browser cannot access the microphone.");
       return;
@@ -429,6 +434,8 @@ function App() {
   }
 
   function practiceVocabularyWord(item: VocabularyItem) {
+    stopCurrentSpeech();
+    stopRecordingPlayback();
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl);
     }
@@ -444,6 +451,8 @@ function App() {
   }
 
   function practiceMaterial(material: MaterialItem) {
+    stopCurrentSpeech();
+    stopRecordingPlayback();
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl);
     }
@@ -502,6 +511,8 @@ function App() {
   }
 
   function startDrillFromInsights(word: string) {
+    stopCurrentSpeech();
+    stopRecordingPlayback();
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setPassage(word);
     setPracticeMode("short");
@@ -525,6 +536,23 @@ function App() {
     if (index >= 0) {
       setSelectedWordIndex(index);
     }
+  }
+
+  function stopRecordingPlayback() {
+    setRecordingPlaybackStopSignal((signal) => signal + 1);
+  }
+
+  function playPronunciation(text: string) {
+    stopRecordingPlayback();
+    void playCorrect(text);
+  }
+
+  function togglePassageSpeech() {
+    if (isPassageSpeechActive) {
+      stopCurrentSpeech();
+      return;
+    }
+    playPronunciation(passage);
   }
 
   function preloadCurrentPassage() {
@@ -773,15 +801,18 @@ function App() {
             <div className="heading-actions">
               <button
                 className="secondary-button"
-                onClick={() => void playCorrect(passage)}
-                disabled={!passage.trim() || Boolean(speakingText)}
+                onClick={togglePassageSpeech}
+                disabled={!trimmedPassage || (Boolean(speakingText) && !isPassageSpeechActive)}
+                title={isPassageSpeechActive ? "Stop passage audio" : "Play passage audio"}
               >
-                {speakingText === passage.trim() ? (
+                {isPassageSpeechActive && speechStatus === "loading" ? (
                   <Loader2 className="spin" size={17} />
+                ) : isPassageSpeechActive ? (
+                  <Square size={17} />
                 ) : (
                   <Volume2 size={17} />
                 )}
-                Play
+                {isPassageSpeechActive ? "Stop" : "Play"}
               </button>
               {result?.words?.length ? (
                 <button
@@ -894,7 +925,13 @@ function App() {
               {status ? <span className="inline-status">{status}</span> : null}
             </div>
 
-            {audioUrl ? <AudioPlayer audioUrl={audioUrl} /> : null}
+            {audioUrl ? (
+              <AudioPlayer
+                audioUrl={audioUrl}
+                onPlayStart={stopCurrentSpeech}
+                stopSignal={recordingPlaybackStopSignal}
+              />
+            ) : null}
           </div>
         </section>
 
@@ -960,7 +997,7 @@ function App() {
                       </button>
                       <button
                         className="icon-button small"
-                        onClick={() => void playCorrect(word.word)}
+                        onClick={() => playPronunciation(word.word)}
                         title={`Play ${word.word}`}
                         disabled={Boolean(speakingText)}
                       >
@@ -992,7 +1029,7 @@ function App() {
           {selectedWord ? (
             <PhonemeInspector
               word={selectedWord}
-              onPlay={() => void playCorrect(selectedWord.word)}
+              onPlay={() => playPronunciation(selectedWord.word)}
               isSpeaking={speakingText === selectedWord.word}
             />
           ) : null}

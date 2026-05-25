@@ -412,7 +412,7 @@ describe("App", () => {
     );
   });
 
-  test("stops the previous pronunciation audio before playing another one", async () => {
+  test("stops passage pronunciation audio without starting overlapping playback", async () => {
     const audioInstances: { play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn>; currentTime: number }[] = [];
     vi.stubGlobal(
       "Audio",
@@ -442,10 +442,105 @@ describe("App", () => {
     await userEvent.click(playButton);
     await waitFor(() => expect(audioInstances).toHaveLength(1));
     await userEvent.click(playButton);
-    await waitFor(() => expect(audioInstances).toHaveLength(2));
 
     expect(audioInstances[0].pause).toHaveBeenCalledTimes(1);
     expect(audioInstances[0].currentTime).toBe(0);
-    expect(audioInstances[1].play).toHaveBeenCalledTimes(1);
+    expect(audioInstances).toHaveLength(1);
+  });
+
+  test("turns the passage play button into stop while pronunciation audio is active", async () => {
+    const audioInstances: { play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn>; currentTime: number }[] = [];
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn()
+    });
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/speak": { audio_base64: "YXVkaW8=", content_type: "audio/mpeg" }
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /^Play$/ }));
+    await waitFor(() => expect(audioInstances).toHaveLength(1));
+
+    const stopButton = await screen.findByRole("button", { name: /^Stop$/ });
+    await userEvent.click(stopButton);
+
+    expect(audioInstances[0].pause).toHaveBeenCalledTimes(1);
+    expect(audioInstances[0].currentTime).toBe(0);
+    expect(await screen.findByRole("button", { name: /^Play$/ })).toBeInTheDocument();
+  });
+
+  test("stops passage pronunciation audio before recording starts", async () => {
+    const trackStop = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({
+          getTracks: () => [{ stop: trackStop }]
+        })
+      }
+    });
+    class MediaRecorderMock {
+      static isTypeSupported = vi.fn(() => true);
+      state = "inactive";
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+
+      start() {
+        this.state = "recording";
+      }
+
+      stop() {
+        this.state = "inactive";
+        this.onstop?.();
+      }
+    }
+    vi.stubGlobal("MediaRecorder", MediaRecorderMock);
+    const audioInstances: { play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn>; currentTime: number }[] = [];
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn()
+    });
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/speak": { audio_base64: "YXVkaW8=", content_type: "audio/mpeg" }
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /^Play$/ }));
+    await waitFor(() => expect(audioInstances).toHaveLength(1));
+    await userEvent.click(screen.getByRole("button", { name: /^Record$/ }));
+
+    expect(audioInstances[0].pause).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("button", { name: /^Stop$/ })).toBeInTheDocument();
   });
 });
