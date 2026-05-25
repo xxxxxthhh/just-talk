@@ -19,7 +19,7 @@ import {
   Volume2
 } from "lucide-react";
 import type { ChangeEvent, FormEvent } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   addWordsFromSession,
@@ -44,11 +44,11 @@ import { ScoreGrid } from "./components/ScoreGrid";
 import { SidebarSection } from "./components/SidebarSection";
 import { StatusPill } from "./components/StatusPill";
 import { useSpeech } from "./hooks/useSpeech";
+import { validateMaterialPackImportPayload } from "./materialImport";
 import { formatDuration, scoreTone, scoreValue, weakWordsFromResult } from "./scoreUtils";
 import type {
   Health,
   MaterialItem,
-  MaterialPackImportPayload,
   PassageIssue,
   PhonemeStat,
   PracticeSession,
@@ -111,6 +111,7 @@ function App() {
   const [vocabulary, setVocabulary] = useState<VocabularyItem[]>([]);
   const [materials, setMaterials] = useState<MaterialItem[]>([]);
   const [passage, setPassage] = useState(DEFAULT_PASSAGE);
+  const passageInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [issues, setIssues] = useState<PassageIssue[]>([]);
   const [selectedWordIndex, setSelectedWordIndex] = useState(0);
   const [result, setResult] = useState<ScoreResult | null>(null);
@@ -154,6 +155,14 @@ function App() {
   const weakWords = useMemo(() => (result ? weakWordsFromResult(result) : []), [result]);
   const trimmedPassage = passage.trim();
   const isPassageSpeechActive = Boolean(trimmedPassage && speakingText === trimmedPassage);
+
+  useLayoutEffect(() => {
+    const input = passageInputRef.current;
+    if (!input) return;
+    input.style.height = "auto";
+    input.style.overflowY = "hidden";
+    input.style.height = `${input.scrollHeight}px`;
+  }, [passage, result?.words?.length]);
   const savedWords = useMemo(
     () => new Set(vocabulary.map((item) => normalizedWord(item.word))),
     [vocabulary]
@@ -477,7 +486,7 @@ function App() {
     setIsImportingMaterials(true);
     setError("");
     try {
-      const payload = JSON.parse(await file.text()) as MaterialPackImportPayload;
+      const payload = validateMaterialPackImportPayload(JSON.parse(await file.text()));
       const imported = await importMaterialPack(payload);
       await refreshMaterials();
       setStatus(`${imported.materials.length} materials imported`);
@@ -639,14 +648,17 @@ function App() {
             count={materials.length}
             isExpanded={expandedSidebarPanel === "materials"}
             onToggle={() => toggleSidebarPanel("materials")}
-            actions={
-              <MaterialImportAction
-                isImporting={isImportingMaterials}
-                onImport={(event) => void importMaterialFile(event)}
-              />
-            }
           >
-            <MaterialLibrary materials={materials} onSelect={practiceMaterial} />
+            <MaterialLibrary
+              materials={materials}
+              onSelect={practiceMaterial}
+              importAction={
+                <MaterialImportAction
+                  isImporting={isImportingMaterials}
+                  onImport={(event) => void importMaterialFile(event)}
+                />
+              }
+            />
           </SidebarSection>
 
           <SidebarSection
@@ -840,6 +852,7 @@ function App() {
           </div>
 
           <textarea
+            ref={passageInputRef}
             value={passage}
             onChange={(event) => setPassage(event.target.value)}
             onBlur={preloadCurrentPassage}

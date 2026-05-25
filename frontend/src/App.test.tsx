@@ -151,6 +151,181 @@ describe("App", () => {
     });
   });
 
+  test("opens a grouped material library and filters lessons quickly", async () => {
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/materials": [
+        {
+          id: "nce-1-001",
+          pack_id: "new-concept",
+          pack_title: "New Concept English",
+          title: "A Private Conversation",
+          text: "Last week I went to the theatre.",
+          book: "Book 1",
+          lesson: "1",
+          tags: ["nce", "conversation"],
+          source: "user-imported",
+          license: "user-provided",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        },
+        {
+          id: "nce-1-002",
+          pack_id: "new-concept",
+          pack_title: "New Concept English",
+          title: "Breakfast or Lunch",
+          text: "It was Sunday.",
+          book: "Book 1",
+          lesson: "2",
+          tags: ["nce"],
+          source: "user-imported",
+          license: "user-provided",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        },
+        {
+          id: "nce-2-001",
+          pack_id: "new-concept",
+          pack_title: "New Concept English",
+          title: "A Puma at Large",
+          text: "Pumas are large, cat-like animals.",
+          book: "Book 2",
+          lesson: "1",
+          tags: ["nce"],
+          source: "user-imported",
+          license: "user-provided",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        }
+      ]
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Open Library/i }));
+
+    expect(screen.getByRole("button", { name: /Book 1\s*2/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Book 2\s*1/i })).toBeInTheDocument();
+    expect(screen.getByText(/Showing 3 of 3 lessons/i)).toBeInTheDocument();
+
+    await userEvent.type(screen.getByRole("searchbox", { name: /Search materials/i }), "puma");
+
+    expect(await screen.findByRole("button", { name: /A Puma at Large/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /A Private Conversation/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/Showing 1 of 3 lessons/i)).toBeInTheDocument();
+  });
+
+  test("keeps the selected material group visible in the sidebar preview", async () => {
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/materials": [
+        {
+          id: "starter-quiet-streets",
+          pack_id: "just-talk-starter",
+          pack_title: "Just Talk Starter",
+          title: "Quiet Streets",
+          text: "The weather changed quickly.",
+          book: "Starter",
+          lesson: "1",
+          tags: ["starter"],
+          source: "built-in",
+          license: "Just Talk original",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        },
+        {
+          id: "starter-clear-morning",
+          pack_id: "just-talk-starter",
+          pack_title: "Just Talk Starter",
+          title: "Clear Morning",
+          text: "A clear morning is a good time to practice.",
+          book: "Starter",
+          lesson: "2",
+          tags: ["starter"],
+          source: "built-in",
+          license: "Just Talk original",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        },
+        {
+          id: "nce-1-001",
+          pack_id: "new-concept",
+          pack_title: "New Concept English",
+          title: "A Private Conversation",
+          text: "Last week I went to the theatre.",
+          book: "Book 1",
+          lesson: "1",
+          tags: ["nce"],
+          source: "user-imported",
+          license: "user-provided",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        },
+        {
+          id: "nce-1-002",
+          pack_id: "new-concept",
+          pack_title: "New Concept English",
+          title: "Breakfast or Lunch",
+          text: "It was Sunday.",
+          book: "Book 1",
+          lesson: "2",
+          tags: ["nce"],
+          source: "user-imported",
+          license: "user-provided",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        },
+        {
+          id: "nce-1-003",
+          pack_id: "new-concept",
+          pack_title: "New Concept English",
+          title: "Please Send Me a Card",
+          text: "Postcards always spoil my holidays.",
+          book: "Book 1",
+          lesson: "3",
+          tags: ["nce"],
+          source: "user-imported",
+          license: "user-provided",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        },
+        {
+          id: "nce-1-004",
+          pack_id: "new-concept",
+          pack_title: "New Concept English",
+          title: "An Exciting Trip",
+          text: "I have just received a letter from my brother.",
+          book: "Book 1",
+          lesson: "4",
+          tags: ["nce"],
+          source: "user-imported",
+          license: "user-provided",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        }
+      ]
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: /Quiet Streets/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /Open Library/i }));
+    await userEvent.click(screen.getByRole("button", { name: /Book 1\s*4/i }));
+    await userEvent.click(screen.getByRole("button", { name: /Close library/i }));
+
+    expect(screen.getByLabelText(/Current material queue/i)).toBeInTheDocument();
+    expect(screen.getByText("Book 1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /A Private Conversation/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Breakfast or Lunch/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Please Send Me a Card/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /An Exciting Trip/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Quiet Streets/i })).not.toBeInTheDocument();
+  });
+
   test("imports a material JSON file and refreshes the material list", async () => {
     const user = userEvent.setup();
     const importedMaterial = {
@@ -230,6 +405,70 @@ describe("App", () => {
         body: expect.stringContaining("Imported practice text.")
       })
     );
+  });
+
+  test("shows material import help near the import action", async () => {
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/materials": []
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("button", { name: /Material import format/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/schema_version: 1, pack \{ id, title \}, lessons \[\{ id, title, text \}\]/i)
+    ).toBeInTheDocument();
+  });
+
+  test("validates material JSON before calling the import API", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/health") {
+        return { ok: true, json: async () => health };
+      }
+      if (url === "/api/sessions" || url === "/api/words" || url === "/api/materials") {
+        return { ok: true, json: async () => [] };
+      }
+      if (url === "/api/material-packs/import") {
+        return {
+          ok: true,
+          json: async () => ({ pack: { id: "bad", title: "Bad" }, materials: [] })
+        };
+      }
+      return {
+        ok: false,
+        json: async () => ({ detail: `No mock for ${url}` })
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    const file = new File(
+      [
+        JSON.stringify({
+          schema_version: 1,
+          pack: { id: "custom-pack", title: "Custom Pack" },
+          lessons: [{ id: "custom-1", title: "Imported Lesson", text: " " }]
+        })
+      ],
+      "materials.json",
+      { type: "application/json" }
+    );
+
+    await user.upload(await screen.findByLabelText(/Import material JSON/i), file);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Each lesson needs id, title, and text."
+    );
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input) === "/api/material-packs/import")
+    ).toBe(false);
   });
 
   test("collapses left sidebar sections and expands one section at a time", async () => {
@@ -376,6 +615,25 @@ describe("App", () => {
     );
     expect(screen.getByText(/Long Passage allows manual stop up to 180 seconds/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Record$/ })).not.toBeDisabled();
+  });
+
+  test("auto-expands the passage input so long text does not need an inner scroll", async () => {
+    const scrollHeightSpy = vi
+      .spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+      .mockReturnValue(360);
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": []
+    });
+
+    render(<App />);
+
+    const passageInput = await screen.findByDisplayValue(/The weather changed quickly/);
+    await waitFor(() => expect(passageInput).toHaveStyle({ height: "360px" }));
+    expect(passageInput).toHaveStyle({ overflowY: "hidden" });
+
+    scrollHeightSpy.mockRestore();
   });
 
   test("preloads passage speech only after the passage input loses focus", async () => {
