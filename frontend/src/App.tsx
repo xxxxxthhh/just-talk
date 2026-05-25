@@ -40,6 +40,7 @@ import { AudioPlayer } from "./components/AudioPlayer";
 import { InsightsPanel } from "./components/InsightsPanel";
 import { MaterialImportAction, MaterialLibrary } from "./components/MaterialLibrary";
 import { PhonemeInspector } from "./components/PhonemeInspector";
+import { PhonemeCoachModal } from "./components/PhonemeCoachModal";
 import { ScoreGrid } from "./components/ScoreGrid";
 import { SidebarSection } from "./components/SidebarSection";
 import { StatusPill } from "./components/StatusPill";
@@ -128,6 +129,7 @@ function App() {
   const [phonemeStatsLoading, setPhonemeStatsLoading] = useState(false);
   const [phonemeStatsError, setPhonemeStatsError] = useState("");
   const [expandedPhoneme, setExpandedPhoneme] = useState<string | null>(null);
+  const [activeCoachPhoneme, setActiveCoachPhoneme] = useState<string | null>(null);
 
   const [newWord, setNewWord] = useState("");
   const [wordBankTab, setWordBankTab] = useState<WordBankTab>("active");
@@ -637,6 +639,9 @@ function App() {
             expandedPhoneme={expandedPhoneme}
             setExpandedPhoneme={setExpandedPhoneme}
             onDrill={startDrillFromInsights}
+            onPlayWord={playPronunciation}
+            speakingText={speakingText}
+            speechStatus={speechStatus}
             onRefresh={() => void loadPhonemeStats()}
           />
         ) : null}
@@ -1044,10 +1049,22 @@ function App() {
               word={selectedWord}
               onPlay={() => playPronunciation(selectedWord.word)}
               isSpeaking={speakingText === selectedWord.word}
+              onSelectPhoneme={setActiveCoachPhoneme}
             />
           ) : null}
         </section>
       </section>
+
+      {/* Reusable Phoneme Pronunciation Coach Overlay */}
+      <PhonemeCoachModal
+        phoneme={activeCoachPhoneme}
+        onClose={() => setActiveCoachPhoneme(null)}
+        onDrill={startDrillFromInsights}
+        onPlayWord={playPronunciation}
+        onStopAudio={stopCurrentSpeech}
+        speakingText={speakingText}
+        speechStatus={speechStatus}
+      />
     </main>
   );
 }

@@ -1,6 +1,7 @@
-import { AlertCircle, ChevronRight, Loader2, Mic, RefreshCw, Sparkles } from "lucide-react";
+import { AlertCircle, ChevronRight, History, Loader2, Mic, RefreshCw, Sparkles } from "lucide-react";
 import { scoreTone } from "../scoreUtils";
 import type { PhonemeStat } from "../types";
+import { PhonemeCoachCard } from "./PhonemeCoachCard";
 
 const PHONEME_GUIDE_WORDS: Record<string, string> = {
   // Consonants & Semi-Vowels
@@ -91,6 +92,9 @@ export function InsightsPanel({
   expandedPhoneme,
   setExpandedPhoneme,
   onDrill,
+  onPlayWord,
+  speakingText,
+  speechStatus,
   onRefresh,
 }: {
   stats: PhonemeStat[];
@@ -99,6 +103,9 @@ export function InsightsPanel({
   expandedPhoneme: string | null;
   setExpandedPhoneme: (p: string | null) => void;
   onDrill: (word: string) => void;
+  onPlayWord?: (word: string) => void;
+  speakingText?: string;
+  speechStatus?: "idle" | "loading" | "playing";
   onRefresh: () => void;
 }) {
   return (
@@ -190,23 +197,41 @@ export function InsightsPanel({
                   })}
                 </div>
                 {isOpen ? (
-                  <ul className="phoneme-examples">
-                    {stat.example_words.map((ex) => (
-                      <li key={`${stat.phoneme}-${ex.word}-${ex.session_id}`}>
-                        <button
-                          type="button"
-                          className={`phoneme-example ${scoreTone(ex.accuracy)}`}
-                          onClick={() => onDrill(ex.word)}
-                          title={`Drill "${ex.word}"`}
-                        >
-                          <strong>{ex.word}</strong>
-                          <span>{Math.round(ex.accuracy)}</span>
-                          <em>{new Date(ex.created_at).toLocaleDateString()}</em>
-                          <Mic size={14} />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                  <div className="phoneme-expanded-coach-container">
+                    {/* The interactive Pronunciation Coach Card */}
+                    <PhonemeCoachCard
+                      phoneme={stat.phoneme}
+                      onDrill={onDrill}
+                      onPlayWord={onPlayWord}
+                      speakingText={speakingText}
+                      speechStatus={speechStatus}
+                    />
+                    
+                    {/* The user's historical practice examples under this phoneme */}
+                    <div className="user-history-drill-box">
+                      <h4>
+                        <History size={15} />
+                        <span>Your Recent Session Attempts (历史练习单词)</span>
+                      </h4>
+                      <ul className="phoneme-examples">
+                        {stat.example_words.map((ex) => (
+                          <li key={`${stat.phoneme}-${ex.word}-${ex.session_id}`}>
+                            <button
+                              type="button"
+                              className={`phoneme-example ${scoreTone(ex.accuracy)}`}
+                              onClick={() => onDrill(ex.word)}
+                              title={`Drill "${ex.word}"`}
+                            >
+                              <strong>{ex.word}</strong>
+                              <span>{Math.round(ex.accuracy)}</span>
+                              <em>{new Date(ex.created_at).toLocaleDateString()}</em>
+                              <Mic size={14} />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
                 ) : null}
               </li>
             );
