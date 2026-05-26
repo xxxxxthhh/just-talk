@@ -160,6 +160,122 @@ describe("useSpeech", () => {
     expect(controls.speechStatus).toBe("idle");
   });
 
+  test("pauses and resumes current speech without resetting progress", async () => {
+    const audioInstances: {
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      currentTime: number;
+      duration: number;
+      onended?: () => void;
+    }[] = [];
+
+    mockSpeechApi();
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0,
+          duration: 12,
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+
+    let controls!: ReturnType<typeof useSpeech>;
+    function SpeechHarness() {
+      controls = useSpeech(vi.fn());
+      return null;
+    }
+
+    render(<SpeechHarness />);
+
+    await act(async () => {
+      await controls.playCorrect("quiet");
+    });
+    audioInstances[0].currentTime = 4;
+
+    act(() => {
+      controls.pauseCurrentSpeech();
+    });
+
+    expect(audioInstances[0].pause).toHaveBeenCalledTimes(1);
+    expect(audioInstances[0].currentTime).toBe(4);
+    expect(controls.speakingText).toBe("quiet");
+    expect(controls.speechStatus).toBe("paused");
+
+    await act(async () => {
+      await controls.playCorrect("quiet");
+    });
+
+    expect(audioInstances).toHaveLength(1);
+    expect(audioInstances[0].play).toHaveBeenCalledTimes(2);
+    expect(audioInstances[0].currentTime).toBe(4);
+    expect(controls.speechStatus).toBe("playing");
+
+    act(() => {
+      audioInstances[0].onended?.();
+    });
+
+    expect(controls.speakingText).toBe("");
+    expect(controls.speechStatus).toBe("idle");
+  });
+
+  test("seeks and skips current speech playback", async () => {
+    const audioInstances: {
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      currentTime: number;
+      duration: number;
+    }[] = [];
+
+    mockSpeechApi();
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0,
+          duration: 12,
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+
+    let controls!: ReturnType<typeof useSpeech>;
+    function SpeechHarness() {
+      controls = useSpeech(vi.fn());
+      return null;
+    }
+
+    render(<SpeechHarness />);
+
+    await act(async () => {
+      await controls.playCorrect("quiet");
+    });
+
+    act(() => {
+      controls.seekCurrentSpeech(10);
+      controls.skipCurrentSpeech(-4);
+      controls.skipCurrentSpeech(20);
+    });
+
+    expect(audioInstances[0].currentTime).toBe(12);
+    expect(controls.speechCurrentTime).toBe(12);
+  });
+
   test("does not start playback when stopped before synthesis finishes", async () => {
     let resolveSpeech!: (value: {
       ok: boolean;

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -670,7 +670,7 @@ describe("App", () => {
     );
   });
 
-  test("stops passage pronunciation audio without starting overlapping playback", async () => {
+  test("pauses passage pronunciation audio without starting overlapping playback", async () => {
     const audioInstances: { play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn>; currentTime: number }[] = [];
     vi.stubGlobal(
       "Audio",
@@ -699,14 +699,15 @@ describe("App", () => {
     const playButton = await screen.findByRole("button", { name: /^Play$/ });
     await userEvent.click(playButton);
     await waitFor(() => expect(audioInstances).toHaveLength(1));
-    await userEvent.click(playButton);
+    audioInstances[0].currentTime = 4;
+    await userEvent.click(await screen.findByRole("button", { name: /^Pause$/ }));
 
     expect(audioInstances[0].pause).toHaveBeenCalledTimes(1);
-    expect(audioInstances[0].currentTime).toBe(0);
+    expect(audioInstances[0].currentTime).toBe(4);
     expect(audioInstances).toHaveLength(1);
   });
 
-  test("turns the passage play button into stop while pronunciation audio is active", async () => {
+  test("turns the passage play button into pause while pronunciation audio is active", async () => {
     const audioInstances: { play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn>; currentTime: number }[] = [];
     vi.stubGlobal(
       "Audio",
@@ -734,13 +735,62 @@ describe("App", () => {
     render(<App />);
     await userEvent.click(await screen.findByRole("button", { name: /^Play$/ }));
     await waitFor(() => expect(audioInstances).toHaveLength(1));
+    audioInstances[0].currentTime = 5;
 
-    const stopButton = await screen.findByRole("button", { name: /^Stop$/ });
-    await userEvent.click(stopButton);
+    const pauseButton = await screen.findByRole("button", { name: /^Pause$/ });
+    await userEvent.click(pauseButton);
 
     expect(audioInstances[0].pause).toHaveBeenCalledTimes(1);
-    expect(audioInstances[0].currentTime).toBe(0);
+    expect(audioInstances[0].currentTime).toBe(5);
     expect(await screen.findByRole("button", { name: /^Play$/ })).toBeInTheDocument();
+  });
+
+  test("lets the standard passage playback be scrubbed and skipped", async () => {
+    const audioInstances: {
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      currentTime: number;
+      duration: number;
+      ondurationchange?: () => void;
+      ontimeupdate?: () => void;
+    }[] = [];
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0,
+          duration: 12,
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn()
+    });
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/speak": { audio_base64: "YXVkaW8=", content_type: "audio/mpeg" }
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /^Play$/ }));
+    await waitFor(() => expect(audioInstances).toHaveLength(1));
+
+    act(() => {
+      audioInstances[0].ondurationchange?.();
+    });
+    const progress = await screen.findByLabelText("Passage audio progress");
+    fireEvent.change(progress, { target: { value: "8" } });
+    await userEvent.click(screen.getByRole("button", { name: "Back 5 seconds" }));
+
+    expect(audioInstances[0].currentTime).toBe(3);
+    expect(screen.getByText("0:03 / 0:12")).toBeInTheDocument();
   });
 
   test("stops passage pronunciation audio before recording starts", async () => {

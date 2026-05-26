@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { Activity, BookOpen, Loader2, Sparkles, Volume2, Zap } from "lucide-react";
-import { useSpeech } from "../hooks/useSpeech";
+import { useSpeech, type SpeechStatus } from "../hooks/useSpeech";
 import { PHONEME_GUIDES, PhonemeGuide, getFallbackGuide } from "./PhonemeGuideData";
 import { MouthVisualizer } from "./MouthVisualizer";
 
-type SpeechStatus = "idle" | "loading" | "playing";
 type PairSide = "word1" | "word2";
 
 interface PhonemeCoachCardProps {

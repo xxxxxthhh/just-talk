@@ -9,7 +9,7 @@ type SpeechCacheEntry = {
   lastUsed: number;
 };
 
-type SpeechStatus = "idle" | "loading" | "playing";
+export type SpeechStatus = "idle" | "loading" | "playing" | "paused";
 
 function normalizedSpeechText(text: string): string {
   return text.trim();
@@ -24,26 +24,61 @@ function responseToObjectUrl(response: Awaited<ReturnType<typeof speakText>>): s
 export function useSpeech(setError: (msg: string) => void) {
   const [speakingText, setSpeakingText] = useState("");
   const [speechStatus, setSpeechStatus] = useState<SpeechStatus>("idle");
+  const [speechCurrentTime, setSpeechCurrentTime] = useState(0);
+  const [speechDuration, setSpeechDuration] = useState(0);
   const speechAudioRef = useRef<HTMLAudioElement | null>(null);
   const currentSpeechKeyRef = useRef("");
   const playbackRequestRef = useRef(0);
   const cacheRef = useRef<Map<string, SpeechCacheEntry>>(new Map());
 
-  const pauseCurrentSpeechAudio = useCallback(() => {
+  const resetCurrentSpeechAudio = useCallback(() => {
     if (speechAudioRef.current) {
       speechAudioRef.current.pause();
       speechAudioRef.current.currentTime = 0;
       speechAudioRef.current = null;
     }
     currentSpeechKeyRef.current = "";
+    setSpeechCurrentTime(0);
+    setSpeechDuration(0);
   }, []);
 
   const stopCurrentSpeech = useCallback(() => {
     playbackRequestRef.current += 1;
-    pauseCurrentSpeechAudio();
+    resetCurrentSpeechAudio();
     setSpeakingText("");
     setSpeechStatus("idle");
-  }, [pauseCurrentSpeechAudio]);
+  }, [resetCurrentSpeechAudio]);
+
+  const pauseCurrentSpeech = useCallback(() => {
+    const audio = speechAudioRef.current;
+    if (!audio) return;
+    audio.pause();
+    setSpeechCurrentTime(audio.currentTime || 0);
+    if (Number.isFinite(audio.duration)) {
+      setSpeechDuration(audio.duration || 0);
+    }
+    setSpeechStatus("paused");
+  }, []);
+
+  const seekCurrentSpeech = useCallback((timeSeconds: number) => {
+    const audio = speechAudioRef.current;
+    if (!audio) return;
+    const knownDuration = Number.isFinite(audio.duration) && audio.duration > 0
+      ? audio.duration
+      : speechDuration;
+    const upperBound = knownDuration > 0 ? knownDuration : timeSeconds;
+    const nextTime = Math.max(0, Math.min(timeSeconds, upperBound));
+    audio.currentTime = nextTime;
+    setSpeechCurrentTime(nextTime);
+    if (knownDuration > 0) {
+      setSpeechDuration(knownDuration);
+    }
+  }, [speechDuration]);
+
+  const skipCurrentSpeech = useCallback((deltaSeconds: number) => {
+    const audio = speechAudioRef.current;
+    seekCurrentSpeech((audio?.currentTime ?? speechCurrentTime) + deltaSeconds);
+  }, [seekCurrentSpeech, speechCurrentTime]);
 
   const evictOldSpeech = useCallback(() => {
     const cache = cacheRef.current;
@@ -112,7 +147,7 @@ export function useSpeech(setError: (msg: string) => void) {
   useEffect(() => {
     return () => {
       playbackRequestRef.current += 1;
-      pauseCurrentSpeechAudio();
+      resetCurrentSpeechAudio();
       for (const entry of cacheRef.current.values()) {
         if (entry.url) {
           URL.revokeObjectURL(entry.url);
@@ -120,15 +155,28 @@ export function useSpeech(setError: (msg: string) => void) {
       }
       cacheRef.current.clear();
     };
-  }, [pauseCurrentSpeechAudio]);
+  }, [resetCurrentSpeechAudio]);
 
   const playCorrect = useCallback(async (text: string) => {
     const spokenText = normalizedSpeechText(text);
     if (!spokenText) return;
     setError("");
+
+    if (speechAudioRef.current && currentSpeechKeyRef.current === spokenText) {
+      setSpeakingText(spokenText);
+      setSpeechStatus("playing");
+      try {
+        await speechAudioRef.current.play();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not play pronunciation.");
+        stopCurrentSpeech();
+      }
+      return;
+    }
+
     playbackRequestRef.current += 1;
     const requestId = playbackRequestRef.current;
-    pauseCurrentSpeechAudio();
+    resetCurrentSpeechAudio();
     setSpeakingText(spokenText);
     setSpeechStatus("loading");
     try {
@@ -145,10 +193,22 @@ export function useSpeech(setError: (msg: string) => void) {
           currentSpeechKeyRef.current = "";
           setSpeakingText("");
           setSpeechStatus("idle");
+          setSpeechCurrentTime(0);
+          setSpeechDuration(0);
+        }
+      };
+      const updateProgress = () => {
+        setSpeechCurrentTime(audio.currentTime || 0);
+        if (Number.isFinite(audio.duration)) {
+          setSpeechDuration(audio.duration || 0);
         }
       };
       audio.onended = clearIfCurrent;
       audio.onerror = clearIfCurrent;
+      audio.ondurationchange = updateProgress;
+      audio.onloadedmetadata = updateProgress;
+      audio.ontimeupdate = updateProgress;
+      updateProgress();
       setSpeechStatus("playing");
       await audio.play();
     } catch (err) {
@@ -157,7 +217,18 @@ export function useSpeech(setError: (msg: string) => void) {
         stopCurrentSpeech();
       }
     }
-  }, [loadSpeechUrl, pauseCurrentSpeechAudio, setError, stopCurrentSpeech]);
+  }, [loadSpeechUrl, resetCurrentSpeechAudio, setError, stopCurrentSpeech]);
 
-  return { speakingText, speechStatus, preloadSpeech, playCorrect, stopCurrentSpeech };
+  return {
+    speakingText,
+    speechStatus,
+    speechCurrentTime,
+    speechDuration,
+    preloadSpeech,
+    playCorrect,
+    pauseCurrentSpeech,
+    seekCurrentSpeech,
+    skipCurrentSpeech,
+    stopCurrentSpeech
+  };
 }

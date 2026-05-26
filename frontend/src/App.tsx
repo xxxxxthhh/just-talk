@@ -4,13 +4,16 @@ import {
   BookOpen,
   BookOpenCheck,
   Clock3,
+  FastForward,
   History,
   Loader2,
   Mic,
   Moon,
+  Pause,
   Play,
   Plus,
   RefreshCw,
+  Rewind,
   Sparkles,
   Square,
   Sun,
@@ -68,6 +71,13 @@ type SidebarPanel = "materials" | "history" | "word-bank";
 
 function normalizedWord(word: string): string {
   return word.trim().toLocaleLowerCase();
+}
+
+function formatPlaybackTime(seconds: number): string {
+  if (!Number.isFinite(seconds)) return "0:00";
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.floor(seconds % 60);
+  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
 }
 
 function safeGetLocalStorage(key: string): string | null {
@@ -140,8 +150,18 @@ function App() {
   const [isImportingMaterials, setIsImportingMaterials] = useState(false);
   const [error, setError] = useState("");
 
-  const { speakingText, speechStatus, preloadSpeech, playCorrect, stopCurrentSpeech } =
-    useSpeech(setError);
+  const {
+    speakingText,
+    speechStatus,
+    speechCurrentTime,
+    speechDuration,
+    preloadSpeech,
+    playCorrect,
+    pauseCurrentSpeech,
+    seekCurrentSpeech,
+    skipCurrentSpeech,
+    stopCurrentSpeech
+  } = useSpeech(setError);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -156,6 +176,8 @@ function App() {
   const weakWords = useMemo(() => (result ? weakWordsFromResult(result) : []), [result]);
   const trimmedPassage = passage.trim();
   const isPassageSpeechActive = Boolean(trimmedPassage && speakingText === trimmedPassage);
+  const isPassageSpeechLoading = isPassageSpeechActive && speechStatus === "loading";
+  const isPassageSpeechPlaying = isPassageSpeechActive && speechStatus === "playing";
 
   useLayoutEffect(() => {
     const input = passageInputRef.current;
@@ -556,7 +578,11 @@ function App() {
   }
 
   function togglePassageSpeech() {
-    if (isPassageSpeechActive) {
+    if (isPassageSpeechActive && speechStatus === "playing") {
+      pauseCurrentSpeech();
+      return;
+    }
+    if (isPassageSpeechActive && speechStatus === "loading") {
       stopCurrentSpeech();
       return;
     }
@@ -817,16 +843,16 @@ function App() {
                 className="secondary-button"
                 onClick={togglePassageSpeech}
                 disabled={!trimmedPassage || (Boolean(speakingText) && !isPassageSpeechActive)}
-                title={isPassageSpeechActive ? "Stop passage audio" : "Play passage audio"}
+                title={isPassageSpeechPlaying ? "Pause passage audio" : "Play passage audio"}
               >
-                {isPassageSpeechActive && speechStatus === "loading" ? (
+                {isPassageSpeechLoading ? (
                   <Loader2 className="spin" size={17} />
-                ) : isPassageSpeechActive ? (
-                  <Square size={17} />
+                ) : isPassageSpeechPlaying ? (
+                  <Pause size={17} />
                 ) : (
                   <Volume2 size={17} />
                 )}
-                {isPassageSpeechActive ? "Stop" : "Play"}
+                {isPassageSpeechLoading ? "Loading" : isPassageSpeechPlaying ? "Pause" : "Play"}
               </button>
               {result?.words?.length ? (
                 <button
@@ -852,6 +878,45 @@ function App() {
               )}
             </div>
           </div>
+
+          {isPassageSpeechActive ? (
+            <div className="passage-audio-controls">
+              <button
+                type="button"
+                className="passage-audio-step"
+                onClick={() => skipCurrentSpeech(-5)}
+                aria-label="Back 5 seconds"
+                disabled={isPassageSpeechLoading}
+              >
+                <Rewind size={15} />
+                5s
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={speechDuration || 1}
+                step={0.05}
+                value={Math.min(speechCurrentTime, speechDuration || 1)}
+                onChange={(event) => seekCurrentSpeech(parseFloat(event.target.value))}
+                className="passage-audio-slider"
+                aria-label="Passage audio progress"
+                disabled={isPassageSpeechLoading}
+              />
+              <span className="passage-audio-time">
+                {formatPlaybackTime(speechCurrentTime)} / {formatPlaybackTime(speechDuration)}
+              </span>
+              <button
+                type="button"
+                className="passage-audio-step"
+                onClick={() => skipCurrentSpeech(5)}
+                aria-label="Forward 5 seconds"
+                disabled={isPassageSpeechLoading}
+              >
+                <FastForward size={15} />
+                5s
+              </button>
+            </div>
+          ) : null}
 
           <textarea
             ref={passageInputRef}

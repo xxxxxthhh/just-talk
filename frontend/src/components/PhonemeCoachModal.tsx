@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { X } from "lucide-react";
+import type { SpeechStatus } from "../hooks/useSpeech";
 import { PhonemeCoachCard } from "./PhonemeCoachCard";
 
 interface PhonemeCoachModalProps {
@@ -9,7 +10,7 @@ interface PhonemeCoachModalProps {
   onPlayWord?: (word: string) => void;
   onStopAudio?: () => void;
   speakingText?: string;
-  speechStatus?: "idle" | "loading" | "playing";
+  speechStatus?: SpeechStatus;
 }
 
 export function PhonemeCoachModal({

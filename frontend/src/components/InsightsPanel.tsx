@@ -1,5 +1,6 @@
 import { AlertCircle, ChevronRight, History, Loader2, Mic, RefreshCw, Sparkles } from "lucide-react";
 import { scoreTone } from "../scoreUtils";
+import type { SpeechStatus } from "../hooks/useSpeech";
 import type { PhonemeStat } from "../types";
 import { PhonemeCoachCard } from "./PhonemeCoachCard";
 
@@ -105,7 +106,7 @@ export function InsightsPanel({
   onDrill: (word: string) => void;
   onPlayWord?: (word: string) => void;
   speakingText?: string;
-  speechStatus?: "idle" | "loading" | "playing";
+  speechStatus?: SpeechStatus;
   onRefresh: () => void;
 }) {
   return (
