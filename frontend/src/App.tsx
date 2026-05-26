@@ -46,7 +46,7 @@ import { PhonemeCoachModal } from "./components/PhonemeCoachModal";
 import { ScoreGrid } from "./components/ScoreGrid";
 import { SidebarSection } from "./components/SidebarSection";
 import { StatusPill } from "./components/StatusPill";
-import { useSpeech } from "./hooks/useSpeech";
+import { useSpeech, type SpeechOptions } from "./hooks/useSpeech";
 import { validateMaterialPackImportPayload } from "./materialImport";
 import { formatDuration, scoreTone, scoreValue, weakWordsFromResult } from "./scoreUtils";
 import type {
@@ -71,6 +71,10 @@ type SidebarPanel = "materials" | "history" | "word-bank";
 
 function normalizedWord(word: string): string {
   return word.trim().toLocaleLowerCase();
+}
+
+function materialSpeechCacheKey(material: MaterialItem): string {
+  return `material:${material.id}`;
 }
 
 function formatPlaybackTime(seconds: number): string {
@@ -121,6 +125,7 @@ function App() {
   const [vocabulary, setVocabulary] = useState<VocabularyItem[]>([]);
   const [materials, setMaterials] = useState<MaterialItem[]>([]);
   const [passage, setPassage] = useState(DEFAULT_PASSAGE);
+  const [activeMaterial, setActiveMaterial] = useState<MaterialItem | null>(null);
   const passageInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [issues, setIssues] = useState<PassageIssue[]>([]);
   const [selectedWordIndex, setSelectedWordIndex] = useState(0);
@@ -178,6 +183,9 @@ function App() {
   const isPassageSpeechActive = Boolean(trimmedPassage && speakingText === trimmedPassage);
   const isPassageSpeechLoading = isPassageSpeechActive && speechStatus === "loading";
   const isPassageSpeechPlaying = isPassageSpeechActive && speechStatus === "playing";
+  const passageSpeechOptions: SpeechOptions | undefined = activeMaterial
+    ? { cacheKey: materialSpeechCacheKey(activeMaterial) }
+    : undefined;
 
   useLayoutEffect(() => {
     const input = passageInputRef.current;
@@ -378,6 +386,7 @@ function App() {
     setStatus("Loading history");
     try {
       const loaded = await getSession(session.id);
+      setActiveMaterial(null);
       setPassage(loaded.reference_text);
       setResult({
         transcript: loaded.reference_text,
@@ -469,6 +478,7 @@ function App() {
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl);
     }
+    setActiveMaterial(null);
     setPassage(item.word);
     setResult(null);
     setCurrentSessionId("");
@@ -486,6 +496,7 @@ function App() {
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl);
     }
+    setActiveMaterial(material);
     setPassage(material.text);
     setResult(null);
     setCurrentSessionId("");
@@ -544,6 +555,7 @@ function App() {
     stopCurrentSpeech();
     stopRecordingPlayback();
     if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setActiveMaterial(null);
     setPassage(word);
     setPracticeMode("short");
     setResult(null);
@@ -572,9 +584,9 @@ function App() {
     setRecordingPlaybackStopSignal((signal) => signal + 1);
   }
 
-  function playPronunciation(text: string) {
+  function playPronunciation(text: string, options?: SpeechOptions) {
     stopRecordingPlayback();
-    void playCorrect(text);
+    void playCorrect(text, options);
   }
 
   function togglePassageSpeech() {
@@ -586,11 +598,21 @@ function App() {
       stopCurrentSpeech();
       return;
     }
-    playPronunciation(passage);
+    playPronunciation(passage, passageSpeechOptions);
   }
 
   function preloadCurrentPassage() {
-    void preloadSpeech(passage);
+    void preloadSpeech(passage, passageSpeechOptions);
+  }
+
+  function handlePassageChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    if (activeMaterial) return;
+    setPassage(event.target.value);
+  }
+
+  function copyMaterialToFreePractice() {
+    setActiveMaterial(null);
+    setStatus("Copied to free practice");
   }
 
   function toggleSidebarPanel(panel: SidebarPanel) {
@@ -862,9 +884,9 @@ function App() {
                     setCurrentSessionId("");
                     setIssues([]);
                   }}
-                  title="Edit Passage"
+                  title={activeMaterial ? "Review Material" : "Edit Passage"}
                 >
-                  ✏️ Edit
+                  {activeMaterial ? "Review Material" : "✏️ Edit"}
                 </button>
               ) : (
                 <button
@@ -878,6 +900,21 @@ function App() {
               )}
             </div>
           </div>
+
+          {activeMaterial ? (
+            <div className="practice-source-banner">
+              <span>Material Practice</span>
+              <strong>{activeMaterial.title}</strong>
+              <small>{activeMaterial.pack_title}</small>
+              <button
+                type="button"
+                className="secondary-button compact"
+                onClick={copyMaterialToFreePractice}
+              >
+                Copy to Free Practice
+              </button>
+            </div>
+          ) : null}
 
           {isPassageSpeechActive ? (
             <div className="passage-audio-controls">
@@ -921,9 +958,10 @@ function App() {
           <textarea
             ref={passageInputRef}
             value={passage}
-            onChange={(event) => setPassage(event.target.value)}
+            onChange={handlePassageChange}
             onBlur={preloadCurrentPassage}
             className={`passage-input ${result?.words?.length ? "hidden-declutter" : ""}`}
+            readOnly={Boolean(activeMaterial)}
             spellCheck
           />
 

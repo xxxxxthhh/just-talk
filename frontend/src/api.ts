@@ -105,12 +105,23 @@ export async function deleteWord(wordId: string): Promise<{ deleted: boolean }> 
   );
 }
 
-export async function speakText(text: string): Promise<SpeechResponse> {
+export type SpeakTextOptions = {
+  cacheKey?: string;
+};
+
+export async function speakText(
+  text: string,
+  options: SpeakTextOptions = {}
+): Promise<SpeechResponse> {
+  const body: { text: string; cache_key?: string } = { text };
+  if (options.cacheKey) {
+    body.cache_key = options.cacheKey;
+  }
   return parseResponse<SpeechResponse>(
     await fetch("/api/speak", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text })
+      body: JSON.stringify(body)
     })
   );
 }

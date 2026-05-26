@@ -469,6 +469,41 @@ p {
   gap: 12px;
 }
 
+.practice-source-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  margin: -4px 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
+  background: var(--color-good-bg);
+  color: var(--text-main);
+}
+
+.practice-source-banner span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--color-good);
+  color: var(--text-inverse);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.practice-source-banner strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.practice-source-banner small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .passage-audio-controls {
   display: grid;
   grid-template-columns: auto minmax(140px, 1fr) auto auto;
@@ -546,6 +581,16 @@ p {
 
   .passage-audio-time {
     text-align: left;
+  }
+
+  .practice-source-banner {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .practice-source-banner span,
+  .practice-source-banner small {
+    justify-self: start;
   }
 }
 
@@ -1338,6 +1383,11 @@ body[data-theme="dark"] .mode-option.selected {
 .passage-input:focus {
   border-color: var(--accent-color);
   box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.passage-input[readonly] {
+  background: var(--bg-card);
+  cursor: default;
 }
 
 /* In-Context Highlight Overlay Container */

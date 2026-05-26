@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { speakText } from "../api";
+import { speakText, type SpeakTextOptions } from "../api";
 
 const SPEECH_CACHE_LIMIT = 30;
 
@@ -10,9 +10,14 @@ type SpeechCacheEntry = {
 };
 
 export type SpeechStatus = "idle" | "loading" | "playing" | "paused";
+export type SpeechOptions = SpeakTextOptions;
 
 function normalizedSpeechText(text: string): string {
   return text.trim();
+}
+
+function speechCacheIdentity(spokenText: string, options?: SpeechOptions): string {
+  return options?.cacheKey ? `${options.cacheKey}::${spokenText}` : spokenText;
 }
 
 function responseToObjectUrl(response: Awaited<ReturnType<typeof speakText>>): string {
@@ -96,9 +101,10 @@ export function useSpeech(setError: (msg: string) => void) {
   }, []);
 
   const loadSpeechUrl = useCallback(
-    async (spokenText: string): Promise<string> => {
+    async (spokenText: string, options?: SpeechOptions): Promise<string> => {
+      const cacheIdentity = speechCacheIdentity(spokenText, options);
       const cache = cacheRef.current;
-      const cached = cache.get(spokenText);
+      const cached = cache.get(cacheIdentity);
       if (cached?.url) {
         cached.lastUsed = Date.now();
         return cached.url;
@@ -108,35 +114,35 @@ export function useSpeech(setError: (msg: string) => void) {
       }
 
       const entry: SpeechCacheEntry = cached ?? { lastUsed: Date.now() };
-      const promise = speakText(spokenText)
+      const promise = speakText(spokenText, options)
         .then((response) => {
           const speechUrl = responseToObjectUrl(response);
           entry.url = speechUrl;
           entry.promise = undefined;
           entry.lastUsed = Date.now();
-          cache.set(spokenText, entry);
+          cache.set(cacheIdentity, entry);
           evictOldSpeech();
           return speechUrl;
         })
         .catch((err) => {
-          cache.delete(spokenText);
+          cache.delete(cacheIdentity);
           throw err;
         });
 
       entry.promise = promise;
       entry.lastUsed = Date.now();
-      cache.set(spokenText, entry);
+      cache.set(cacheIdentity, entry);
       return promise;
     },
     [evictOldSpeech]
   );
 
   const preloadSpeech = useCallback(
-    async (text: string) => {
+    async (text: string, options?: SpeechOptions) => {
       const spokenText = normalizedSpeechText(text);
       if (!spokenText) return;
       try {
-        await loadSpeechUrl(spokenText);
+        await loadSpeechUrl(spokenText, options);
       } catch {
         // Preloading is an optimization; clicks still retry and surface errors.
       }
@@ -157,12 +163,13 @@ export function useSpeech(setError: (msg: string) => void) {
     };
   }, [resetCurrentSpeechAudio]);
 
-  const playCorrect = useCallback(async (text: string) => {
+  const playCorrect = useCallback(async (text: string, options?: SpeechOptions) => {
     const spokenText = normalizedSpeechText(text);
     if (!spokenText) return;
+    const cacheIdentity = speechCacheIdentity(spokenText, options);
     setError("");
 
-    if (speechAudioRef.current && currentSpeechKeyRef.current === spokenText) {
+    if (speechAudioRef.current && currentSpeechKeyRef.current === cacheIdentity) {
       setSpeakingText(spokenText);
       setSpeechStatus("playing");
       try {
@@ -180,13 +187,13 @@ export function useSpeech(setError: (msg: string) => void) {
     setSpeakingText(spokenText);
     setSpeechStatus("loading");
     try {
-      const speechUrl = await loadSpeechUrl(spokenText);
+      const speechUrl = await loadSpeechUrl(spokenText, options);
       if (playbackRequestRef.current !== requestId) {
         return;
       }
       const audio = new Audio(speechUrl);
       speechAudioRef.current = audio;
-      currentSpeechKeyRef.current = spokenText;
+      currentSpeechKeyRef.current = cacheIdentity;
       const clearIfCurrent = () => {
         if (speechAudioRef.current === audio && playbackRequestRef.current === requestId) {
           speechAudioRef.current = null;

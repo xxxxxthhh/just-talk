@@ -151,6 +151,49 @@ describe("App", () => {
     });
   });
 
+  test("locks selected materials and lets users copy them to free practice", async () => {
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/materials": [
+        {
+          id: "starter-clear-morning",
+          pack_id: "just-talk-starter",
+          pack_title: "Just Talk Starter",
+          title: "Clear Morning",
+          text: "A clear morning is a good time to practice careful speaking.",
+          book: "Starter",
+          lesson: "2",
+          tags: ["starter", "short"],
+          source: "built-in",
+          license: "Just Talk original",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        }
+      ]
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Clear Morning/i }));
+
+    const materialPassage = await screen.findByDisplayValue(
+      "A clear morning is a good time to practice careful speaking."
+    );
+    expect(materialPassage).toHaveAttribute("readonly");
+    expect(screen.getByText("Material Practice")).toBeInTheDocument();
+    expect(screen.getAllByText("Clear Morning").length).toBeGreaterThan(0);
+
+    fireEvent.change(materialPassage, { target: { value: "Changed text." } });
+    expect(materialPassage).toHaveValue("A clear morning is a good time to practice careful speaking.");
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy to Free Practice" }));
+    expect(materialPassage).not.toHaveAttribute("readonly");
+
+    fireEvent.change(materialPassage, { target: { value: "Changed text." } });
+    expect(materialPassage).toHaveValue("Changed text.");
+  });
+
   test("opens a grouped material library and filters lessons quickly", async () => {
     mockApi({
       "/api/health": health,
@@ -668,6 +711,134 @@ describe("App", () => {
         body: JSON.stringify({ text: "Quiet streets." })
       })
     );
+  });
+
+  test("preloads selected material speech with a persistent cache key", async () => {
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/materials": [
+        {
+          id: "starter-clear-morning",
+          pack_id: "just-talk-starter",
+          pack_title: "Just Talk Starter",
+          title: "Clear Morning",
+          text: "A clear morning is a good time to practice careful speaking.",
+          book: "Starter",
+          lesson: "2",
+          tags: ["starter", "short"],
+          source: "built-in",
+          license: "Just Talk original",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        }
+      ],
+      "/api/speak": { audio_base64: "YXVkaW8=", content_type: "audio/mpeg" }
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Clear Morning/i }));
+    fireEvent.blur(
+      await screen.findByDisplayValue("A clear morning is a good time to practice careful speaking.")
+    );
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/speak",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            text: "A clear morning is a good time to practice careful speaking.",
+            cache_key: "material:starter-clear-morning"
+          })
+        })
+      )
+    );
+  });
+
+  test("does not offer to edit a fixed material after scoring", async () => {
+    const trackStop = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({
+          getTracks: () => [{ stop: trackStop }]
+        })
+      }
+    });
+    class MediaRecorderMock {
+      static isTypeSupported = vi.fn(() => true);
+      state = "inactive";
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+
+      start() {
+        this.state = "recording";
+      }
+
+      stop() {
+        this.state = "inactive";
+        this.ondataavailable?.({ data: new Blob(["audio"], { type: "audio/webm" }) });
+        this.onstop?.();
+      }
+    }
+    vi.stubGlobal("MediaRecorder", MediaRecorderMock);
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:recording"),
+      revokeObjectURL: vi.fn()
+    });
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/materials": [
+        {
+          id: "starter-clear-morning",
+          pack_id: "just-talk-starter",
+          pack_title: "Just Talk Starter",
+          title: "Clear Morning",
+          text: "A clear morning is a good time to practice careful speaking.",
+          book: "Starter",
+          lesson: "2",
+          tags: ["starter", "short"],
+          source: "built-in",
+          license: "Just Talk original",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        }
+      ],
+      "/api/score": {
+        result: {
+          transcript: "A clear morning is a good time to practice careful speaking.",
+          scores: { pronunciation: 90, accuracy: 88, fluency: 91, completeness: 100, prosody: 84 },
+          segments: [],
+          words: [
+            {
+              word: "clear",
+              accuracy: 88,
+              bucket: "good",
+              error_type: "None",
+              offset_ms: 0,
+              duration_ms: 300,
+              phonemes: []
+            }
+          ],
+          raw: {}
+        },
+        session: { id: "session-1" }
+      },
+      "/api/words/from-session/session-1": []
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Clear Morning/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^Record$/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /^Stop$/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /^Score$/ }));
+
+    expect(await screen.findByRole("button", { name: "Review Material" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Edit/ })).not.toBeInTheDocument();
   });
 
   test("pauses passage pronunciation audio without starting overlapping playback", async () => {

@@ -66,6 +66,49 @@ describe("useSpeech", () => {
     expect(audioInstances[0].play).toHaveBeenCalledTimes(1);
   });
 
+  test("passes persistent cache keys through preload and playback", async () => {
+    const createObjectURL = vi.fn(() => "blob:pronunciation");
+
+    mockSpeechApi();
+    vi.stubGlobal("URL", {
+      createObjectURL,
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        return {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0,
+        };
+      })
+    );
+
+    let controls!: ReturnType<typeof useSpeech>;
+    function SpeechHarness() {
+      controls = useSpeech(vi.fn());
+      return null;
+    }
+
+    render(<SpeechHarness />);
+
+    await act(async () => {
+      await controls.preloadSpeech("quiet", { cacheKey: "material:quiet" });
+    });
+    await act(async () => {
+      await controls.playCorrect("quiet", { cacheKey: "material:quiet" });
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/speak",
+      expect.objectContaining({
+        body: JSON.stringify({ text: "quiet", cache_key: "material:quiet" })
+      })
+    );
+  });
+
   test("stops current speech and revokes its object URL when unmounted", async () => {
     const audioInstances: {
       play: ReturnType<typeof vi.fn>;

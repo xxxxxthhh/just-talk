@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import shutil
 import subprocess
 import tempfile
@@ -30,6 +31,7 @@ class WordCreateRequest(BaseModel):
 
 class SpeakRequest(BaseModel):
     text: str
+    cache_key: str | None = Field(default=None, max_length=200)
 
 
 class MaterialPackMetaRequest(BaseModel):
@@ -250,6 +252,20 @@ def create_app(
         text = request.text.strip()
         if not text:
             raise HTTPException(status_code=400, detail="text is required.")
+        cache_key = request.cache_key.strip() if request.cache_key else ""
+        text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        voice = active_settings.azure_tts_voice
+        if cache_key:
+            cached = active_store.get_speech_cache(
+                cache_key=cache_key,
+                text_hash=text_hash,
+                voice=voice,
+            )
+            if cached is not None:
+                return {
+                    "audio_base64": base64.b64encode(cached["audio_bytes"]).decode("ascii"),
+                    "content_type": cached["content_type"],
+                }
         if active_synthesizer is None:
             raise HTTPException(
                 status_code=503,
@@ -259,6 +275,14 @@ def create_app(
             audio_bytes, content_type = active_synthesizer.synthesize(text)
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if cache_key:
+            active_store.save_speech_cache(
+                cache_key=cache_key,
+                text_hash=text_hash,
+                voice=voice,
+                content_type=content_type,
+                audio_bytes=audio_bytes,
+            )
         return {
             "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
             "content_type": content_type,

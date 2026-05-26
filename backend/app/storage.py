@@ -137,10 +137,87 @@ class SessionStore:
                 ON materials (pack_id, position)
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS speech_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    text_hash TEXT NOT NULL,
+                    voice TEXT NOT NULL,
+                    content_type TEXT NOT NULL,
+                    audio_bytes BLOB NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_speech_cache_text_voice
+                ON speech_cache (text_hash, voice)
+                """
+            )
             self._ensure_practice_session_columns(connection)
             self._ensure_vocabulary_columns(connection)
         if seed_builtin_materials:
             self.import_material_pack(BUILTIN_MATERIAL_PACK)
+
+    def get_speech_cache(
+        self,
+        *,
+        cache_key: str,
+        text_hash: str,
+        voice: str,
+    ) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT content_type, audio_bytes
+                FROM speech_cache
+                WHERE cache_key = ?
+                  AND text_hash = ?
+                  AND voice = ?
+                """,
+                (cache_key, text_hash, voice),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "content_type": row["content_type"],
+            "audio_bytes": bytes(row["audio_bytes"]),
+        }
+
+    def save_speech_cache(
+        self,
+        *,
+        cache_key: str,
+        text_hash: str,
+        voice: str,
+        content_type: str,
+        audio_bytes: bytes,
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO speech_cache (
+                    cache_key,
+                    text_hash,
+                    voice,
+                    content_type,
+                    audio_bytes,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    text_hash = excluded.text_hash,
+                    voice = excluded.voice,
+                    content_type = excluded.content_type,
+                    audio_bytes = excluded.audio_bytes,
+                    updated_at = excluded.updated_at
+                """,
+                (cache_key, text_hash, voice, content_type, audio_bytes, now, now),
+            )
 
     def create_session(
         self,

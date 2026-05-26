@@ -191,6 +191,27 @@ describe("api client", () => {
     expect(response.content_type).toBe("audio/mpeg");
   });
 
+  test("requests synthesized speech audio with a material cache key", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ audio_base64: "YXVkaW8=", content_type: "audio/mpeg" })
+      })
+    );
+
+    const response = await speakText("quiet", { cacheKey: "material:quiet" });
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/speak",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ text: "quiet", cache_key: "material:quiet" })
+      })
+    );
+    expect(response.content_type).toBe("audio/mpeg");
+  });
+
   test("throws backend detail on failed requests", async () => {
     vi.stubGlobal(
       "fetch",
