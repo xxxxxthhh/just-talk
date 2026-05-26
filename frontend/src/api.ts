@@ -37,28 +37,15 @@ export async function getSession(sessionId: string): Promise<PracticeSession> {
 
 export async function scoreRecording(
   referenceText: string,
-  audioBlob: Blob
-): Promise<ScoreResponse> {
-  return uploadRecording("/api/score", referenceText, audioBlob);
-}
-
-export async function scoreLongRecording(
-  referenceText: string,
-  audioBlob: Blob
-): Promise<ScoreResponse> {
-  return uploadRecording("/api/score/long", referenceText, audioBlob);
-}
-
-async function uploadRecording(
-  endpoint: string,
-  referenceText: string,
-  audioBlob: Blob
+  audioBlob: Blob,
+  mode: "short" | "long" = "short"
 ): Promise<ScoreResponse> {
   const body = new FormData();
   body.append("reference_text", referenceText);
+  body.append("mode", mode);
   body.append("audio", audioBlob, "recording.webm");
   return parseResponse<ScoreResponse>(
-    await fetch(endpoint, {
+    await fetch("/api/score", {
       method: "POST",
       body
     })

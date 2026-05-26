@@ -91,19 +91,31 @@ def create_app(
             "vocabulary_graduation_streak": active_settings.vocabulary_graduation_streak,
         }
 
-    @app.post("/api/score")
-    async def score(
-        reference_text: str = Form(...),
-        audio: UploadFile = File(...),
+    def _score_uploaded_recording(
+        *,
+        reference_text: str,
+        audio: UploadFile,
+        mode: str,
     ) -> dict[str, Any]:
         cleaned_reference = reference_text.strip()
         if not cleaned_reference:
             raise HTTPException(status_code=400, detail="reference_text is required.")
+        score_mode = mode.strip().lower()
+        if score_mode not in {"short", "long"}:
+            raise HTTPException(status_code=400, detail='mode must be "short" or "long".')
         if active_scorer is None:
             raise HTTPException(
                 status_code=503,
                 detail="Azure Speech is not configured. Fill AZURE_SPEECH_KEY and AZURE_SPEECH_REGION in .env.",
             )
+        continuous_score = None
+        if score_mode == "long":
+            continuous_score = getattr(active_scorer, "score_continuous", None)
+            if continuous_score is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Long Passage scoring is not available for this scorer.",
+                )
 
         suffix = Path(audio.filename or "recording.webm").suffix or ".webm"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -116,7 +128,11 @@ def create_app(
                 duration_seconds = probe_audio_duration_seconds(input_path)
                 ensure_audio_duration_allowed(
                     duration_seconds=duration_seconds,
-                    max_seconds=active_settings.max_audio_seconds,
+                    max_seconds=(
+                        active_settings.max_long_audio_seconds
+                        if score_mode == "long"
+                        else active_settings.max_audio_seconds
+                    ),
                 )
                 convert_to_wav_16k_mono(input_path, wav_path)
             except AudioTooLongError as exc:
@@ -127,16 +143,22 @@ def create_app(
                     detail="Could not read the uploaded audio. Please record again.",
                 ) from exc
 
-            raw_result = active_scorer.score(wav_path, cleaned_reference)
+            if score_mode == "long":
+                try:
+                    raw_results = continuous_score(wav_path, cleaned_reference)
+                except RuntimeError as exc:
+                    raise HTTPException(status_code=502, detail=str(exc)) from exc
+                normalized = normalize_continuous_azure_results(raw_results)
+            else:
+                raw_result = active_scorer.score(wav_path, cleaned_reference)
+                normalized = normalize_azure_result(raw_result)
 
-        normalized = normalize_azure_result(raw_result)
         session = active_store.create_session(
             reference_text=cleaned_reference,
             audio_duration_ms=round(duration_seconds * 1000),
             normalized_result=normalized,
         )
-        single_word = _single_word_reference(cleaned_reference)
-        if single_word:
+        if score_mode == "short" and (single_word := _single_word_reference(cleaned_reference)):
             active_store.record_word_practice(
                 single_word,
                 latest_score=normalized.get("scores", {}).get("accuracy"),
@@ -145,60 +167,17 @@ def create_app(
             )
         return {"result": normalized, "session": session}
 
-    @app.post("/api/score/long")
-    async def score_long(
+    @app.post("/api/score")
+    async def score(
         reference_text: str = Form(...),
         audio: UploadFile = File(...),
+        mode: str = Form("short"),
     ) -> dict[str, Any]:
-        cleaned_reference = reference_text.strip()
-        if not cleaned_reference:
-            raise HTTPException(status_code=400, detail="reference_text is required.")
-        if active_scorer is None:
-            raise HTTPException(
-                status_code=503,
-                detail="Azure Speech is not configured. Fill AZURE_SPEECH_KEY and AZURE_SPEECH_REGION in .env.",
-            )
-        continuous_score = getattr(active_scorer, "score_continuous", None)
-        if continuous_score is None:
-            raise HTTPException(
-                status_code=503,
-                detail="Long Passage scoring is not available for this scorer.",
-            )
-
-        suffix = Path(audio.filename or "recording.webm").suffix or ".webm"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            input_path = Path(temp_dir) / f"upload{suffix}"
-            wav_path = Path(temp_dir) / "recording.wav"
-            with input_path.open("wb") as destination:
-                shutil.copyfileobj(audio.file, destination)
-
-            try:
-                duration_seconds = probe_audio_duration_seconds(input_path)
-                ensure_audio_duration_allowed(
-                    duration_seconds=duration_seconds,
-                    max_seconds=active_settings.max_long_audio_seconds,
-                )
-                convert_to_wav_16k_mono(input_path, wav_path)
-            except AudioTooLongError as exc:
-                raise HTTPException(status_code=413, detail=str(exc)) from exc
-            except (subprocess.CalledProcessError, KeyError, ValueError) as exc:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Could not read the uploaded audio. Please record again.",
-                ) from exc
-
-            try:
-                raw_results = continuous_score(wav_path, cleaned_reference)
-            except RuntimeError as exc:
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-        normalized = normalize_continuous_azure_results(raw_results)
-        session = active_store.create_session(
-            reference_text=cleaned_reference,
-            audio_duration_ms=round(duration_seconds * 1000),
-            normalized_result=normalized,
+        return _score_uploaded_recording(
+            reference_text=reference_text,
+            audio=audio,
+            mode=mode,
         )
-        return {"result": normalized, "session": session}
 
     @app.get("/api/sessions")
     def list_sessions() -> list[dict[str, Any]]:

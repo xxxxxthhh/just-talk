@@ -292,7 +292,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(graduated_words.json()[0]["status"], "graduated")
         self.assertEqual(graduated_words.json()[0]["consecutive_successes"], 2)
 
-    def test_long_score_endpoint_uses_continuous_scorer_and_saves_segmented_result(self):
+    def test_score_endpoint_long_mode_uses_continuous_scorer_and_saves_segmented_result(self):
         from fastapi.testclient import TestClient
 
         from app.config import Settings
@@ -314,8 +314,11 @@ class ApiTests(unittest.TestCase):
             client = TestClient(app)
 
             response = client.post(
-                "/api/score/long",
-                data={"reference_text": "Quiet streets. We kept walking."},
+                "/api/score",
+                data={
+                    "reference_text": "Quiet streets. We kept walking.",
+                    "mode": "long",
+                },
                 files={"audio": ("sample.wav", make_wav_bytes(), "audio/wav")},
             )
             history = client.get("/api/sessions")

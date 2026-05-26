@@ -9,7 +9,6 @@ import {
   importMaterialPack,
   listMaterials,
   listWords,
-  scoreLongRecording,
   scoreRecording,
   speakText
 } from "./api";
@@ -36,40 +35,40 @@ describe("api client", () => {
   });
 
   test("uploads recording with reference text", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ result: { scores: { pronunciation: 91 } } })
-      })
-    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ result: { scores: { pronunciation: 91 } } })
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     const audio = new Blob(["abc"], { type: "audio/webm" });
     const response = await scoreRecording("Hello.", audio);
 
-    expect(fetch).toHaveBeenCalledWith(
+    expect(fetchMock).toHaveBeenCalledWith(
       "/api/score",
       expect.objectContaining({ method: "POST", body: expect.any(FormData) })
     );
+    const body = fetchMock.mock.calls[0][1].body as FormData;
+    expect(body.get("mode")).toBe("short");
     expect(response.result.scores.pronunciation).toBe(91);
   });
 
-  test("uploads long passage recordings to the continuous scoring endpoint", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ result: { segments: [{ transcript: "Long passage." }] } })
-      })
-    );
+  test("uploads long passage recordings to the unified scoring endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ result: { segments: [{ transcript: "Long passage." }] } })
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     const audio = new Blob(["abc"], { type: "audio/webm" });
-    const response = await scoreLongRecording("Long passage.", audio);
+    const response = await scoreRecording("Long passage.", audio, "long");
 
-    expect(fetch).toHaveBeenCalledWith(
-      "/api/score/long",
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/score",
       expect.objectContaining({ method: "POST", body: expect.any(FormData) })
     );
+    const body = fetchMock.mock.calls[0][1].body as FormData;
+    expect(body.get("mode")).toBe("long");
     expect(response.result.segments?.[0].transcript).toBe("Long passage.");
   });
 

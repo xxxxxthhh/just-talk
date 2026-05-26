@@ -33,7 +33,6 @@ import {
   listMaterials,
   listSessions,
   listWords,
-  scoreLongRecording,
   scoreRecording
 } from "./api";
 import { AudioPlayer } from "./components/AudioPlayer";
@@ -320,9 +319,7 @@ function App() {
     setError("");
     setStatus(isLongMode ? "Scoring long passage" : "Scoring pronunciation");
     try {
-      const response = isLongMode
-        ? await scoreLongRecording(passage, audioBlob)
-        : await scoreRecording(passage, audioBlob);
+      const response = await scoreRecording(passage, audioBlob, practiceMode);
       setResult(response.result);
       setCurrentSessionId(response.session.id);
       setSelectedWordIndex(0);
