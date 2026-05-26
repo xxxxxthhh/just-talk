@@ -1,9 +1,10 @@
 import json
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .scoring import score_bucket
 
@@ -67,7 +68,7 @@ class SessionStore:
 
     def initialize(self, *, seed_builtin_materials: bool = True) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS practice_sessions (
@@ -150,7 +151,7 @@ class SessionStore:
     ) -> dict[str, Any]:
         session_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc).isoformat()
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 INSERT INTO practice_sessions (
@@ -179,7 +180,7 @@ class SessionStore:
         return self.get_session(session_id)
 
     def list_sessions(self) -> list[dict[str, Any]]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 """
                 SELECT id, created_at, reference_text, audio_duration_ms, overall_scores_json
@@ -200,7 +201,7 @@ class SessionStore:
         ]
 
     def get_session(self, session_id: str) -> dict[str, Any]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 """
                 SELECT *
@@ -223,7 +224,7 @@ class SessionStore:
         }
 
     def list_materials(self) -> list[dict[str, Any]]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 """
                 SELECT
@@ -243,7 +244,7 @@ class SessionStore:
     def import_material_pack(self, payload: dict[str, Any]) -> dict[str, Any]:
         pack, lessons = self._normalize_material_pack(payload)
         now = datetime.now(timezone.utc).isoformat()
-        with self._connect() as connection:
+        with self._connection() as connection:
             existing_pack = connection.execute(
                 """
                 SELECT imported_at
@@ -369,7 +370,7 @@ class SessionStore:
         notes: str = "",
     ) -> dict[str, Any]:
         display_word, normalized_word = self._normalize_word(word)
-        with self._connect() as connection:
+        with self._connection() as connection:
             existing = self._find_word(connection, normalized_word)
             if existing is not None:
                 return self._row_to_word(existing)
@@ -426,7 +427,7 @@ class SessionStore:
             where_clause = "WHERE status = ?"
             parameters = (status,)
 
-        with self._connect() as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 f"""
                 SELECT *
@@ -443,7 +444,7 @@ class SessionStore:
         return [self._row_to_word(row) for row in rows]
 
     def delete_word(self, word_id: str) -> bool:
-        with self._connect() as connection:
+        with self._connection() as connection:
             cursor = connection.execute(
                 """
                 DELETE FROM vocabulary_items
@@ -463,7 +464,7 @@ class SessionStore:
         graduation_streak: int = 2,
     ) -> dict[str, Any]:
         display_word, normalized_word = self._normalize_word(word)
-        with self._connect() as connection:
+        with self._connection() as connection:
             existing = self._find_word(connection, normalized_word)
             if existing is None:
                 self.create_word(display_word, source="practice")
@@ -553,7 +554,7 @@ class SessionStore:
         min_attempts: int = PHONEME_STAT_MIN_ATTEMPTS,
         max_examples_per_phoneme: int = PHONEME_STAT_MAX_EXAMPLES,
     ) -> list[dict[str, Any]]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             # Select the 100 most recent sessions, then sort them chronologically (ascending)
             rows = connection.execute(
                 """
@@ -653,6 +654,15 @@ class SessionStore:
         connection = sqlite3.connect(self.database_path)
         connection.row_factory = sqlite3.Row
         return connection
+
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _ensure_practice_session_columns(self, connection: sqlite3.Connection) -> None:
         columns = {

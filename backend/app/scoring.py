@@ -118,11 +118,18 @@ def _average_segment_score(
     segments: list[dict[str, Any]],
     score_name: str,
 ) -> float | None:
-    values = [
-        segment["scores"][score_name]
+    weighted_values = [
+        (
+            segment["scores"][score_name],
+            max(len(segment.get("words", [])), 1),
+        )
         for segment in segments
         if segment["scores"].get(score_name) is not None
     ]
-    if not values:
+    if not weighted_values:
         return None
-    return round(sum(values) / len(values), 2)
+    total_weight = sum(weight for _, weight in weighted_values)
+    return round(
+        sum(value * weight for value, weight in weighted_values) / total_weight,
+        2,
+    )

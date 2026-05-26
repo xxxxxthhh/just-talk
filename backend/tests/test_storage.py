@@ -4,6 +4,42 @@ from pathlib import Path
 
 
 class StorageTests(unittest.TestCase):
+    def test_store_closes_sqlite_connections_after_operations(self):
+        import sqlite3
+
+        from app.storage import SessionStore
+
+        closed_connections: list[sqlite3.Connection] = []
+
+        class TrackingConnection(sqlite3.Connection):
+            def close(self) -> None:
+                closed_connections.append(self)
+                super().close()
+
+        class TrackingStore(SessionStore):
+            def _connect(self) -> sqlite3.Connection:
+                connection = sqlite3.connect(self.database_path, factory=TrackingConnection)
+                connection.row_factory = sqlite3.Row
+                return connection
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "sessions.db"
+            store = TrackingStore(f"sqlite:///{database_path}")
+
+            store.initialize(seed_builtin_materials=False)
+            session = store.create_session(
+                reference_text="Hello world.",
+                audio_duration_ms=1200,
+                normalized_result={
+                    "scores": {"pronunciation": 86.0},
+                    "words": [],
+                    "raw": {"ok": True},
+                },
+            )
+            store.get_session(session["id"])
+
+        self.assertEqual(len(closed_connections), 4)
+
     def test_saves_and_lists_practice_sessions(self):
         from app.storage import SessionStore
 

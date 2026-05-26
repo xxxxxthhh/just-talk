@@ -1,4 +1,5 @@
 import io
+import inspect
 import tempfile
 import unittest
 import wave
@@ -91,6 +92,32 @@ class FakeSynthesizer:
 
 
 class ApiTests(unittest.TestCase):
+    def test_blocking_io_endpoints_are_sync_handlers(self):
+        from fastapi.routing import APIRoute
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = create_app(
+                settings=Settings(
+                    database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}",
+                    llm_base_url="http://example.test",
+                    llm_api_key="test-key",
+                ),
+                store=SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}"),
+                scorer=FakeScorer(),
+            )
+
+        endpoints = {
+            route.path: route.endpoint
+            for route in app.routes
+            if isinstance(route, APIRoute)
+        }
+        self.assertFalse(inspect.iscoroutinefunction(endpoints["/api/score"]))
+        self.assertFalse(inspect.iscoroutinefunction(endpoints["/api/passage-check"]))
+
     def test_score_endpoint_returns_normalized_result_and_saves_history(self):
         from fastapi.testclient import TestClient
 

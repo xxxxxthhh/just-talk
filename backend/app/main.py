@@ -168,7 +168,7 @@ def create_app(
         return {"result": normalized, "session": session}
 
     @app.post("/api/score")
-    async def score(
+    def score(
         reference_text: str = Form(...),
         audio: UploadFile = File(...),
         mode: str = Form("short"),
@@ -265,7 +265,7 @@ def create_app(
         }
 
     @app.post("/api/passage-check")
-    async def passage_check(text: str = Form(...)) -> dict[str, Any]:
+    def passage_check(text: str = Form(...)) -> dict[str, Any]:
         if not active_settings.passage_check_configured:
             raise HTTPException(
                 status_code=503,

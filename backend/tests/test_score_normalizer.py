@@ -147,6 +147,68 @@ class ScoreNormalizerTests(unittest.TestCase):
         self.assertEqual(result["segments"][0]["index"], 1)
         self.assertEqual(result["segments"][0]["scores"]["pronunciation"], 78.0)
 
+    def test_weights_continuous_scores_by_segment_word_count(self):
+        from app.scoring import normalize_continuous_azure_results
+
+        raw_results = [
+            {
+                "DisplayText": "Short.",
+                "NBest": [
+                    {
+                        "PronunciationAssessment": {
+                            "AccuracyScore": 50,
+                            "FluencyScore": 50,
+                            "CompletenessScore": 50,
+                            "ProsodyScore": 50,
+                            "PronScore": 50,
+                        },
+                        "Words": [
+                            {
+                                "Word": "short",
+                                "PronunciationAssessment": {"AccuracyScore": 50},
+                                "Phonemes": [],
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "DisplayText": "Much longer segment.",
+                "NBest": [
+                    {
+                        "PronunciationAssessment": {
+                            "AccuracyScore": 100,
+                            "FluencyScore": 100,
+                            "CompletenessScore": 100,
+                            "ProsodyScore": 100,
+                            "PronScore": 100,
+                        },
+                        "Words": [
+                            {
+                                "Word": "much",
+                                "PronunciationAssessment": {"AccuracyScore": 100},
+                                "Phonemes": [],
+                            },
+                            {
+                                "Word": "longer",
+                                "PronunciationAssessment": {"AccuracyScore": 100},
+                                "Phonemes": [],
+                            },
+                            {
+                                "Word": "segment",
+                                "PronunciationAssessment": {"AccuracyScore": 100},
+                                "Phonemes": [],
+                            },
+                        ],
+                    }
+                ],
+            },
+        ]
+
+        result = normalize_continuous_azure_results(raw_results)
+
+        self.assertEqual(result["scores"]["pronunciation"], 87.5)
+
 
 if __name__ == "__main__":
     unittest.main()
