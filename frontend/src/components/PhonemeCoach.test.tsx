@@ -162,5 +162,68 @@ describe("Phoneme Coach Components", () => {
       expect(PHONEME_GUIDES["ɝ"].practiceWords).toContain("girl");
       expect(PHONEME_GUIDES["ɚ"]).toBe(PHONEME_GUIDES["ɝ"]);
     });
+
+    test("covers observed practice-history phonemes with concrete pronunciation guides", () => {
+      const observedPhonemes = [
+        "t",
+        "n",
+        "ɪ",
+        "s",
+        "ə",
+        "d",
+        "l",
+        "i",
+        "k",
+        "m",
+        "w",
+        "ɛ",
+        "aɪ",
+        "z",
+        "ð",
+        "ʌ",
+        "ɹ",
+        "eɪ",
+        "æ",
+        "p",
+        "b",
+        "ŋ",
+        "ɔ",
+        "v",
+        "f",
+        "u",
+        "h",
+        "ɑ",
+        "oʊ",
+        "ɚ",
+        "g",
+        "ʃ",
+        "dʒ",
+        "aʊ",
+        "ɝ",
+        "θ",
+        "ɔɹ",
+        "tʃ",
+        "ju",
+        "ɑɹ",
+        "ɛɹ",
+        "ʊ",
+        "j",
+        "ɪɹ",
+        "aʊɹ",
+      ];
+
+      for (const phoneme of observedPhonemes) {
+        const guide = PHONEME_GUIDES[phoneme];
+        expect(guide, `${phoneme} should have a guide`).toBeDefined();
+        expect(guide.descriptionCn, `${phoneme} should not use fallback CN copy`).not.toMatch(
+          /正在收录|收录中/
+        );
+        expect(guide.descriptionEn, `${phoneme} should not use fallback EN copy`).not.toMatch(
+          /being compiled/
+        );
+        expect(guide.practiceWords.length, `${phoneme} practice words`).toBeGreaterThan(1);
+        expect(guide.minimalPairs.length, `${phoneme} minimal pairs`).toBeGreaterThan(0);
+      }
+    });
   });
 });
