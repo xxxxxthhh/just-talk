@@ -36,6 +36,108 @@ const health = {
   vocabulary_graduation_streak: 2
 };
 
+const scoredRecordingWords = [
+  {
+    word: "do",
+    accuracy: 88,
+    bucket: "good",
+    error_type: "None",
+    offset_ms: 0,
+    duration_ms: 240,
+    phonemes: []
+  },
+  {
+    word: "you",
+    accuracy: 100,
+    bucket: "good",
+    error_type: "None",
+    offset_ms: 320,
+    duration_ms: 260,
+    phonemes: []
+  },
+  {
+    word: "think",
+    accuracy: 94,
+    bucket: "good",
+    error_type: "None",
+    offset_ms: 900,
+    duration_ms: 430,
+    phonemes: []
+  },
+  {
+    word: "singapore",
+    accuracy: 97,
+    bucket: "good",
+    error_type: "None",
+    offset_ms: 1500,
+    duration_ms: 700,
+    phonemes: []
+  }
+];
+
+function installRecordingMocks() {
+  const trackStop = vi.fn();
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: {
+      getUserMedia: vi.fn().mockResolvedValue({
+        getTracks: () => [{ stop: trackStop }]
+      })
+    }
+  });
+  class MediaRecorderMock {
+    static isTypeSupported = vi.fn(() => true);
+    state = "inactive";
+    ondataavailable: ((event: { data: Blob }) => void) | null = null;
+    onstop: (() => void) | null = null;
+
+    start() {
+      this.state = "recording";
+    }
+
+    stop() {
+      this.state = "inactive";
+      this.ondataavailable?.({ data: new Blob(["audio"], { type: "audio/webm" }) });
+      this.onstop?.();
+    }
+  }
+  vi.stubGlobal("MediaRecorder", MediaRecorderMock);
+  vi.stubGlobal("URL", {
+    createObjectURL: vi.fn(() => "blob:recording"),
+    revokeObjectURL: vi.fn()
+  });
+}
+
+async function renderScoredRecording(extraPayloads: Record<string, unknown> = {}) {
+  installRecordingMocks();
+  mockApi({
+    "/api/health": health,
+    "/api/sessions": [],
+    "/api/words": [],
+    "/api/score": {
+      result: {
+        transcript: "do you think singapore",
+        scores: { pronunciation: 93, accuracy: 95, fluency: 90, completeness: 100, prosody: 88 },
+        segments: [],
+        words: scoredRecordingWords,
+        raw: {}
+      },
+      session: { id: "session-1" }
+    },
+    "/api/words/from-session/session-1": [],
+    ...extraPayloads
+  });
+
+  const view = render(<App />);
+  await userEvent.click(await screen.findByRole("button", { name: /^Record$/ }));
+  await userEvent.click(await screen.findByRole("button", { name: /^Stop$/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /^Score$/ })).not.toBeDisabled());
+  await userEvent.click(screen.getByRole("button", { name: /^Score$/ }));
+  await screen.findByRole("button", { name: /singapore\s*97/i });
+
+  return view;
+}
+
 describe("App", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -839,6 +941,159 @@ describe("App", () => {
 
     expect(await screen.findByRole("button", { name: "Review Material" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Edit/ })).not.toBeInTheDocument();
+  });
+
+  test("highlights the scored word that matches recording playback time", async () => {
+    const { container } = await renderScoredRecording();
+    const audio = container.querySelector("audio");
+    const doToken = await screen.findByRole("button", { name: /do\s*88/i });
+    const thinkToken = await screen.findByRole("button", { name: /think\s*94/i });
+    const singaporeToken = screen.getByRole("button", { name: /singapore\s*97/i });
+
+    if (!audio) throw new Error("Recording audio element was not rendered.");
+    expect(doToken).not.toHaveClass("playing");
+
+    audio.currentTime = 1.05;
+    fireEvent.timeUpdate(audio);
+
+    expect(thinkToken).toHaveClass("playing");
+    expect(singaporeToken).not.toHaveClass("playing");
+  });
+
+  test("seeks recording playback to the clicked scored word", async () => {
+    const play = vi
+      .spyOn(window.HTMLMediaElement.prototype, "play")
+      .mockResolvedValue(undefined);
+    const { container } = await renderScoredRecording();
+    const audio = container.querySelector("audio");
+    const singaporeToken = screen.getByRole("button", { name: /singapore\s*97/i });
+
+    if (!audio) throw new Error("Recording audio element was not rendered.");
+    await userEvent.click(singaporeToken);
+
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+    expect(audio.currentTime).toBeCloseTo(1.35);
+    expect(singaporeToken).toHaveClass("selected");
+  });
+
+  test("highlights the spoken word during passage pronunciation playback", async () => {
+    const audioInstances: {
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      currentTime: number;
+      duration: number;
+      ontimeupdate?: () => void;
+    }[] = [];
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0,
+          duration: 3,
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+
+    await renderScoredRecording({
+      "/api/speak": {
+        audio_base64: "YXVkaW8=",
+        content_type: "audio/mpeg",
+        word_boundaries: [
+          { text: "do", text_offset: 0, word_length: 2, audio_offset_ms: 0, duration_ms: 240 },
+          { text: "you", text_offset: 3, word_length: 3, audio_offset_ms: 320, duration_ms: 260 },
+          { text: "think", text_offset: 7, word_length: 5, audio_offset_ms: 900, duration_ms: 430 },
+          {
+            text: "singapore",
+            text_offset: 13,
+            word_length: 9,
+            audio_offset_ms: 1500,
+            duration_ms: 700
+          }
+        ]
+      }
+    });
+    await userEvent.click(await screen.findByRole("button", { name: /^Play$/ }));
+    await waitFor(() => expect(audioInstances).toHaveLength(1));
+
+    audioInstances[0].currentTime = 1.6;
+    act(() => {
+      audioInstances[0].ontimeupdate?.();
+    });
+
+    expect(screen.getByRole("button", { name: /singapore\s*97/i })).toHaveClass("playing");
+    expect(screen.getByRole("button", { name: /think\s*94/i })).not.toHaveClass("playing");
+  });
+
+  test("shows and seeks read-along words while passage pronunciation plays before scoring", async () => {
+    const audioInstances: {
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      currentTime: number;
+      duration: number;
+      ontimeupdate?: () => void;
+    }[] = [];
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0,
+          duration: 3,
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn()
+    });
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/speak": {
+        audio_base64: "YXVkaW8=",
+        content_type: "audio/mpeg",
+        word_boundaries: [
+          { text: "do", text_offset: 0, word_length: 2, audio_offset_ms: 0, duration_ms: 240 },
+          { text: "you", text_offset: 3, word_length: 3, audio_offset_ms: 320, duration_ms: 260 },
+          { text: "think", text_offset: 7, word_length: 5, audio_offset_ms: 900, duration_ms: 430 },
+          {
+            text: "singapore",
+            text_offset: 13,
+            word_length: 9,
+            audio_offset_ms: 1500,
+            duration_ms: 700
+          }
+        ]
+      }
+    });
+
+    render(<App />);
+    fireEvent.change(await screen.findByDisplayValue(/The weather changed quickly/), {
+      target: { value: "do you think singapore" }
+    });
+    await userEvent.click(await screen.findByRole("button", { name: /^Play$/ }));
+    await waitFor(() => expect(audioInstances).toHaveLength(1));
+
+    audioInstances[0].currentTime = 0.95;
+    act(() => {
+      audioInstances[0].ontimeupdate?.();
+    });
+    const thinkWord = await screen.findByRole("button", { name: "think" });
+    expect(thinkWord).toHaveClass("playing");
+
+    await userEvent.click(screen.getByRole("button", { name: "singapore" }));
+
+    expect(audioInstances[0].currentTime).toBeCloseTo(1.5);
+    expect(audioInstances[0].play).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "singapore" })).toHaveClass("playing");
   });
 
   test("pauses passage pronunciation audio without starting overlapping playback", async () => {

@@ -145,6 +145,7 @@ class SessionStore:
                     voice TEXT NOT NULL,
                     content_type TEXT NOT NULL,
                     audio_bytes BLOB NOT NULL,
+                    word_boundaries_json TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -156,6 +157,7 @@ class SessionStore:
                 ON speech_cache (text_hash, voice)
                 """
             )
+            self._ensure_speech_cache_columns(connection)
             self._ensure_practice_session_columns(connection)
             self._ensure_vocabulary_columns(connection)
         if seed_builtin_materials:
@@ -171,7 +173,7 @@ class SessionStore:
         with self._connection() as connection:
             row = connection.execute(
                 """
-                SELECT content_type, audio_bytes
+                SELECT content_type, audio_bytes, word_boundaries_json
                 FROM speech_cache
                 WHERE cache_key = ?
                   AND text_hash = ?
@@ -184,6 +186,7 @@ class SessionStore:
         return {
             "content_type": row["content_type"],
             "audio_bytes": bytes(row["audio_bytes"]),
+            "word_boundaries": json.loads(row["word_boundaries_json"]),
         }
 
     def save_speech_cache(
@@ -194,6 +197,7 @@ class SessionStore:
         voice: str,
         content_type: str,
         audio_bytes: bytes,
+        word_boundaries: list[dict[str, Any]] | None = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         with self._connection() as connection:
@@ -205,18 +209,29 @@ class SessionStore:
                     voice,
                     content_type,
                     audio_bytes,
+                    word_boundaries_json,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(cache_key) DO UPDATE SET
                     text_hash = excluded.text_hash,
                     voice = excluded.voice,
                     content_type = excluded.content_type,
                     audio_bytes = excluded.audio_bytes,
+                    word_boundaries_json = excluded.word_boundaries_json,
                     updated_at = excluded.updated_at
                 """,
-                (cache_key, text_hash, voice, content_type, audio_bytes, now, now),
+                (
+                    cache_key,
+                    text_hash,
+                    voice,
+                    content_type,
+                    audio_bytes,
+                    json.dumps(word_boundaries or []),
+                    now,
+                    now,
+                ),
             )
 
     def create_session(
@@ -749,6 +764,16 @@ class SessionStore:
         if "segments_json" not in columns:
             connection.execute(
                 "ALTER TABLE practice_sessions ADD COLUMN segments_json TEXT NOT NULL DEFAULT '[]'"
+            )
+
+    def _ensure_speech_cache_columns(self, connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(speech_cache)").fetchall()
+        }
+        if "word_boundaries_json" not in columns:
+            connection.execute(
+                "ALTER TABLE speech_cache ADD COLUMN word_boundaries_json TEXT NOT NULL DEFAULT '[]'"
             )
 
     def _ensure_vocabulary_columns(self, connection: sqlite3.Connection) -> None:

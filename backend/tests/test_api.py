@@ -1,4 +1,5 @@
 import io
+import hashlib
 import inspect
 import tempfile
 import unittest
@@ -89,10 +90,18 @@ class FakeSynthesizer:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def synthesize(self, text: str) -> tuple[bytes, str]:
+    def synthesize(self, text: str) -> tuple[bytes, str, list[dict]]:
         self.text = text
         self.calls.append(text)
-        return b"audio-bytes", "audio/mpeg"
+        return b"audio-bytes", "audio/mpeg", [
+            {
+                "text": text.split()[0],
+                "text_offset": 0,
+                "word_length": len(text.split()[0]),
+                "audio_offset_ms": 0,
+                "duration_ms": 320,
+            }
+        ]
 
 
 class ApiTests(unittest.TestCase):
@@ -231,6 +240,18 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["audio_base64"], "YXVkaW8tYnl0ZXM=")
         self.assertEqual(response.json()["content_type"], "audio/mpeg")
+        self.assertEqual(
+            response.json()["word_boundaries"],
+            [
+                {
+                    "text": "quiet",
+                    "text_offset": 0,
+                    "word_length": 5,
+                    "audio_offset_ms": 0,
+                    "duration_ms": 320,
+                }
+            ],
+        )
         self.assertEqual(synthesizer.text, "quiet")
 
     def test_speak_endpoint_reuses_cached_audio_for_material_cache_key(self):
@@ -263,6 +284,44 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(first.json(), second.json())
         self.assertEqual(synthesizer.calls, ["Quiet streets."])
+
+    def test_speak_endpoint_refreshes_cached_audio_without_word_boundaries(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_url = f"sqlite:///{Path(temp_dir) / 'sessions.db'}"
+            store = SessionStore(database_url)
+            text = "Quiet streets."
+            store.initialize()
+            store.save_speech_cache(
+                cache_key="material:quiet-streets",
+                text_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                voice=Settings().azure_tts_voice,
+                content_type="audio/mpeg",
+                audio_bytes=b"stale-audio",
+                word_boundaries=[],
+            )
+            synthesizer = FakeSynthesizer()
+            app = create_app(
+                settings=Settings(database_url=database_url),
+                store=store,
+                synthesizer=synthesizer,
+            )
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/speak",
+                json={"text": text, "cache_key": "material:quiet-streets"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["audio_base64"], "YXVkaW8tYnl0ZXM=")
+        self.assertEqual(response.json()["word_boundaries"][0]["text"], "Quiet")
+        self.assertEqual(synthesizer.calls, [text])
 
     def test_speak_endpoint_requires_azure_configuration_without_fake(self):
         from fastapi.testclient import TestClient

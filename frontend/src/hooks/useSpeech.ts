@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { speakText, type SpeakTextOptions } from "../api";
+import type { SpeechWordBoundary } from "../types";
 
 const SPEECH_CACHE_LIMIT = 30;
 
 type SpeechCacheEntry = {
   url?: string;
+  wordBoundaries?: SpeechWordBoundary[];
   promise?: Promise<string>;
   lastUsed: number;
 };
@@ -26,13 +28,30 @@ function responseToObjectUrl(response: Awaited<ReturnType<typeof speakText>>): s
   return URL.createObjectURL(new Blob([bytes], { type: response.content_type }));
 }
 
+function activeBoundaryIndexAtTime(
+  boundaries: SpeechWordBoundary[],
+  currentTimeSeconds: number
+): number {
+  if (!Number.isFinite(currentTimeSeconds)) return -1;
+  const currentTimeMs = currentTimeSeconds * 1000;
+  return boundaries.findIndex((boundary, index) => {
+    const durationEndMs = boundary.audio_offset_ms + Math.max(boundary.duration_ms, 0);
+    const nextBoundaryStartMs = boundaries[index + 1]?.audio_offset_ms;
+    const endMs = Math.max(durationEndMs, nextBoundaryStartMs ?? durationEndMs);
+    return currentTimeMs >= boundary.audio_offset_ms && currentTimeMs < endMs;
+  });
+}
+
 export function useSpeech(setError: (msg: string) => void) {
   const [speakingText, setSpeakingText] = useState("");
   const [speechStatus, setSpeechStatus] = useState<SpeechStatus>("idle");
   const [speechCurrentTime, setSpeechCurrentTime] = useState(0);
   const [speechDuration, setSpeechDuration] = useState(0);
+  const [speechWordBoundaries, setSpeechWordBoundaries] = useState<SpeechWordBoundary[]>([]);
+  const [activeSpeechBoundaryIndex, setActiveSpeechBoundaryIndex] = useState(-1);
   const speechAudioRef = useRef<HTMLAudioElement | null>(null);
   const currentSpeechKeyRef = useRef("");
+  const currentSpeechWordBoundariesRef = useRef<SpeechWordBoundary[]>([]);
   const playbackRequestRef = useRef(0);
   const cacheRef = useRef<Map<string, SpeechCacheEntry>>(new Map());
 
@@ -43,8 +62,11 @@ export function useSpeech(setError: (msg: string) => void) {
       speechAudioRef.current = null;
     }
     currentSpeechKeyRef.current = "";
+    currentSpeechWordBoundariesRef.current = [];
     setSpeechCurrentTime(0);
     setSpeechDuration(0);
+    setSpeechWordBoundaries([]);
+    setActiveSpeechBoundaryIndex(-1);
   }, []);
 
   const stopCurrentSpeech = useCallback(() => {
@@ -59,6 +81,9 @@ export function useSpeech(setError: (msg: string) => void) {
     if (!audio) return;
     audio.pause();
     setSpeechCurrentTime(audio.currentTime || 0);
+    setActiveSpeechBoundaryIndex(
+      activeBoundaryIndexAtTime(currentSpeechWordBoundariesRef.current, audio.currentTime || 0)
+    );
     if (Number.isFinite(audio.duration)) {
       setSpeechDuration(audio.duration || 0);
     }
@@ -75,6 +100,9 @@ export function useSpeech(setError: (msg: string) => void) {
     const nextTime = Math.max(0, Math.min(timeSeconds, upperBound));
     audio.currentTime = nextTime;
     setSpeechCurrentTime(nextTime);
+    setActiveSpeechBoundaryIndex(
+      activeBoundaryIndexAtTime(currentSpeechWordBoundariesRef.current, nextTime)
+    );
     if (knownDuration > 0) {
       setSpeechDuration(knownDuration);
     }
@@ -118,6 +146,7 @@ export function useSpeech(setError: (msg: string) => void) {
         .then((response) => {
           const speechUrl = responseToObjectUrl(response);
           entry.url = speechUrl;
+          entry.wordBoundaries = response.word_boundaries ?? [];
           entry.promise = undefined;
           entry.lastUsed = Date.now();
           cache.set(cacheIdentity, entry);
@@ -192,20 +221,31 @@ export function useSpeech(setError: (msg: string) => void) {
         return;
       }
       const audio = new Audio(speechUrl);
+      const cacheEntry = cacheRef.current.get(cacheIdentity);
+      const wordBoundaries = cacheEntry?.wordBoundaries ?? [];
       speechAudioRef.current = audio;
       currentSpeechKeyRef.current = cacheIdentity;
+      currentSpeechWordBoundariesRef.current = wordBoundaries;
+      setSpeechWordBoundaries(wordBoundaries);
       const clearIfCurrent = () => {
         if (speechAudioRef.current === audio && playbackRequestRef.current === requestId) {
           speechAudioRef.current = null;
           currentSpeechKeyRef.current = "";
+          currentSpeechWordBoundariesRef.current = [];
           setSpeakingText("");
           setSpeechStatus("idle");
           setSpeechCurrentTime(0);
           setSpeechDuration(0);
+          setSpeechWordBoundaries([]);
+          setActiveSpeechBoundaryIndex(-1);
         }
       };
       const updateProgress = () => {
-        setSpeechCurrentTime(audio.currentTime || 0);
+        const currentTime = audio.currentTime || 0;
+        setSpeechCurrentTime(currentTime);
+        setActiveSpeechBoundaryIndex(
+          activeBoundaryIndexAtTime(currentSpeechWordBoundariesRef.current, currentTime)
+        );
         if (Number.isFinite(audio.duration)) {
           setSpeechDuration(audio.duration || 0);
         }
@@ -231,6 +271,8 @@ export function useSpeech(setError: (msg: string) => void) {
     speechStatus,
     speechCurrentTime,
     speechDuration,
+    speechWordBoundaries,
+    activeSpeechBoundaryIndex,
     preloadSpeech,
     playCorrect,
     pauseCurrentSpeech,

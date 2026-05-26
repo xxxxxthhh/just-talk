@@ -248,7 +248,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="Session not found.") from exc
 
     @app.post("/api/speak")
-    def speak(request: SpeakRequest) -> dict[str, str]:
+    def speak(request: SpeakRequest) -> dict[str, Any]:
         text = request.text.strip()
         if not text:
             raise HTTPException(status_code=400, detail="text is required.")
@@ -261,10 +261,13 @@ def create_app(
                 text_hash=text_hash,
                 voice=voice,
             )
-            if cached is not None:
+            if cached is not None and (
+                cached["word_boundaries"] or active_synthesizer is None
+            ):
                 return {
                     "audio_base64": base64.b64encode(cached["audio_bytes"]).decode("ascii"),
                     "content_type": cached["content_type"],
+                    "word_boundaries": cached["word_boundaries"],
                 }
         if active_synthesizer is None:
             raise HTTPException(
@@ -272,9 +275,11 @@ def create_app(
                 detail="Azure Speech is not configured. Fill AZURE_SPEECH_KEY and AZURE_SPEECH_REGION in .env.",
             )
         try:
-            audio_bytes, content_type = active_synthesizer.synthesize(text)
+            synthesis_result = active_synthesizer.synthesize(text)
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        audio_bytes, content_type = synthesis_result[:2]
+        word_boundaries = synthesis_result[2] if len(synthesis_result) > 2 else []
         if cache_key:
             active_store.save_speech_cache(
                 cache_key=cache_key,
@@ -282,10 +287,12 @@ def create_app(
                 voice=voice,
                 content_type=content_type,
                 audio_bytes=audio_bytes,
+                word_boundaries=word_boundaries,
             )
         return {
             "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
             "content_type": content_type,
+            "word_boundaries": word_boundaries,
         }
 
     @app.post("/api/passage-check")

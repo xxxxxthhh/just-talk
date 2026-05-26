@@ -93,6 +93,15 @@ export type VocabularyItem = {
 export type SpeechResponse = {
   audio_base64: string;
   content_type: string;
+  word_boundaries?: SpeechWordBoundary[];
+};
+
+export type SpeechWordBoundary = {
+  text: string;
+  text_offset: number;
+  word_length: number;
+  audio_offset_ms: number;
+  duration_ms: number;
 };
 
 export type PhonemeStatExample = {

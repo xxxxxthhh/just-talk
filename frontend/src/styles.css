@@ -1390,6 +1390,46 @@ body[data-theme="dark"] .mode-option.selected {
   cursor: default;
 }
 
+.passage-read-along {
+  width: 100%;
+  min-height: 180px;
+  padding: 16px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-main);
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  box-shadow: var(--shadow-sm);
+}
+
+.passage-read-text {
+  white-space: pre-wrap;
+}
+
+.passage-read-word {
+  display: inline;
+  margin: 0;
+  padding: 1px 2px;
+  border-radius: 5px;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+
+.passage-read-word:hover {
+  background: var(--color-neutral-bg);
+  box-shadow: 0 0 0 2px var(--border-card);
+}
+
+.passage-read-word.playing {
+  background: var(--accent-color);
+  color: var(--text-inverse);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
 /* In-Context Highlight Overlay Container */
 .scored-passage-container {
   display: flex;
@@ -1452,6 +1492,12 @@ body[data-theme="dark"] .mode-option.selected {
 .scored-word-token.selected {
   outline: 2px solid var(--accent-color);
   outline-offset: 1px;
+}
+
+.scored-word-token.playing {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 3px var(--accent-glow), var(--shadow-md);
+  transform: translateY(-1px);
 }
 
 .scored-word-token span {

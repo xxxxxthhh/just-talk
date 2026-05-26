@@ -38,7 +38,7 @@ import {
   listWords,
   scoreRecording
 } from "./api";
-import { AudioPlayer } from "./components/AudioPlayer";
+import { AudioPlayer, type AudioSeekRequest } from "./components/AudioPlayer";
 import { InsightsPanel } from "./components/InsightsPanel";
 import { MaterialImportAction, MaterialLibrary } from "./components/MaterialLibrary";
 import { PhonemeInspector } from "./components/PhonemeInspector";
@@ -56,6 +56,7 @@ import type {
   PhonemeStat,
   PracticeSession,
   ScoreResult,
+  SpeechWordBoundary,
   VocabularyItem,
   WordResult
 } from "./types";
@@ -63,11 +64,16 @@ import type {
 const DEFAULT_PASSAGE =
   "The weather changed quickly, but we kept walking through the quiet streets and talked about the plans we wanted to finish this week.";
 
+const WORD_REPLAY_LEAD_IN_SECONDS = 0.15;
+
 type RecorderState = "idle" | "recording" | "recorded";
 type WordBankTab = "active" | "graduated";
 type PracticeMode = "short" | "long";
 type AppView = "practice" | "insights";
 type SidebarPanel = "materials" | "history" | "word-bank";
+type PassageReadAlongPart =
+  | { kind: "text"; key: string; text: string }
+  | { kind: "word"; boundaryIndex: number; key: string; text: string };
 
 function normalizedWord(word: string): string {
   return word.trim().toLocaleLowerCase();
@@ -82,6 +88,67 @@ function formatPlaybackTime(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = Math.floor(seconds % 60);
   return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+}
+
+function wordReplayStartSeconds(word: WordResult): number {
+  return Math.max(0, word.offset_ms / 1000 - WORD_REPLAY_LEAD_IN_SECONDS);
+}
+
+function activeWordIndexForRecordingTime(words: WordResult[], currentTimeSeconds: number): number {
+  if (!Number.isFinite(currentTimeSeconds)) return -1;
+  const currentTimeMs = currentTimeSeconds * 1000;
+  return words.findIndex((word, index) => {
+    const durationEndMs = word.offset_ms + Math.max(word.duration_ms, 0);
+    const nextWordStartMs = words[index + 1]?.offset_ms;
+    const endMs = Math.max(durationEndMs, nextWordStartMs ?? durationEndMs);
+    return currentTimeMs >= word.offset_ms && currentTimeMs < endMs;
+  });
+}
+
+function buildPassageReadAlongParts(
+  text: string,
+  boundaries: SpeechWordBoundary[]
+): PassageReadAlongPart[] {
+  if (!text || boundaries.length === 0) return [];
+
+  const parts: PassageReadAlongPart[] = [];
+  let cursor = 0;
+  const orderedBoundaries = boundaries
+    .map((boundary, index) => ({ boundary, index }))
+    .filter(({ boundary }) => boundary.word_length > 0 && boundary.text_offset >= 0)
+    .sort((left, right) => left.boundary.text_offset - right.boundary.text_offset);
+
+  for (const { boundary, index } of orderedBoundaries) {
+    const start = Math.min(Math.max(Math.floor(boundary.text_offset), 0), text.length);
+    const end = Math.min(start + Math.max(Math.floor(boundary.word_length), 0), text.length);
+    if (end <= cursor || start < cursor) {
+      continue;
+    }
+    if (start > cursor) {
+      parts.push({
+        kind: "text",
+        key: `text-${cursor}-${start}`,
+        text: text.slice(cursor, start)
+      });
+    }
+    parts.push({
+      kind: "word",
+      boundaryIndex: index,
+      key: `word-${index}-${start}`,
+      text: text.slice(start, end) || boundary.text
+    });
+    cursor = end;
+  }
+
+  if (cursor < text.length) {
+    parts.push({
+      kind: "text",
+      key: `text-${cursor}-end`,
+      text: text.slice(cursor)
+    });
+  }
+
+  return parts;
 }
 
 function safeGetLocalStorage(key: string): string | null {
@@ -135,7 +202,10 @@ function App() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [recordingPlaybackSeekRequest, setRecordingPlaybackSeekRequest] =
+    useState<AudioSeekRequest | null>(null);
   const [recordingPlaybackStopSignal, setRecordingPlaybackStopSignal] = useState(0);
+  const [recordingPlaybackTime, setRecordingPlaybackTime] = useState(0);
 
   const [appView, setAppView] = useState<AppView>("practice");
   const [expandedSidebarPanel, setExpandedSidebarPanel] = useState<SidebarPanel | null>("materials");
@@ -160,6 +230,8 @@ function App() {
     speechStatus,
     speechCurrentTime,
     speechDuration,
+    speechWordBoundaries,
+    activeSpeechBoundaryIndex,
     preloadSpeech,
     playCorrect,
     pauseCurrentSpeech,
@@ -183,9 +255,33 @@ function App() {
   const isPassageSpeechActive = Boolean(trimmedPassage && speakingText === trimmedPassage);
   const isPassageSpeechLoading = isPassageSpeechActive && speechStatus === "loading";
   const isPassageSpeechPlaying = isPassageSpeechActive && speechStatus === "playing";
+  const activeRecordingWordIndex = useMemo(
+    () =>
+      audioUrl &&
+      result?.words?.length &&
+      (recordingPlaybackSeekRequest !== null || recordingPlaybackTime > 0)
+        ? activeWordIndexForRecordingTime(result.words, recordingPlaybackTime)
+        : -1,
+    [audioUrl, recordingPlaybackSeekRequest, recordingPlaybackTime, result?.words]
+  );
+  const activeSpokenWordIndex = useMemo(
+    () =>
+      isPassageSpeechActive && activeSpeechBoundaryIndex >= 0
+        ? activeSpeechBoundaryIndex
+        : activeRecordingWordIndex,
+    [activeRecordingWordIndex, activeSpeechBoundaryIndex, isPassageSpeechActive]
+  );
   const passageSpeechOptions: SpeechOptions | undefined = activeMaterial
     ? { cacheKey: materialSpeechCacheKey(activeMaterial) }
     : undefined;
+  const readAlongParts = useMemo(
+    () =>
+      isPassageSpeechActive && !result?.words?.length
+        ? buildPassageReadAlongParts(passage, speechWordBoundaries)
+        : [],
+    [isPassageSpeechActive, passage, result?.words?.length, speechWordBoundaries]
+  );
+  const showPassageReadAlong = readAlongParts.length > 0;
 
   useLayoutEffect(() => {
     const input = passageInputRef.current;
@@ -193,7 +289,7 @@ function App() {
     input.style.height = "auto";
     input.style.overflowY = "hidden";
     input.style.height = `${input.scrollHeight}px`;
-  }, [passage, result?.words?.length]);
+  }, [passage, result?.words?.length, showPassageReadAlong]);
   const savedWords = useMemo(
     () => new Set(vocabulary.map((item) => normalizedWord(item.word))),
     [vocabulary]
@@ -225,6 +321,11 @@ function App() {
       stopCurrentSpeech();
     };
   }, [audioUrl, stopCurrentSpeech]);
+
+  useEffect(() => {
+    setRecordingPlaybackSeekRequest(null);
+    setRecordingPlaybackTime(0);
+  }, [audioUrl]);
 
   useEffect(() => {
     if (selectedWord?.word) {
@@ -581,12 +682,41 @@ function App() {
   }
 
   function stopRecordingPlayback() {
+    setRecordingPlaybackSeekRequest(null);
+    setRecordingPlaybackTime(0);
     setRecordingPlaybackStopSignal((signal) => signal + 1);
+  }
+
+  function selectScoredWord(index: number) {
+    setSelectedWordIndex(index);
+    const word = result?.words[index];
+    if (!word || !audioUrl) {
+      return;
+    }
+
+    stopCurrentSpeech();
+    const timeSeconds = wordReplayStartSeconds(word);
+    setRecordingPlaybackTime(timeSeconds);
+    setRecordingPlaybackSeekRequest((request) => ({
+      id: (request?.id ?? 0) + 1,
+      timeSeconds,
+      play: true
+    }));
   }
 
   function playPronunciation(text: string, options?: SpeechOptions) {
     stopRecordingPlayback();
     void playCorrect(text, options);
+  }
+
+  function seekPassageReadAlongWord(boundary: SpeechWordBoundary | undefined) {
+    if (!boundary) {
+      return;
+    }
+    seekCurrentSpeech(boundary.audio_offset_ms / 1000);
+    if (speechStatus !== "playing") {
+      playPronunciation(passage, passageSpeechOptions);
+    }
   }
 
   function togglePassageSpeech() {
@@ -955,12 +1085,39 @@ function App() {
             </div>
           ) : null}
 
+          {showPassageReadAlong ? (
+            <div className="passage-read-along" aria-label="Passage read-along">
+              {readAlongParts.map((part) =>
+                part.kind === "word" ? (
+                  <button
+                    type="button"
+                    key={part.key}
+                    className={`passage-read-word ${
+                      part.boundaryIndex === activeSpeechBoundaryIndex ? "playing" : ""
+                    }`}
+                    onClick={() =>
+                      seekPassageReadAlongWord(speechWordBoundaries[part.boundaryIndex])
+                    }
+                  >
+                    {part.text}
+                  </button>
+                ) : (
+                  <span className="passage-read-text" key={part.key}>
+                    {part.text}
+                  </span>
+                )
+              )}
+            </div>
+          ) : null}
+
           <textarea
             ref={passageInputRef}
             value={passage}
             onChange={handlePassageChange}
             onBlur={preloadCurrentPassage}
-            className={`passage-input ${result?.words?.length ? "hidden-declutter" : ""}`}
+            className={`passage-input ${
+              result?.words?.length || showPassageReadAlong ? "hidden-declutter" : ""
+            }`}
             readOnly={Boolean(activeMaterial)}
             spellCheck
           />
@@ -974,8 +1131,8 @@ function App() {
                     key={`${word.word}-${index}`}
                     className={`scored-word-token ${word.bucket} ${
                       index === selectedWordIndex ? "selected" : ""
-                    }`}
-                    onClick={() => setSelectedWordIndex(index)}
+                    } ${index === activeSpokenWordIndex ? "playing" : ""}`}
+                    onClick={() => selectScoredWord(index)}
                   >
                     <span>{word.word} </span>
                     <strong>{scoreValue(word.accuracy)}</strong>
@@ -1047,6 +1204,8 @@ function App() {
               <AudioPlayer
                 audioUrl={audioUrl}
                 onPlayStart={stopCurrentSpeech}
+                onTimeChange={setRecordingPlaybackTime}
+                seekRequest={recordingPlaybackSeekRequest}
                 stopSignal={recordingPlaybackStopSignal}
               />
             ) : null}
