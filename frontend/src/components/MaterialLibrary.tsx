@@ -1,13 +1,22 @@
-import { BookOpen, Info, Loader2, Search, UploadCloud, X } from "lucide-react";
-import type { ChangeEvent, ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { AlertTriangle, BookOpen, Info, Loader2, Search, Trash2, UploadCloud, X } from "lucide-react";
+import type { ChangeEvent, FocusEvent, KeyboardEvent, MouseEvent, ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { MaterialItem } from "../types";
 
+export type MaterialGroupDeleteTarget = {
+  id: string;
+  packId: string;
+  book: string;
+  title: string;
+  count: number;
+};
+
 type MaterialLibraryProps = {
   materials: MaterialItem[];
   onSelect: (material: MaterialItem) => void;
+  onDeleteGroup?: (group: MaterialGroupDeleteTarget) => Promise<void> | void;
   importAction?: ReactNode;
 };
 
@@ -25,8 +34,11 @@ function materialMeta(material: MaterialItem): string {
 
 type MaterialGroup = {
   id: string;
+  packId: string;
+  book: string;
   title: string;
   subtitle: string;
+  source: string;
   materials: MaterialItem[];
 };
 
@@ -36,6 +48,10 @@ function materialGroupId(material: MaterialItem): string {
 
 function lessonLabel(material: MaterialItem): string {
   return material.lesson || "New";
+}
+
+function lessonCountLabel(count: number): string {
+  return `${count} lesson${count === 1 ? "" : "s"}`;
 }
 
 function normalized(value: string): string {
@@ -57,11 +73,16 @@ function matchesQuery(material: MaterialItem, query: string): boolean {
 export function MaterialLibrary({
   materials,
   onSelect,
+  onDeleteGroup,
   importAction
 }: MaterialLibraryProps) {
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState("all");
+  const [deleteCandidate, setDeleteCandidate] = useState<MaterialGroup | null>(null);
+  const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const deleteDialogRef = useRef<HTMLElement | null>(null);
 
   const groups = useMemo<MaterialGroup[]>(() => {
     const groupsById = new Map<string, MaterialGroup>();
@@ -74,8 +95,11 @@ export function MaterialLibrary({
       }
       groupsById.set(id, {
         id,
+        packId: material.pack_id,
+        book: material.book || "",
         title: material.book || material.pack_title,
         subtitle: material.book ? material.pack_title : material.source,
+        source: material.source,
         materials: [material]
       });
     }
@@ -94,25 +118,118 @@ export function MaterialLibrary({
     [materials, normalizedQuery, selectedGroupId]
   );
   const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? null;
+  const selectedGroupCanDelete = Boolean(
+    selectedGroup && onDeleteGroup && selectedGroup.source !== "built-in"
+  );
   const activeScopeLabel = normalizedQuery
     ? `Search: ${query.trim()}`
     : selectedGroup
       ? selectedGroup.title
       : "";
 
-  function startMaterial(material: MaterialItem) {
-    onSelect(material);
+  useEffect(() => {
+    if (selectedGroupId !== "all" && !selectedGroup) {
+      setSelectedGroupId("all");
+    }
+  }, [selectedGroup, selectedGroupId]);
+
+  useEffect(() => {
+    if (!isLibraryOpen) return;
+    window.requestAnimationFrame(() => dialogRef.current?.focus());
+  }, [isLibraryOpen]);
+
+  useEffect(() => {
+    if (!deleteCandidate) return;
+    window.requestAnimationFrame(() => deleteDialogRef.current?.focus());
+  }, [deleteCandidate]);
+
+  function closeLibrary() {
+    setDeleteCandidate(null);
     setIsLibraryOpen(false);
   }
 
+  function startMaterial(material: MaterialItem) {
+    onSelect(material);
+    closeLibrary();
+  }
+
+  function handleOverlayMouseDown(event: MouseEvent<HTMLDivElement>) {
+    if (event.target === event.currentTarget) {
+      closeLibrary();
+    }
+  }
+
+  function handleDialogBlur(event: FocusEvent<HTMLElement>) {
+    const nextFocus = event.relatedTarget;
+    if (nextFocus instanceof Node && event.currentTarget.contains(nextFocus)) {
+      return;
+    }
+    closeLibrary();
+  }
+
+  function handleDialogKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key === "Escape") {
+      if (deleteCandidate && !deletingGroupId) {
+        event.preventDefault();
+        setDeleteCandidate(null);
+        return;
+      }
+      closeLibrary();
+    }
+  }
+
+  function showDeleteConfirmation() {
+    if (!selectedGroupCanDelete || !selectedGroup) return;
+    setDeleteCandidate(selectedGroup);
+  }
+
+  function closeDeleteConfirmation() {
+    if (deletingGroupId) return;
+    setDeleteCandidate(null);
+  }
+
+  function handleDeleteConfirmationMouseDown(event: MouseEvent<HTMLDivElement>) {
+    if (event.target === event.currentTarget) {
+      event.preventDefault();
+      closeDeleteConfirmation();
+    }
+  }
+
+  async function deleteSelectedGroup() {
+    const group = deleteCandidate;
+    if (!group || !onDeleteGroup) return;
+    const count = group.materials.length;
+
+    setDeletingGroupId(group.id);
+    try {
+      await onDeleteGroup({
+        id: group.id,
+        packId: group.packId,
+        book: group.book,
+        title: group.title,
+        count
+      });
+      setDeleteCandidate(null);
+    } finally {
+      setDeletingGroupId(null);
+    }
+  }
+
   const previewMaterials = visibleMaterials;
+  const isDeletingCandidate = Boolean(
+    deleteCandidate && deletingGroupId === deleteCandidate.id
+  );
   const libraryDialog = isLibraryOpen ? (
-    <div className="material-library-overlay">
+    <div className="material-library-overlay" onMouseDown={handleOverlayMouseDown}>
       <section
+        ref={dialogRef}
         className="material-library-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="material-library-title"
+        tabIndex={-1}
+        onBlur={handleDialogBlur}
+        onKeyDown={handleDialogKeyDown}
       >
         <header className="material-library-header">
           <div>
@@ -122,7 +239,7 @@ export function MaterialLibrary({
           <button
             type="button"
             className="icon-button"
-            onClick={() => setIsLibraryOpen(false)}
+            onClick={closeLibrary}
             title="Close library"
           >
             <X size={18} />
@@ -146,6 +263,7 @@ export function MaterialLibrary({
               type="button"
               className={`material-group ${selectedGroupId === "all" ? "selected" : ""}`}
               aria-label={`All ${materials.length}`}
+              aria-current={selectedGroupId === "all" ? "true" : undefined}
               onClick={() => setSelectedGroupId("all")}
             >
               <strong>All</strong>
@@ -156,6 +274,7 @@ export function MaterialLibrary({
                 type="button"
                 className={`material-group ${selectedGroupId === group.id ? "selected" : ""}`}
                 aria-label={`${group.title} ${group.materials.length}`}
+                aria-current={selectedGroupId === group.id ? "true" : undefined}
                 key={group.id}
                 onClick={() => setSelectedGroupId(group.id)}
               >
@@ -167,6 +286,31 @@ export function MaterialLibrary({
           </nav>
 
           <div className="material-library-lessons">
+            {selectedGroup ? (
+              <div className="material-library-group-toolbar">
+                <span>
+                  <strong>{selectedGroup.title}</strong>
+                  <small>{selectedGroup.materials.length} lessons</small>
+                </span>
+                {selectedGroupCanDelete ? (
+                  <button
+                    type="button"
+                    className="material-delete-group"
+                    onClick={showDeleteConfirmation}
+                    disabled={deletingGroupId === selectedGroup.id}
+                    aria-haspopup="dialog"
+                    aria-expanded={deleteCandidate?.id === selectedGroup.id ? "true" : "false"}
+                  >
+                    {deletingGroupId === selectedGroup.id ? (
+                      <Loader2 className="spin" size={14} />
+                    ) : (
+                      <Trash2 size={14} />
+                    )}
+                    Delete group
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
             {visibleMaterials.length === 0 ? (
               <p className="muted">No matching lessons.</p>
             ) : (
@@ -196,6 +340,59 @@ export function MaterialLibrary({
             )}
           </div>
         </div>
+        {deleteCandidate ? (
+          <div
+            className="material-delete-confirm-backdrop"
+            onMouseDown={handleDeleteConfirmationMouseDown}
+          >
+            <section
+              ref={deleteDialogRef}
+              className="material-delete-confirm"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="material-delete-confirm-title"
+              aria-describedby="material-delete-confirm-description"
+              tabIndex={-1}
+            >
+              <div className="material-delete-confirm-header">
+                <span className="material-delete-confirm-icon" aria-hidden="true">
+                  <AlertTriangle size={18} />
+                </span>
+                <div>
+                  <h3 id="material-delete-confirm-title">Delete material group?</h3>
+                  <p id="material-delete-confirm-description">
+                    {`Delete ${lessonCountLabel(deleteCandidate.materials.length)} from "${deleteCandidate.title}"? This cannot be undone.`}
+                  </p>
+                </div>
+              </div>
+              <div className="material-delete-confirm-actions">
+                <button
+                  type="button"
+                  className="material-delete-confirm-cancel"
+                  onClick={closeDeleteConfirmation}
+                  disabled={isDeletingCandidate}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="material-delete-confirm-danger"
+                  onClick={() => void deleteSelectedGroup()}
+                  disabled={isDeletingCandidate}
+                >
+                  {isDeletingCandidate ? (
+                    <Loader2 className="spin" size={15} />
+                  ) : (
+                    <Trash2 size={15} />
+                  )}
+                  {isDeletingCandidate
+                    ? "Deleting..."
+                    : `Delete ${lessonCountLabel(deleteCandidate.materials.length)}`}
+                </button>
+              </div>
+            </section>
+          </div>
+        ) : null}
       </section>
     </div>
   ) : null;

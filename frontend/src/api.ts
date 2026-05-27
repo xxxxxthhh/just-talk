@@ -75,6 +75,18 @@ export async function importMaterialPack(
   );
 }
 
+export async function deleteMaterialGroup(
+  packId: string,
+  book: string
+): Promise<{ deleted: number }> {
+  const params = new URLSearchParams({ pack_id: packId, book });
+  return parseResponse<{ deleted: number }>(
+    await fetch(`/api/material-groups?${params.toString()}`, {
+      method: "DELETE"
+    })
+  );
+}
+
 export async function listWords(): Promise<VocabularyItem[]> {
   return parseResponse<VocabularyItem[]>(await fetch("/api/words"));
 }

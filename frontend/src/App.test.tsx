@@ -361,6 +361,145 @@ describe("App", () => {
     expect(screen.getByText(/Showing 1 of 3 lessons/i)).toBeInTheDocument();
   });
 
+  test("closes the material library when the dialog loses focus", async () => {
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/materials": [
+        {
+          id: "starter-clear-morning",
+          pack_id: "just-talk-starter",
+          pack_title: "Just Talk Starter",
+          title: "Clear Morning",
+          text: "A clear morning is a good time to practice.",
+          book: "Starter",
+          lesson: "2",
+          tags: ["starter"],
+          source: "built-in",
+          license: "Just Talk original",
+          created_at: "2026-05-25T00:00:00Z",
+          updated_at: "2026-05-25T00:00:00Z"
+        }
+      ]
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Open Library/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /Materials/i });
+    fireEvent.blur(dialog, { relatedTarget: document.body });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: /Materials/i })).not.toBeInTheDocument();
+    });
+  });
+
+  test("deletes the selected material group and refreshes the library", async () => {
+    const user = userEvent.setup();
+    const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const beforeDelete = [
+      {
+        id: "nce-1-001",
+        pack_id: "new-concept",
+        pack_title: "New Concept English",
+        title: "A Private Conversation",
+        text: "Last week I went to the theatre.",
+        book: "Book 1",
+        lesson: "1",
+        tags: ["nce"],
+        source: "user-imported",
+        license: "user-provided",
+        created_at: "2026-05-25T00:00:00Z",
+        updated_at: "2026-05-25T00:00:00Z"
+      },
+      {
+        id: "nce-1-002",
+        pack_id: "new-concept",
+        pack_title: "New Concept English",
+        title: "Breakfast or Lunch",
+        text: "It was Sunday.",
+        book: "Book 1",
+        lesson: "2",
+        tags: ["nce"],
+        source: "user-imported",
+        license: "user-provided",
+        created_at: "2026-05-25T00:00:00Z",
+        updated_at: "2026-05-25T00:00:00Z"
+      },
+      {
+        id: "nce-2-001",
+        pack_id: "new-concept",
+        pack_title: "New Concept English",
+        title: "A Puma at Large",
+        text: "Pumas are large, cat-like animals.",
+        book: "Book 2",
+        lesson: "1",
+        tags: ["nce"],
+        source: "user-imported",
+        license: "user-provided",
+        created_at: "2026-05-25T00:00:00Z",
+        updated_at: "2026-05-25T00:00:00Z"
+      }
+    ];
+    let materialListCalls = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/health") return { ok: true, json: async () => health };
+      if (url === "/api/sessions" || url === "/api/words") {
+        return { ok: true, json: async () => [] };
+      }
+      if (url === "/api/materials") {
+        materialListCalls += 1;
+        return {
+          ok: true,
+          json: async () => (materialListCalls === 1 ? beforeDelete : [beforeDelete[2]])
+        };
+      }
+      if (url.startsWith("/api/material-groups") && init?.method === "DELETE") {
+        return { ok: true, json: async () => ({ deleted: 2 }) };
+      }
+      return {
+        ok: false,
+        json: async () => ({ detail: `No mock for ${url}` })
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: /Open Library/i }));
+    await user.click(await screen.findByRole("button", { name: /Book 1\s*2/i }));
+
+    expect(screen.getByRole("button", { name: /Book 1\s*2/i })).toHaveAttribute("aria-current", "true");
+
+    await user.click(screen.getByRole("button", { name: /Delete group/i }));
+
+    expect(nativeConfirm).not.toHaveBeenCalled();
+    const confirmation = await screen.findByRole("alertdialog", {
+      name: /Delete material group/i
+    });
+    expect(confirmation).toHaveTextContent(
+      /Delete 2 lessons from "Book 1"\? This cannot be undone\./i
+    );
+
+    await user.click(screen.getByRole("button", { name: /Delete 2 lessons/i }));
+
+    await waitFor(() => {
+      const deleteCall = fetchMock.mock.calls.find(([input, init]) =>
+        String(input).startsWith("/api/material-groups") && init?.method === "DELETE"
+      );
+      expect(deleteCall).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /Book 1\s*2/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Book 2\s*1/i })).toBeInTheDocument();
+    });
+    const deleteUrl = new URL(
+      String(fetchMock.mock.calls.find(([input]) => String(input).startsWith("/api/material-groups"))?.[0]),
+      "http://localhost"
+    );
+    expect(deleteUrl.searchParams.get("pack_id")).toBe("new-concept");
+    expect(deleteUrl.searchParams.get("book")).toBe("Book 1");
+  });
+
   test("keeps the selected material group visible in the sidebar preview", async () => {
     mockApi({
       "/api/health": health,

@@ -531,6 +531,46 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("lesson text is required", response.json()["detail"])
 
+    def test_material_group_delete_endpoint_removes_matching_lessons(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+            app = create_app(
+                settings=Settings(database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}"),
+                store=store,
+            )
+            client = TestClient(app)
+            client.post(
+                "/api/material-packs/import",
+                json={
+                    "schema_version": 1,
+                    "pack": {"id": "custom-pack", "title": "Custom Pack"},
+                    "lessons": [
+                        {"id": "custom-1", "title": "One", "book": "Book 1", "text": "One text."},
+                        {"id": "custom-2", "title": "Two", "book": "Book 1", "text": "Two text."},
+                        {"id": "custom-3", "title": "Three", "book": "Book 2", "text": "Three text."},
+                    ],
+                },
+            )
+
+            deleted = client.delete(
+                "/api/material-groups",
+                params={"pack_id": "custom-pack", "book": "Book 1"},
+            )
+            materials = client.get("/api/materials")
+
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.json(), {"deleted": 2})
+        self.assertEqual(
+            [item["id"] for item in materials.json() if item["pack_id"] == "custom-pack"],
+            ["custom-3"],
+        )
+
 
 class PhonemeStatsApiTests(unittest.TestCase):
     def test_phoneme_stats_endpoint_returns_aggregated_and_sorted_data(self):

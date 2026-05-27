@@ -217,6 +217,13 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.delete("/api/material-groups")
+    def delete_material_group(pack_id: str, book: str = "") -> dict[str, int]:
+        try:
+            return {"deleted": active_store.delete_material_group(pack_id=pack_id, book=book)}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/api/words")
     def create_word(request: WordCreateRequest) -> dict[str, Any]:
         try:

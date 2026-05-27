@@ -454,6 +454,72 @@ class SessionStore:
             "materials": [self._row_to_material(row) for row in material_rows],
         }
 
+    def delete_material_group(self, *, pack_id: str, book: str) -> int:
+        normalized_pack_id = self._required_text(pack_id, "pack id is required.")
+        normalized_book = self._optional_text(book)
+        with self._connection() as connection:
+            pack_row = connection.execute(
+                """
+                SELECT source
+                FROM material_packs
+                WHERE id = ?
+                """,
+                (normalized_pack_id,),
+            ).fetchone()
+            if pack_row is None:
+                return 0
+            if pack_row["source"] == "built-in":
+                raise ValueError("built-in material groups cannot be deleted.")
+
+            material_rows = connection.execute(
+                """
+                SELECT id
+                FROM materials
+                WHERE pack_id = ?
+                  AND book = ?
+                """,
+                (normalized_pack_id, normalized_book),
+            ).fetchall()
+            material_ids = [row["id"] for row in material_rows]
+            if not material_ids:
+                return 0
+
+            connection.execute(
+                """
+                DELETE FROM materials
+                WHERE pack_id = ?
+                  AND book = ?
+                """,
+                (normalized_pack_id, normalized_book),
+            )
+            cache_keys = [f"material:{material_id}" for material_id in material_ids]
+            placeholders = ", ".join("?" for _ in cache_keys)
+            connection.execute(
+                f"""
+                DELETE FROM speech_cache
+                WHERE cache_key IN ({placeholders})
+                """,
+                cache_keys,
+            )
+            remaining = connection.execute(
+                """
+                SELECT 1
+                FROM materials
+                WHERE pack_id = ?
+                LIMIT 1
+                """,
+                (normalized_pack_id,),
+            ).fetchone()
+            if remaining is None:
+                connection.execute(
+                    """
+                    DELETE FROM material_packs
+                    WHERE id = ?
+                    """,
+                    (normalized_pack_id,),
+                )
+        return len(material_ids)
+
     def create_word(
         self,
         word: str,

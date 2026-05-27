@@ -252,6 +252,53 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(materials[0]["title"], "Shared Updated")
         self.assertEqual(materials[0]["text"], "After.")
 
+    def test_deletes_material_group_and_related_speech_cache(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "sessions.db"
+            store = SessionStore(f"sqlite:///{database_path}")
+            store.initialize(seed_builtin_materials=False)
+            store.import_material_pack({
+                "schema_version": 1,
+                "pack": {"id": "custom", "title": "Custom Pack"},
+                "lessons": [
+                    {"id": "book-1-a", "title": "One", "book": "Book 1", "text": "One text."},
+                    {"id": "book-1-b", "title": "Two", "book": "Book 1", "text": "Two text."},
+                    {"id": "book-2-a", "title": "Three", "book": "Book 2", "text": "Three text."},
+                ],
+            })
+            store.save_speech_cache(
+                cache_key="material:book-1-a",
+                text_hash="hash",
+                voice="voice",
+                content_type="audio/mpeg",
+                audio_bytes=b"audio",
+            )
+
+            deleted = store.delete_material_group(pack_id="custom", book="Book 1")
+            materials = store.list_materials()
+            cached = store.get_speech_cache(
+                cache_key="material:book-1-a",
+                text_hash="hash",
+                voice="voice",
+            )
+
+        self.assertEqual(deleted, 2)
+        self.assertEqual([item["id"] for item in materials], ["book-2-a"])
+        self.assertIsNone(cached)
+
+    def test_rejects_deleting_builtin_material_group(self):
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "sessions.db"
+            store = SessionStore(f"sqlite:///{database_path}")
+            store.initialize()
+
+            with self.assertRaisesRegex(ValueError, "built-in material groups cannot be deleted"):
+                store.delete_material_group(pack_id="just-talk-starter", book="Starter")
+
     def test_material_pack_import_rejects_empty_lesson_text(self):
         from app.storage import SessionStore
 

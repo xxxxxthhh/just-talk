@@ -29,6 +29,7 @@ import {
   checkHealth,
   checkPassage,
   createWord,
+  deleteMaterialGroup,
   deleteWord,
   fetchPhonemeStats,
   getSession,
@@ -41,7 +42,11 @@ import {
 import { AudioPlayer, type AudioSeekRequest } from "./components/AudioPlayer";
 import { AudioVisualizer } from "./components/AudioVisualizer";
 import { InsightsPanel } from "./components/InsightsPanel";
-import { MaterialImportAction, MaterialLibrary } from "./components/MaterialLibrary";
+import {
+  MaterialImportAction,
+  MaterialLibrary,
+  type MaterialGroupDeleteTarget
+} from "./components/MaterialLibrary";
 import { PhonemeInspector } from "./components/PhonemeInspector";
 import { PhonemeCoachModal } from "./components/PhonemeCoachModal";
 import { ScoreGrid } from "./components/ScoreGrid";
@@ -645,6 +650,25 @@ function App() {
     }
   }
 
+  async function deleteMaterialGroupFromLibrary(group: MaterialGroupDeleteTarget) {
+    setError("");
+    try {
+      const result = await deleteMaterialGroup(group.packId, group.book);
+      await refreshMaterials();
+      if (
+        activeMaterial &&
+        activeMaterial.pack_id === group.packId &&
+        (activeMaterial.book || "") === group.book
+      ) {
+        setActiveMaterial(null);
+      }
+      setStatus(`Deleted ${result.deleted} materials from ${group.title}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete material group.");
+      throw err;
+    }
+  }
+
   async function loadPhonemeStats() {
     setPhonemeStatsLoading(true);
     setPhonemeStatsError("");
@@ -852,6 +876,7 @@ function App() {
             <MaterialLibrary
               materials={materials}
               onSelect={practiceMaterial}
+              onDeleteGroup={deleteMaterialGroupFromLibrary}
               importAction={
                 <MaterialImportAction
                   isImporting={isImportingMaterials}
