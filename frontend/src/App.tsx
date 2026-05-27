@@ -39,6 +39,7 @@ import {
   scoreRecording
 } from "./api";
 import { AudioPlayer, type AudioSeekRequest } from "./components/AudioPlayer";
+import { AudioVisualizer } from "./components/AudioVisualizer";
 import { InsightsPanel } from "./components/InsightsPanel";
 import { MaterialImportAction, MaterialLibrary } from "./components/MaterialLibrary";
 import { PhonemeInspector } from "./components/PhonemeInspector";
@@ -207,6 +208,11 @@ function App() {
   const [recordingPlaybackStopSignal, setRecordingPlaybackStopSignal] = useState(0);
   const [recordingPlaybackTime, setRecordingPlaybackTime] = useState(0);
 
+  const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
+  const [recordedAmplitudes, setRecordedAmplitudes] = useState<number[] | null>(null);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const [audioDuration, setAudioDuration] = useState(0);
+
   const [appView, setAppView] = useState<AppView>("practice");
   const [expandedSidebarPanel, setExpandedSidebarPanel] = useState<SidebarPanel | null>("materials");
   const [phonemeStats, setPhonemeStats] = useState<PhonemeStat[]>([]);
@@ -339,15 +345,6 @@ function App() {
     }
   }, [weakWords, preloadSpeech]);
 
-  const waveBars = useMemo(
-    () =>
-      Array.from({ length: 36 }, (_, index) => {
-        const seed = Math.sin(index * 1.7) + Math.cos(index * 0.45);
-        return 26 + Math.abs(seed) * 34;
-      }),
-    []
-  );
-
   async function refreshServerState() {
     try {
       setError("");
@@ -413,6 +410,7 @@ function App() {
       setAudioUrl(URL.createObjectURL(blob));
       setRecorderState("recorded");
       setStatus("Recording ready");
+      setRecordingStream(null);
     };
     recorder.start();
     mediaRecorderRef.current = recorder;
@@ -423,6 +421,10 @@ function App() {
     setCurrentSessionId("");
     setSelectedWordIndex(0);
     setRecorderState("recording");
+    setRecordingStream(stream);
+    setRecordedAmplitudes(null);
+    setIsAudioPlaying(false);
+    setAudioDuration(0);
     timerRef.current = window.setInterval(() => {
       const nextElapsed = Date.now() - startedAtRef.current;
       setElapsedMs(nextElapsed);
@@ -498,6 +500,8 @@ function App() {
       });
       setCurrentSessionId(loaded.id);
       setSelectedWordIndex(0);
+      setRecordedAmplitudes(null);
+      setAudioDuration(0);
       setStatus("History loaded");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load history.");
@@ -588,6 +592,8 @@ function App() {
     setAudioUrl(null);
     setRecorderState("idle");
     setElapsedMs(0);
+    setRecordedAmplitudes(null);
+    setAudioDuration(0);
     setStatus("Word drill ready");
   }
 
@@ -607,6 +613,8 @@ function App() {
     setAudioUrl(null);
     setRecorderState("idle");
     setElapsedMs(0);
+    setRecordedAmplitudes(null);
+    setAudioDuration(0);
     setStatus(`Material ready: ${material.title}`);
   }
 
@@ -667,6 +675,8 @@ function App() {
     setAudioUrl(null);
     setRecorderState("idle");
     setElapsedMs(0);
+    setRecordedAmplitudes(null);
+    setAudioDuration(0);
     setStatus(`Drill ready: ${word}`);
     setAppView("practice");
   }
@@ -685,6 +695,16 @@ function App() {
     setRecordingPlaybackSeekRequest(null);
     setRecordingPlaybackTime(0);
     setRecordingPlaybackStopSignal((signal) => signal + 1);
+    setIsAudioPlaying(false);
+  }
+
+  function handleVisualizerSeek(timeSeconds: number) {
+    setRecordingPlaybackTime(timeSeconds);
+    setRecordingPlaybackSeekRequest((request) => ({
+      id: (request?.id ?? 0) + 1,
+      timeSeconds,
+      play: isAudioPlaying
+    }));
   }
 
   function selectScoredWord(index: number) {
@@ -1159,15 +1179,18 @@ function App() {
 
           <div className="recorder">
             <div className="meter">
-              <div className="wave" aria-hidden="true">
-                {waveBars.map((height, index) => (
-                  <span
-                    className={recorderState === "recording" ? "active" : ""}
-                    key={index}
-                    style={{ height: `${height}%`, animationDelay: `${index * 45}ms` }}
-                  />
-                ))}
-              </div>
+              <AudioVisualizer
+                recorderState={recorderState}
+                audioStream={recordingStream}
+                playbackTime={recordingPlaybackTime}
+                playbackDuration={audioDuration}
+                isAudioPlaying={isAudioPlaying}
+                result={result}
+                recordedAmplitudes={recordedAmplitudes}
+                onAmplitudesChange={setRecordedAmplitudes}
+                onSeek={handleVisualizerSeek}
+                maxMs={maxMs}
+              />
               <div className="timer">
                 <Clock3 size={17} />
                 <span>
@@ -1207,6 +1230,8 @@ function App() {
                 onTimeChange={setRecordingPlaybackTime}
                 seekRequest={recordingPlaybackSeekRequest}
                 stopSignal={recordingPlaybackStopSignal}
+                onIsPlayingChange={setIsAudioPlaying}
+                onDurationChange={setAudioDuration}
               />
             ) : null}
           </div>

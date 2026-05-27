@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Play, Square } from "lucide-react";
 import { useAudioPlayer, type AudioSeekRequest } from "../hooks/useAudioPlayer";
 
@@ -16,12 +17,16 @@ export function AudioPlayer({
   onTimeChange,
   seekRequest,
   stopSignal,
+  onIsPlayingChange,
+  onDurationChange,
 }: {
   audioUrl: string;
   onPlayStart?: () => void;
   onTimeChange?: (currentTime: number) => void;
   seekRequest?: AudioSeekRequest | null;
   stopSignal?: number;
+  onIsPlayingChange?: (isPlaying: boolean) => void;
+  onDurationChange?: (duration: number) => void;
 }) {
   const {
     isAudioPlaying,
@@ -34,6 +39,14 @@ export function AudioPlayer({
     setAudioCurrentTime,
     setAudioDuration,
   } = useAudioPlayer(audioUrl, { onPlayStart, onTimeChange, seekRequest, stopSignal });
+
+  useEffect(() => {
+    onIsPlayingChange?.(isAudioPlaying);
+  }, [isAudioPlaying, onIsPlayingChange]);
+
+  useEffect(() => {
+    onDurationChange?.(audioDuration);
+  }, [audioDuration, onDurationChange]);
 
   return (
     <div className="custom-audio-player">

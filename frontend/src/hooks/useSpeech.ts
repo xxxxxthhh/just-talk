@@ -34,12 +34,19 @@ function activeBoundaryIndexAtTime(
 ): number {
   if (!Number.isFinite(currentTimeSeconds)) return -1;
   const currentTimeMs = currentTimeSeconds * 1000;
-  return boundaries.findIndex((boundary, index) => {
+  const activeIndex = boundaries.findIndex((boundary, index) => {
     const durationEndMs = boundary.audio_offset_ms + Math.max(boundary.duration_ms, 0);
     const nextBoundaryStartMs = boundaries[index + 1]?.audio_offset_ms;
     const endMs = Math.max(durationEndMs, nextBoundaryStartMs ?? durationEndMs);
     return currentTimeMs >= boundary.audio_offset_ms && currentTimeMs < endMs;
   });
+  if (activeIndex >= 0) return activeIndex;
+
+  const lastBoundary = boundaries.at(-1);
+  if (lastBoundary && currentTimeMs >= lastBoundary.audio_offset_ms) {
+    return boundaries.length - 1;
+  }
+  return -1;
 }
 
 export function useSpeech(setError: (msg: string) => void) {
@@ -240,6 +247,27 @@ export function useSpeech(setError: (msg: string) => void) {
           setActiveSpeechBoundaryIndex(-1);
         }
       };
+      const finishIfCurrent = () => {
+        if (speechAudioRef.current !== audio || playbackRequestRef.current !== requestId) {
+          return;
+        }
+        const knownDuration = Number.isFinite(audio.duration) && audio.duration > 0
+          ? audio.duration
+          : 0;
+        const finalTime = knownDuration > 0
+          ? knownDuration
+          : audio.currentTime || 0;
+        if (Number.isFinite(finalTime)) {
+          setSpeechCurrentTime(finalTime);
+          setActiveSpeechBoundaryIndex(
+            activeBoundaryIndexAtTime(currentSpeechWordBoundariesRef.current, finalTime)
+          );
+        }
+        if (knownDuration > 0) {
+          setSpeechDuration(knownDuration);
+        }
+        setSpeechStatus("paused");
+      };
       const updateProgress = () => {
         const currentTime = audio.currentTime || 0;
         setSpeechCurrentTime(currentTime);
@@ -250,7 +278,7 @@ export function useSpeech(setError: (msg: string) => void) {
           setSpeechDuration(audio.duration || 0);
         }
       };
-      audio.onended = clearIfCurrent;
+      audio.onended = finishIfCurrent;
       audio.onerror = clearIfCurrent;
       audio.ondurationchange = updateProgress;
       audio.onloadedmetadata = updateProgress;

@@ -4,12 +4,22 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { useSpeech } from "./useSpeech";
 
-function mockSpeechApi() {
+function mockSpeechApi(response?: {
+  audio_base64: string;
+  content_type: string;
+  word_boundaries?: {
+    text: string;
+    text_offset: number;
+    word_length: number;
+    audio_offset_ms: number;
+    duration_ms: number;
+  }[];
+}) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => ({
       ok: true,
-      json: async () => ({ audio_base64: "YXVkaW8=", content_type: "audio/mpeg" }),
+      json: async () => response ?? { audio_base64: "YXVkaW8=", content_type: "audio/mpeg" },
     }))
   );
 }
@@ -266,8 +276,75 @@ describe("useSpeech", () => {
       audioInstances[0].onended?.();
     });
 
-    expect(controls.speakingText).toBe("");
-    expect(controls.speechStatus).toBe("idle");
+    expect(controls.speakingText).toBe("quiet");
+    expect(controls.speechStatus).toBe("paused");
+    expect(controls.speechCurrentTime).toBe(12);
+  });
+
+  test("keeps passage read-along selectable at the last word after natural playback end", async () => {
+    const audioInstances: {
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      currentTime: number;
+      duration: number;
+      onended?: () => void;
+    }[] = [];
+
+    mockSpeechApi({
+      audio_base64: "YXVkaW8=",
+      content_type: "audio/mpeg",
+      word_boundaries: [
+        { text: "hello", text_offset: 0, word_length: 5, audio_offset_ms: 0, duration_ms: 400 },
+        { text: "world", text_offset: 6, word_length: 5, audio_offset_ms: 900, duration_ms: 500 },
+      ],
+    });
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0,
+          duration: 1.4,
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+
+    let controls!: ReturnType<typeof useSpeech>;
+    function SpeechHarness() {
+      controls = useSpeech(vi.fn());
+      return null;
+    }
+
+    render(<SpeechHarness />);
+
+    await act(async () => {
+      await controls.playCorrect("hello world");
+    });
+
+    act(() => {
+      audioInstances[0].currentTime = 1.4;
+      audioInstances[0].onended?.();
+    });
+
+    expect(controls.speakingText).toBe("hello world");
+    expect(controls.speechStatus).toBe("paused");
+    expect(controls.speechCurrentTime).toBe(1.4);
+    expect(controls.speechDuration).toBe(1.4);
+    expect(controls.speechWordBoundaries).toHaveLength(2);
+    expect(controls.activeSpeechBoundaryIndex).toBe(1);
+
+    act(() => {
+      controls.seekCurrentSpeech(0);
+    });
+
+    expect(controls.activeSpeechBoundaryIndex).toBe(0);
   });
 
   test("seeks and skips current speech playback", async () => {
