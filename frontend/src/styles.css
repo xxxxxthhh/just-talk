@@ -905,6 +905,7 @@ p {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   width: min(960px, 100%);
+  height: min(780px, calc(100vh - 48px));
   max-height: min(780px, calc(100vh - 48px));
   border: 1px solid var(--border-card);
   border-radius: var(--radius-lg);
@@ -2159,6 +2160,7 @@ body[data-theme="dark"] .mode-option.selected {
   }
 
   .material-library-dialog {
+    height: calc(100vh - 28px);
     max-height: calc(100vh - 28px);
   }
 
