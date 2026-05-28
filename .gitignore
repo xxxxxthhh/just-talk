@@ -4,6 +4,7 @@ data/
 __pycache__/
 .pytest_cache/
 .superpowers/
+.opencode/
 docs/review/
 
 frontend/node_modules/
