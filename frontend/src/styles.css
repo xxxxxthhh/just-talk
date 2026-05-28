@@ -11,15 +11,15 @@
   --bg-card-hover: rgba(255, 255, 255, 0.9);
   --bg-subtle: rgba(248, 250, 252, 0.82);
   --border-card: rgba(226, 232, 240, 0.8);
-  --border-card-focus: rgba(37, 99, 235, 0.4);
+  --border-card-focus: rgba(99, 102, 241, 0.4);
   
   --text-main: #0f172a;
   --text-muted: #64748b;
   --text-inverse: #ffffff;
   
-  --accent-color: #2563eb;
-  --accent-color-hover: #1d4ed8;
-  --accent-glow: rgba(37, 99, 235, 0.15);
+  --accent-color: #6366f1; /* Vibrant Indigo */
+  --accent-color-hover: #db2777; /* Premium Rose Pink */
+  --accent-glow: rgba(99, 102, 241, 0.12);
 
   --scrollbar-track: rgba(0, 0, 0, 0.02);
   --scrollbar-thumb: rgba(148, 163, 184, 0.3);
@@ -71,15 +71,15 @@ body[data-theme="dark"] {
   --bg-card-hover: rgba(31, 41, 55, 0.85);
   --bg-subtle: rgba(15, 23, 42, 0.62);
   --border-card: rgba(255, 255, 255, 0.07);
-  --border-card-focus: rgba(59, 130, 246, 0.5);
+  --border-card-focus: rgba(167, 139, 250, 0.5);
   
   --text-main: #f8fafc;
   --text-muted: #94a3b8;
   --text-inverse: #090d16;
   
-  --accent-color: #3b82f6;
-  --accent-color-hover: #60a5fa;
-  --accent-glow: rgba(59, 130, 246, 0.3);
+  --accent-color: #a78bfa; /* Glowing Lavender Purple */
+  --accent-color-hover: #ec4899; /* Radiant Cyber Pink */
+  --accent-glow: rgba(167, 139, 250, 0.25);
 
   --scrollbar-track: rgba(255, 255, 255, 0.01);
   --scrollbar-thumb: rgba(148, 163, 184, 0.2);
@@ -202,7 +202,7 @@ h2 {
   font-family: var(--font-display);
   font-size: 16px;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
   color: var(--text-main);
 }
 
@@ -210,6 +210,7 @@ h3 {
   font-family: var(--font-display);
   font-size: 14px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--text-main);
 }
 
@@ -247,6 +248,7 @@ p {
   display: flex;
   align-items: center;
   gap: 14px;
+  min-width: 0;
 }
 
 .brand-mark {
@@ -256,15 +258,48 @@ p {
   width: 40px;
   height: 40px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--accent-color) 0%, #1d4ed8 100%);
+  background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-color-hover) 100%);
   color: var(--text-inverse);
   box-shadow: 0 4px 14px var(--accent-glow);
+}
+
+.brand-mark-glyph {
+  width: 30px;
+  height: 30px;
+  overflow: visible;
+}
+
+.brand-mimic-model,
+.brand-mimic-user {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.brand-mimic-model {
+  stroke: rgba(255, 255, 255, 0.48);
+  stroke-width: 2.6;
+}
+
+.brand-mimic-user {
+  stroke: #ffffff;
+  stroke-width: 3.2;
+}
+
+.brand-copy {
+  min-width: 0;
+}
+
+.brand-name {
+  white-space: nowrap;
 }
 
 .brand p {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
 .topbar-actions {
@@ -349,7 +384,7 @@ p {
 }
 
 .primary-button {
-  background: linear-gradient(135deg, var(--accent-color) 0%, #1d4ed8 100%);
+  background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-color-hover) 100%);
   color: var(--text-inverse);
   box-shadow: 0 4px 12px var(--accent-glow);
 }
@@ -1751,7 +1786,6 @@ body[data-theme="dark"] .mode-option.selected {
 .wave-container-visualizer {
   width: 100%;
   min-width: 0;
-  height: 80px;
   border-radius: var(--radius-md);
   background: #0f172a;
   border: 1px solid rgba(255, 255, 255, 0.05);
@@ -1759,6 +1793,12 @@ body[data-theme="dark"] .mode-option.selected {
   overflow: hidden;
   display: flex;
   align-items: center;
+  transition: border-color 0.2s, box-shadow 0.2s, height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.wave-container-visualizer:focus-within {
+  border-color: rgba(167, 139, 250, 0.45);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 0 3px rgba(167, 139, 250, 0.2);
 }
 
 .wave span {

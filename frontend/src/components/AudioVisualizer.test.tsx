@@ -30,6 +30,7 @@ describe("AudioVisualizer", () => {
       quadraticCurveTo: vi.fn(),
       scale: vi.fn(),
       stroke: vi.fn(),
+      fillText: vi.fn(),
     } as unknown) as CanvasRenderingContext2D;
     vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1);
     vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
@@ -83,5 +84,45 @@ describe("AudioVisualizer", () => {
 
     expect(canvasContext.stroke).toHaveBeenCalled();
     expect(canvasContext.fill).not.toHaveBeenCalled();
+  });
+
+  test("renders independent semantic sliders in dual comparison mode with correct aria values", () => {
+    const mockResult = {
+      transcript: "morning",
+      scores: { pronunciation: 92, accuracy: 92, fluency: 92, completeness: 92, prosody: 92 },
+      words: [],
+      raw: {},
+    };
+
+    const { getByLabelText } = render(
+      <AudioVisualizer
+        {...baseProps}
+        recorderState="recorded"
+        result={mockResult}
+        coachDuration={1.2}
+        userDuration={1.8}
+        coachCurrentTime={0.4}
+        userCurrentTime={0.9}
+        activeTrack="coach"
+      />
+    );
+
+    const coachSlider = getByLabelText("Coach standard accent playback position slider") as HTMLInputElement;
+    const userSlider = getByLabelText("Your recorded accent playback position slider") as HTMLInputElement;
+
+    expect(coachSlider).toBeInTheDocument();
+    expect(userSlider).toBeInTheDocument();
+
+    expect(coachSlider.max).toBe("1.2");
+    expect(coachSlider.value).toBe("0.4");
+    expect(coachSlider.getAttribute("aria-valuemax")).toBe("1.2");
+    expect(coachSlider.getAttribute("aria-valuenow")).toBe("0.4");
+    expect(coachSlider.getAttribute("aria-valuetext")).toContain("Playback at 0.4s of 1.2s");
+
+    expect(userSlider.max).toBe("1.8");
+    expect(userSlider.value).toBe("0.9");
+    expect(userSlider.getAttribute("aria-valuemax")).toBe("1.8");
+    expect(userSlider.getAttribute("aria-valuenow")).toBe("0.9");
+    expect(userSlider.getAttribute("aria-valuetext")).toContain("Playback at 0.9s of 1.8s");
   });
 });

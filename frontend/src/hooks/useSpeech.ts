@@ -68,11 +68,7 @@ export function useSpeech(setError: (msg: string) => void) {
       speechAudioRef.current.currentTime = 0;
       speechAudioRef.current = null;
     }
-    currentSpeechKeyRef.current = "";
-    currentSpeechWordBoundariesRef.current = [];
     setSpeechCurrentTime(0);
-    setSpeechDuration(0);
-    setSpeechWordBoundaries([]);
     setActiveSpeechBoundaryIndex(-1);
   }, []);
 
@@ -196,10 +192,17 @@ export function useSpeech(setError: (msg: string) => void) {
         }
       }
       cacheRef.current.clear();
+      setSpeechDuration(0);
+      setSpeechWordBoundaries([]);
     };
   }, [resetCurrentSpeechAudio]);
 
-  const playCorrect = useCallback(async (text: string, options?: SpeechOptions) => {
+  const playCorrect = useCallback(async (
+    text: string, 
+    options?: SpeechOptions, 
+    startAtSeconds?: number,
+    startAtPercent?: number
+  ) => {
     const spokenText = normalizedSpeechText(text);
     if (!spokenText) return;
     const cacheIdentity = speechCacheIdentity(spokenText, options);
@@ -208,6 +211,18 @@ export function useSpeech(setError: (msg: string) => void) {
     if (speechAudioRef.current && currentSpeechKeyRef.current === cacheIdentity) {
       setSpeakingText(spokenText);
       setSpeechStatus("playing");
+      const duration = speechAudioRef.current.duration || speechDuration;
+      let finalSeek = startAtSeconds;
+      if (startAtPercent !== undefined && startAtPercent >= 0 && duration > 0) {
+        finalSeek = startAtPercent * duration;
+      }
+      if (finalSeek !== undefined && finalSeek >= 0) {
+        speechAudioRef.current.currentTime = finalSeek;
+        setSpeechCurrentTime(finalSeek);
+        setActiveSpeechBoundaryIndex(
+          activeBoundaryIndexAtTime(currentSpeechWordBoundariesRef.current, finalSeek)
+        );
+      }
       try {
         await speechAudioRef.current.play();
       } catch (err) {
@@ -219,6 +234,13 @@ export function useSpeech(setError: (msg: string) => void) {
 
     playbackRequestRef.current += 1;
     const requestId = playbackRequestRef.current;
+    
+    if (currentSpeechKeyRef.current !== cacheIdentity) {
+      setSpeechDuration(0);
+      setSpeechWordBoundaries([]);
+      currentSpeechKeyRef.current = cacheIdentity;
+    }
+
     resetCurrentSpeechAudio();
     setSpeakingText(spokenText);
     setSpeechStatus("loading");
@@ -231,7 +253,6 @@ export function useSpeech(setError: (msg: string) => void) {
       const cacheEntry = cacheRef.current.get(cacheIdentity);
       const wordBoundaries = cacheEntry?.wordBoundaries ?? [];
       speechAudioRef.current = audio;
-      currentSpeechKeyRef.current = cacheIdentity;
       currentSpeechWordBoundariesRef.current = wordBoundaries;
       setSpeechWordBoundaries(wordBoundaries);
       const clearIfCurrent = () => {
@@ -281,9 +302,35 @@ export function useSpeech(setError: (msg: string) => void) {
       audio.onended = finishIfCurrent;
       audio.onerror = clearIfCurrent;
       audio.ondurationchange = updateProgress;
-      audio.onloadedmetadata = updateProgress;
+      audio.onloadedmetadata = () => {
+        updateProgress();
+        const duration = audio.duration || 0;
+        let finalSeek = startAtSeconds;
+        if (startAtPercent !== undefined && startAtPercent >= 0 && duration > 0) {
+          finalSeek = startAtPercent * duration;
+        }
+        if (finalSeek !== undefined && finalSeek >= 0) {
+          audio.currentTime = finalSeek;
+          setSpeechCurrentTime(finalSeek);
+          setActiveSpeechBoundaryIndex(
+            activeBoundaryIndexAtTime(currentSpeechWordBoundariesRef.current, finalSeek)
+          );
+        }
+      };
       audio.ontimeupdate = updateProgress;
+      
       updateProgress();
+      
+      const duration = audio.duration || 0;
+      let finalSeek = startAtSeconds;
+      if (startAtPercent !== undefined && startAtPercent >= 0 && duration > 0) {
+        finalSeek = startAtPercent * duration;
+      }
+      if (finalSeek !== undefined && finalSeek >= 0) {
+        audio.currentTime = finalSeek;
+        setSpeechCurrentTime(finalSeek);
+      }
+
       setSpeechStatus("playing");
       await audio.play();
     } catch (err) {

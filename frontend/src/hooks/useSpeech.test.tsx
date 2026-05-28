@@ -501,4 +501,55 @@ describe("useSpeech", () => {
     expect(audioInstances[1].play).toHaveBeenCalledTimes(1);
     expect(controls.speakingText).toBe("streets");
   });
+
+  test("seeks to startAtPercent once metadata is loaded on cold-cache playback", async () => {
+    const audioInstances: {
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      currentTime: number;
+      duration: number;
+      onloadedmetadata?: () => void;
+    }[] = [];
+
+    mockSpeechApi();
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0,
+          duration: 10,
+          onloadedmetadata: undefined as any,
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+
+    let controls!: ReturnType<typeof useSpeech>;
+    function SpeechHarness() {
+      controls = useSpeech(vi.fn());
+      return null;
+    }
+
+    render(<SpeechHarness />);
+
+    await act(async () => {
+      await controls.playCorrect("quiet", undefined, undefined, 0.5);
+    });
+
+    act(() => {
+      if (audioInstances[0].onloadedmetadata) {
+        audioInstances[0].onloadedmetadata();
+      }
+    });
+
+    expect(audioInstances[0].currentTime).toBe(5);
+    expect(controls.speechCurrentTime).toBe(5);
+  });
 });

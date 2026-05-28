@@ -178,6 +178,21 @@ function safeSetLocalStorage(key: string, value: string): void {
   }
 }
 
+function BrandMark() {
+  return (
+    <svg className="brand-mark-glyph" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+      <path
+        className="brand-mimic-model"
+        d="M 13 27 Q 18.5 7 22.5 21 Q 24 26 25.5 21 Q 29.5 7 35 27"
+      />
+      <path
+        className="brand-mimic-user"
+        d="M 13 35 Q 18.5 15 22.5 29 Q 24 34 25.5 29 Q 29.5 15 35 35"
+      />
+    </svg>
+  );
+}
+
 function App() {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     const saved = safeGetLocalStorage("theme");
@@ -250,6 +265,34 @@ function App() {
     skipCurrentSpeech,
     stopCurrentSpeech
   } = useSpeech(setError);
+
+  const [passageCoachBoundaries, setPassageCoachBoundaries] = useState<SpeechWordBoundary[] | null>(null);
+  const [passageCoachDuration, setPassageCoachDuration] = useState<number>(0);
+  const [passageCoachText, setPassageCoachText] = useState<string>("");
+
+  useEffect(() => {
+    const trimmedPassage = passage.trim().toLowerCase();
+    const trimmedSpeaking = speakingText.trim().toLowerCase();
+    const trimmedCoach = passageCoachText.trim().toLowerCase();
+
+    // 1. Capture boundaries if the speech hook is loading/playing the current passage
+    if (speakingText && trimmedSpeaking === trimmedPassage) {
+      if (speechWordBoundaries && speechWordBoundaries.length > 0) {
+        setPassageCoachBoundaries(speechWordBoundaries);
+        setPassageCoachText(speakingText);
+      }
+      if (speechDuration > 0) {
+        setPassageCoachDuration(speechDuration);
+      }
+    }
+    
+    // 2. Clear captured boundaries if the passage input has changed and no longer matches
+    if (passageCoachText && trimmedCoach !== trimmedPassage) {
+      setPassageCoachBoundaries(null);
+      setPassageCoachDuration(0);
+      setPassageCoachText("");
+    }
+  }, [speakingText, speechWordBoundaries, speechDuration, passage, passageCoachText]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -731,6 +774,22 @@ function App() {
     }));
   }
 
+  function handleTrackClick(track: "coach" | "user", timeSeconds: number, percent?: number) {
+    if (track === "coach") {
+      stopRecordingPlayback();
+      playPronunciation(passage, passageSpeechOptions, timeSeconds, percent);
+    } else {
+      stopCurrentSpeech();
+      setRecordingPlaybackTime(timeSeconds);
+      setRecordingPlaybackSeekRequest((request) => ({
+        id: (request?.id ?? 0) + 1,
+        timeSeconds,
+        play: true
+      }));
+      setIsAudioPlaying(true);
+    }
+  }
+
   function selectScoredWord(index: number) {
     setSelectedWordIndex(index);
     const word = result?.words[index];
@@ -748,9 +807,14 @@ function App() {
     }));
   }
 
-  function playPronunciation(text: string, options?: SpeechOptions) {
+  function playPronunciation(
+    text: string, 
+    options?: SpeechOptions, 
+    startAtSeconds?: number,
+    startAtPercent?: number
+  ) {
     stopRecordingPlayback();
-    void playCorrect(text, options);
+    void playCorrect(text, options, startAtSeconds, startAtPercent);
   }
 
   function seekPassageReadAlongWord(boundary: SpeechWordBoundary | undefined) {
@@ -793,16 +857,18 @@ function App() {
     setExpandedSidebarPanel((current) => (current === panel ? null : panel));
   }
 
+  const isCoachDataMatching = passageCoachText.trim().toLowerCase() === passage.trim().toLowerCase();
+
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">
-            <Volume2 size={22} />
+            <BrandMark />
           </div>
-          <div>
-            <h1>Just Talk</h1>
-            <p>Pronunciation practice</p>
+          <div className="brand-copy">
+            <h1 className="brand-name">Mimic</h1>
+            <p>AI speech coach for clearer English</p>
           </div>
         </div>
         <nav className="view-switch" aria-label="App view">
@@ -1091,7 +1157,7 @@ function App() {
             </div>
           ) : null}
 
-          {isPassageSpeechActive ? (
+          {isPassageSpeechActive && !result ? (
             <div className="passage-audio-controls">
               <button
                 type="button"
@@ -1207,13 +1273,20 @@ function App() {
               <AudioVisualizer
                 recorderState={recorderState}
                 audioStream={recordingStream}
-                playbackTime={recordingPlaybackTime}
-                playbackDuration={audioDuration}
-                isAudioPlaying={isAudioPlaying}
+                playbackTime={isPassageSpeechActive ? speechCurrentTime : recordingPlaybackTime}
+                playbackDuration={isPassageSpeechActive ? speechDuration : audioDuration}
+                isAudioPlaying={isPassageSpeechActive ? (speechStatus === "playing") : isAudioPlaying}
+                activeTrack={isPassageSpeechActive ? "coach" : "user"}
+                coachBoundaries={isCoachDataMatching ? passageCoachBoundaries : null}
+                coachDuration={isCoachDataMatching ? passageCoachDuration : 0}
+                userDuration={audioDuration}
+                coachCurrentTime={speechCurrentTime}
+                userCurrentTime={recordingPlaybackTime}
                 result={result}
                 recordedAmplitudes={recordedAmplitudes}
                 onAmplitudesChange={setRecordedAmplitudes}
                 onSeek={handleVisualizerSeek}
+                onTrackClick={handleTrackClick}
                 maxMs={maxMs}
               />
               <div className="timer">
