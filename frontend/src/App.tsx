@@ -49,7 +49,7 @@ import { ResultsPanel } from "./components/ResultsPanel";
 import { ScoredPassage } from "./components/ScoredPassage";
 import { SidebarSection } from "./components/SidebarSection";
 import { StatusPill } from "./components/StatusPill";
-import { WordBankPanel, type WordBankTab } from "./components/WordBankPanel";
+import { countDueWords, WordBankPanel, type WordBankTab } from "./components/WordBankPanel";
 import { usePhonemeInsights } from "./hooks/usePhonemeInsights";
 import { useRecorder } from "./hooks/useRecorder";
 import { useRecordingPlayback } from "./hooks/useRecordingPlayback";
@@ -258,6 +258,7 @@ function App() {
     [vocabulary]
   );
   const requiredSuccesses = health?.vocabulary_graduation_streak ?? 2;
+  const dueWordCount = useMemo(() => countDueWords(vocabulary), [vocabulary]);
 
   useEffect(() => {
     void refreshServerState();
@@ -710,6 +711,7 @@ function App() {
             title="Word Bank"
             icon={<BookmarkPlus size={18} />}
             count={vocabulary.length}
+            badge={dueWordCount > 0 ? `${dueWordCount} due` : undefined}
             isExpanded={expandedSidebarPanel === "word-bank"}
             onToggle={() => toggleSidebarPanel("word-bank")}
           >

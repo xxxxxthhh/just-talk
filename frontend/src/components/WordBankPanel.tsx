@@ -13,6 +13,13 @@ function isDueForReview(item: VocabularyItem, nowMs: number): boolean {
   return Number.isNaN(dueMs) || dueMs <= nowMs;
 }
 
+export function countDueWords(vocabulary: VocabularyItem[]): number {
+  const nowMs = Date.now();
+  return vocabulary.filter(
+    (item) => item.status !== "graduated" && isDueForReview(item, nowMs)
+  ).length;
+}
+
 function daysUntilDue(item: VocabularyItem, nowMs: number): number {
   if (!item.due_at) return 0;
   const dueMs = Date.parse(item.due_at);

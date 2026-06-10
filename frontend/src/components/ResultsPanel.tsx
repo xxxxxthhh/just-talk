@@ -128,7 +128,21 @@ export function ResultsPanel({
         <div className="words">
           <div className="empty-state">
             <Play size={22} />
-            <p>Record a passage to see word and phoneme feedback.</p>
+            <p className="empty-state-title">Ready when you are</p>
+            <ol className="practice-steps">
+              <li>
+                <span className="step-dot">1</span>
+                Pick a passage, material, or word
+              </li>
+              <li>
+                <span className="step-dot">2</span>
+                Hit Record and read it aloud
+              </li>
+              <li>
+                <span className="step-dot">3</span>
+                Score it to see word and phoneme feedback
+              </li>
+            </ol>
           </div>
         </div>
       ) : null}

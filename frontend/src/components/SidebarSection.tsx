@@ -6,6 +6,7 @@ type SidebarSectionProps = {
   title: string;
   icon: ReactNode;
   count: number;
+  badge?: string;
   isExpanded: boolean;
   onToggle: () => void;
   actions?: ReactNode;
@@ -17,6 +18,7 @@ export function SidebarSection({
   title,
   icon,
   count,
+  badge,
   isExpanded,
   onToggle,
   actions,
@@ -39,7 +41,11 @@ export function SidebarSection({
             <span>{title}</span>
           </span>
           <span className="sidebar-section-meta">
-            <span className="sidebar-section-count">{count}</span>
+            {badge ? (
+              <span className="sidebar-section-badge">{badge}</span>
+            ) : (
+              <span className="sidebar-section-count">{count}</span>
+            )}
             <ChevronDown className="sidebar-chevron" size={16} />
           </span>
         </button>
