@@ -222,6 +222,44 @@ describe("App", () => {
     });
   });
 
+  test("groups word bank entries into due and scheduled reviews", async () => {
+    const baseWord = {
+      source: "manual",
+      notes: "",
+      latest_score: 88,
+      practice_count: 1,
+      last_practiced_at: "2026-06-09T10:00:00Z",
+      status: "active",
+      consecutive_successes: 1,
+      graduated_at: null,
+      created_at: "2026-06-01T09:00:00Z",
+      updated_at: "2026-06-09T10:00:00Z"
+    };
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [
+        { ...baseWord, id: "word-1", word: "quiet", interval_days: 0, due_at: null },
+        {
+          ...baseWord,
+          id: "word-2",
+          word: "streets",
+          interval_days: 4,
+          due_at: new Date(Date.now() + 3 * 86_400_000).toISOString()
+        }
+      ]
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Word Bank/i }));
+
+    expect(await screen.findByText(/Due for review \(1\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Scheduled \(1\)/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /streets.*review in 3d/i })
+    ).toBeInTheDocument();
+  });
+
   test("uses a material as the next practice passage", async () => {
     mockApi({
       "/api/health": health,

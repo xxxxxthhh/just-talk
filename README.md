@@ -13,7 +13,7 @@ The app is designed for personal learning workflows: read a passage, inspect wea
 - Standard pronunciation playback for passages and selected words.
 - Built-in original practice materials plus local JSON material import.
 - Local history stored in SQLite.
-- Local word bank for weak words and manual vocabulary practice, with in-progress and graduated views.
+- Local word bank for weak words and manual vocabulary practice, with in-progress and graduated views and spaced-repetition review scheduling (successful drills double the review interval; failures make the word due immediately).
 - Optional passage quality check through an OpenAI-compatible LLM endpoint.
 
 ## Tech Stack

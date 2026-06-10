@@ -88,6 +88,8 @@ export type VocabularyItem = {
   status: VocabularyStatus;
   consecutive_successes: number;
   graduated_at: string | null;
+  interval_days: number;
+  due_at: string | null;
   created_at: string;
   updated_at: string;
 };

@@ -495,6 +495,102 @@ class PhonemeStatsTests(unittest.TestCase):
         self.assertAlmostEqual(stat["average_accuracy"], 50.0)
 
 
+class SpacedRepetitionTests(unittest.TestCase):
+    def _store(self, temp_dir: str):
+        from app.storage import SessionStore
+
+        store = SessionStore(f"sqlite:///{Path(temp_dir) / 'db.db'}")
+        store.initialize(seed_builtin_materials=False)
+        return store
+
+    def test_new_words_have_no_schedule_and_count_as_due(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = self._store(temp_dir)
+            created = store.create_word("quiet")
+
+        self.assertEqual(created["interval_days"], 0)
+        self.assertIsNone(created["due_at"])
+
+    def test_successful_drills_double_the_review_interval(self):
+        from datetime import UTC, datetime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = self._store(temp_dir)
+            store.create_word("quiet")
+            first = store.record_word_practice(
+                "quiet", latest_score=92.0, graduation_streak=5
+            )
+            second = store.record_word_practice(
+                "quiet", latest_score=93.0, graduation_streak=5
+            )
+
+        self.assertEqual(first["interval_days"], 1)
+        self.assertEqual(second["interval_days"], 2)
+        due_at = datetime.fromisoformat(second["due_at"])
+        days_until_due = (due_at - datetime.now(UTC)).total_seconds() / 86400
+        self.assertGreater(days_until_due, 1.9)
+        self.assertLess(days_until_due, 2.1)
+
+    def test_review_interval_is_capped(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = self._store(temp_dir)
+            store.create_word("quiet")
+            item = None
+            for _ in range(10):
+                item = store.record_word_practice(
+                    "quiet", latest_score=95.0, graduation_streak=99
+                )
+
+        from app.storage import MAX_REVIEW_INTERVAL_DAYS
+
+        self.assertEqual(item["interval_days"], MAX_REVIEW_INTERVAL_DAYS)
+
+    def test_failed_drill_resets_schedule_to_due_now(self):
+        from datetime import UTC, datetime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = self._store(temp_dir)
+            store.create_word("quiet")
+            store.record_word_practice("quiet", latest_score=92.0, graduation_streak=5)
+            failed = store.record_word_practice(
+                "quiet", latest_score=60.0, graduation_streak=5
+            )
+
+        self.assertEqual(failed["interval_days"], 0)
+        due_at = datetime.fromisoformat(failed["due_at"])
+        self.assertLessEqual(due_at, datetime.now(UTC))
+
+    def test_low_passage_score_makes_scheduled_word_due_immediately(self):
+        from datetime import UTC, datetime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = self._store(temp_dir)
+            store.create_word("quiet")
+            store.record_word_practice("quiet", latest_score=92.0, graduation_streak=5)
+            # A weak result from a passage review (increment=False).
+            flagged = store.record_word_practice(
+                "quiet", latest_score=58.0, increment=False, graduation_streak=5
+            )
+
+        self.assertEqual(flagged["interval_days"], 0)
+        due_at = datetime.fromisoformat(flagged["due_at"])
+        self.assertLessEqual(due_at, datetime.now(UTC))
+
+    def test_successful_passage_result_does_not_reschedule(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = self._store(temp_dir)
+            store.create_word("quiet")
+            drilled = store.record_word_practice(
+                "quiet", latest_score=92.0, graduation_streak=5
+            )
+            passage = store.record_word_practice(
+                "quiet", latest_score=96.0, increment=False, graduation_streak=5
+            )
+
+        self.assertEqual(passage["interval_days"], drilled["interval_days"])
+        self.assertEqual(passage["due_at"], drilled["due_at"])
+
+
 class MigrationTests(unittest.TestCase):
     def _user_version(self, database_path: Path) -> int:
         import sqlite3

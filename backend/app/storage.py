@@ -3,7 +3,7 @@ import sqlite3
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +13,7 @@ VOCABULARY_STATUSES = {"active", "graduated"}
 PHONEME_STAT_MIN_ATTEMPTS = 3
 PHONEME_STAT_MAX_EXAMPLES = 5
 MATERIAL_SCHEMA_VERSION = 1
+MAX_REVIEW_INTERVAL_DAYS = 60
 
 BUILTIN_MATERIAL_PACK: dict[str, Any] = {
     "schema_version": MATERIAL_SCHEMA_VERSION,
@@ -210,12 +211,28 @@ def _migration_add_session_warnings(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_add_vocabulary_schedule(connection: sqlite3.Connection) -> None:
+    _add_missing_column(
+        connection,
+        table="vocabulary_items",
+        column="interval_days",
+        definition="INTEGER NOT NULL DEFAULT 0",
+    )
+    _add_missing_column(
+        connection,
+        table="vocabulary_items",
+        column="due_at",
+        definition="TEXT",
+    )
+
+
 # Ordered schema migrations. Each entry upgrades the database by one
 # user_version step; append new migrations here, never reorder or edit
 # released ones (except the idempotent initial migration above).
 MIGRATIONS: list = [
     _migration_initial_schema,
     _migration_add_session_warnings,
+    _migration_add_vocabulary_schedule,
 ]
 
 
@@ -712,6 +729,8 @@ class SessionStore:
             next_status = existing["status"]
             next_streak = int(existing["consecutive_successes"])
             next_graduated_at = existing["graduated_at"]
+            next_interval = int(existing["interval_days"] or 0)
+            next_due_at = existing["due_at"]
             if latest_score is not None:
                 if float(latest_score) > graduation_score:
                     next_streak += 1 if increment else 0
@@ -723,10 +742,17 @@ class SessionStore:
                         if next_status == "graduated"
                         else None
                     )
+                    if increment:
+                        next_interval = min(max(1, next_interval * 2), MAX_REVIEW_INTERVAL_DAYS)
+                        next_due_at = (
+                            datetime.now(UTC) + timedelta(days=next_interval)
+                        ).isoformat()
                 else:
                     next_status = "active"
                     next_streak = 0
                     next_graduated_at = None
+                    next_interval = 0
+                    next_due_at = now
 
             connection.execute(
                 """
@@ -737,6 +763,8 @@ class SessionStore:
                     status = ?,
                     consecutive_successes = ?,
                     graduated_at = ?,
+                    interval_days = ?,
+                    due_at = ?,
                     updated_at = ?
                 WHERE normalized_word = ?
                 """,
@@ -747,6 +775,8 @@ class SessionStore:
                     next_status,
                     next_streak,
                     next_graduated_at,
+                    next_interval,
+                    next_due_at,
                     now,
                     normalized_word,
                 ),
@@ -931,6 +961,8 @@ class SessionStore:
             "status": row["status"],
             "consecutive_successes": row["consecutive_successes"],
             "graduated_at": row["graduated_at"],
+            "interval_days": row["interval_days"],
+            "due_at": row["due_at"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }

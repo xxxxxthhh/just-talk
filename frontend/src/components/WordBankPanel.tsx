@@ -7,6 +7,19 @@ import type { VocabularyItem } from "../types";
 
 export type WordBankTab = "active" | "graduated";
 
+function isDueForReview(item: VocabularyItem, nowMs: number): boolean {
+  if (!item.due_at) return true;
+  const dueMs = Date.parse(item.due_at);
+  return Number.isNaN(dueMs) || dueMs <= nowMs;
+}
+
+function daysUntilDue(item: VocabularyItem, nowMs: number): number {
+  if (!item.due_at) return 0;
+  const dueMs = Date.parse(item.due_at);
+  if (Number.isNaN(dueMs)) return 0;
+  return Math.max(0, Math.ceil((dueMs - nowMs) / 86_400_000));
+}
+
 type WordBankPanelProps = {
   vocabulary: VocabularyItem[];
   tab: WordBankTab;
@@ -38,6 +51,18 @@ export function WordBankPanel({
     [vocabulary]
   );
   const visibleVocabulary = tab === "active" ? activeVocabulary : graduatedVocabulary;
+  const { dueVocabulary, scheduledVocabulary } = useMemo(() => {
+    // Grouping intentionally uses the clock at vocabulary refresh time.
+    // eslint-disable-next-line react-hooks/purity
+    const nowMs = Date.now();
+    return {
+      dueVocabulary: activeVocabulary.filter((item) => isDueForReview(item, nowMs)),
+      scheduledVocabulary: activeVocabulary
+        .filter((item) => !isDueForReview(item, nowMs))
+        .map((item) => ({ item, dueInDays: daysUntilDue(item, nowMs) }))
+    };
+  }, [activeVocabulary]);
+  const showReviewGroups = tab === "active" && scheduledVocabulary.length > 0;
 
   async function handleAddWord(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -91,40 +116,58 @@ export function WordBankPanel({
           <p className="muted">
             {tab === "active" ? "No in-progress words." : "No graduated words yet."}
           </p>
+        ) : showReviewGroups ? (
+          <>
+            {dueVocabulary.length > 0 ? (
+              <>
+                <p className="muted word-group-label">Due for review ({dueVocabulary.length})</p>
+                {dueVocabulary.map((item) => renderWordRow(item))}
+              </>
+            ) : (
+              <p className="muted">All caught up — nothing due for review.</p>
+            )}
+            <p className="muted word-group-label">Scheduled ({scheduledVocabulary.length})</p>
+            {scheduledVocabulary.map(({ item, dueInDays }) => renderWordRow(item, dueInDays))}
+          </>
         ) : (
-          visibleVocabulary.map((item) => (
-            <div className="bank-row" key={item.id}>
-              <button
-                className={`bank-word ${
-                  item.status === "graduated"
-                    ? "graduated-word"
-                    : `active-word ${scoreTone(item.latest_score)}`
-                }`}
-                onClick={() => onPracticeWord(item)}
-              >
-                <strong>{item.word}</strong>
-                <span>{scoreValue(item.latest_score)}</span>
-                <small>
-                  {item.status === "graduated"
-                    ? "Graduated"
-                    : `${Math.min(
-                        item.consecutive_successes ?? 0,
-                        requiredSuccesses
-                      )}/${requiredSuccesses} streak`}{" "}
-                  · {item.practice_count} reps
-                </small>
-              </button>
-              <button
-                className="icon-button small"
-                onClick={() => onDeleteWord(item.id)}
-                title={`Delete ${item.word}`}
-              >
-                <Trash2 size={15} />
-              </button>
-            </div>
-          ))
+          visibleVocabulary.map((item) => renderWordRow(item))
         )}
       </div>
     </>
   );
+
+  function renderWordRow(item: VocabularyItem, dueInDays?: number) {
+    return (
+      <div className="bank-row" key={item.id}>
+        <button
+          className={`bank-word ${
+            item.status === "graduated"
+              ? "graduated-word"
+              : `active-word ${scoreTone(item.latest_score)}`
+          }`}
+          onClick={() => onPracticeWord(item)}
+        >
+          <strong>{item.word}</strong>
+          <span>{scoreValue(item.latest_score)}</span>
+          <small>
+            {item.status === "graduated"
+              ? "Graduated"
+              : `${Math.min(
+                  item.consecutive_successes ?? 0,
+                  requiredSuccesses
+                )}/${requiredSuccesses} streak`}{" "}
+            · {item.practice_count} reps
+            {dueInDays !== undefined ? ` · review in ${dueInDays}d` : ""}
+          </small>
+        </button>
+        <button
+          className="icon-button small"
+          onClick={() => onDeleteWord(item.id)}
+          title={`Delete ${item.word}`}
+        >
+          <Trash2 size={15} />
+        </button>
+      </div>
+    );
+  }
 }
