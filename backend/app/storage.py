@@ -12,6 +12,9 @@ from .scoring import score_bucket
 VOCABULARY_STATUSES = {"active", "graduated"}
 PHONEME_STAT_MIN_ATTEMPTS = 3
 PHONEME_STAT_MAX_EXAMPLES = 5
+
+DRILL_PACK_ID = "phoneme-drills"
+DRILL_PACK_TITLE = "Phoneme Drills"
 MATERIAL_SCHEMA_VERSION = 1
 MAX_REVIEW_INTERVAL_DAYS = 60
 
@@ -613,6 +616,89 @@ class SessionStore:
                     (normalized_pack_id,),
                 )
         return len(material_ids)
+
+    def save_drill_material(
+        self,
+        *,
+        phoneme: str,
+        title: str,
+        passage: str,
+        focus_words: list[str],
+    ) -> dict[str, Any]:
+        normalized_phoneme = self._required_text(phoneme, "phoneme is required.")
+        normalized_title = self._required_text(title, "drill title is required.")
+        normalized_passage = self._required_text(passage, "drill passage is required.")
+        now = datetime.now(UTC).isoformat()
+        material_id = str(uuid.uuid4())
+        book = f"/{normalized_phoneme}/"
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO material_packs (
+                    id,
+                    title,
+                    source,
+                    license,
+                    imported_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    updated_at = excluded.updated_at
+                """,
+                (DRILL_PACK_ID, DRILL_PACK_TITLE, "generated", "Personal use", now, now),
+            )
+            next_position = connection.execute(
+                """
+                SELECT COALESCE(MAX(position), -1) + 1 AS next_position
+                FROM materials
+                WHERE pack_id = ?
+                """,
+                (DRILL_PACK_ID,),
+            ).fetchone()["next_position"]
+            connection.execute(
+                """
+                INSERT INTO materials (
+                    id,
+                    pack_id,
+                    title,
+                    text,
+                    book,
+                    lesson,
+                    tags_json,
+                    position,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    material_id,
+                    DRILL_PACK_ID,
+                    normalized_title,
+                    normalized_passage,
+                    book,
+                    "",
+                    json.dumps(focus_words),
+                    next_position,
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT
+                    materials.*,
+                    material_packs.title AS pack_title,
+                    material_packs.source AS source,
+                    material_packs.license AS license
+                FROM materials
+                JOIN material_packs ON material_packs.id = materials.pack_id
+                WHERE materials.id = ?
+                """,
+                (material_id,),
+            ).fetchone()
+        return self._row_to_material(row)
 
     def create_word(
         self,

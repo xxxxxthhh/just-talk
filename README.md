@@ -15,6 +15,7 @@ The app is designed for personal learning workflows: read a passage, inspect wea
 - Local history stored in SQLite.
 - Local word bank for weak words and manual vocabulary practice, with in-progress and graduated views and spaced-repetition review scheduling (successful drills double the review interval; failures make the word due immediately).
 - Optional passage quality check through an OpenAI-compatible LLM endpoint.
+- LLM-generated phoneme drill passages from the insights panel, seeded with your weakest words for that sound (works with any OpenAI-compatible endpoint, including local Ollama).
 
 ## Tech Stack
 
@@ -132,9 +133,9 @@ docs/development/    Implementation planning notes
 | `MAX_LONG_AUDIO_SECONDS` | No | Recording duration limit for Long Passage continuous scoring. Defaults to `180`. |
 | `VOCABULARY_GRADUATION_SCORE` | No | Score threshold a word must exceed to count as a successful drill. Defaults to `85`. |
 | `VOCABULARY_GRADUATION_STREAK` | No | Consecutive successful single-word drills required before graduation. Defaults to `2`. |
-| `LLM_BASE_URL` | No | OpenAI-compatible endpoint for optional passage review. |
-| `LLM_API_KEY` | No | API key for optional passage review. |
-| `LLM_MODEL` | No | Model name for optional passage review. |
+| `LLM_BASE_URL` | No | OpenAI-compatible endpoint for optional passage review and phoneme drill generation. |
+| `LLM_API_KEY` | No | API key for optional passage review and phoneme drill generation. |
+| `LLM_MODEL` | No | Model name for optional passage review and phoneme drill generation. |
 
 ## Notes
 

@@ -681,5 +681,59 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(self._user_version(database_path), len(MIGRATIONS) + 1)
 
 
+class DrillMaterialTests(unittest.TestCase):
+    def _store(self, temp_dir: str):
+        from app.storage import SessionStore
+
+        store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+        store.initialize(seed_builtin_materials=False)
+        return store
+
+    def test_save_drill_material_creates_pack_and_returns_material_shape(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = self._store(temp_dir)
+
+            material = store.save_drill_material(
+                phoneme="θ",
+                title="Thirty Thankful Thinkers",
+                passage="Think about three things.",
+                focus_words=["think", "three", "things"],
+            )
+
+            self.assertEqual(material["pack_id"], "phoneme-drills")
+            self.assertEqual(material["pack_title"], "Phoneme Drills")
+            self.assertEqual(material["title"], "Thirty Thankful Thinkers")
+            self.assertEqual(material["text"], "Think about three things.")
+            self.assertEqual(material["book"], "/θ/")
+            self.assertEqual(material["tags"], ["think", "three", "things"])
+
+            listed = store.list_materials()
+            self.assertEqual(len(listed), 1)
+            self.assertEqual(listed[0], material)
+
+    def test_save_drill_material_appends_and_group_delete_removes_one_phoneme(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = self._store(temp_dir)
+
+            first = store.save_drill_material(
+                phoneme="θ", title="First", passage="One.", focus_words=[]
+            )
+            second = store.save_drill_material(
+                phoneme="θ", title="Second", passage="Two.", focus_words=[]
+            )
+            store.save_drill_material(
+                phoneme="ɪ", title="Vowel", passage="Three.", focus_words=[]
+            )
+
+            self.assertNotEqual(first["id"], second["id"])
+            self.assertEqual(len(store.list_materials()), 3)
+
+            deleted = store.delete_material_group(pack_id="phoneme-drills", book="/θ/")
+            self.assertEqual(deleted, 2)
+            remaining = store.list_materials()
+            self.assertEqual(len(remaining), 1)
+            self.assertEqual(remaining[0]["book"], "/ɪ/")
+
+
 if __name__ == "__main__":
     unittest.main()

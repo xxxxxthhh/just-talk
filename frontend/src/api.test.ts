@@ -5,6 +5,7 @@ import {
   checkHealth,
   createWord,
   deleteWord,
+  generateDrill,
   getSession,
   importMaterialPack,
   listMaterials,
@@ -210,6 +211,36 @@ describe("api client", () => {
       })
     );
     expect(response.content_type).toBe("audio/mpeg");
+  });
+
+  test("generates a phoneme drill material", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: "drill-1",
+          pack_id: "phoneme-drills",
+          title: "Sit With It",
+          text: "Sit with it a little bit.",
+          book: "/ɪ/",
+          tags: ["sit", "it", "bit"]
+        })
+      })
+    );
+
+    const material = await generateDrill("ɪ");
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/drills/generate",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phoneme: "ɪ" })
+      })
+    );
+    expect(material.pack_id).toBe("phoneme-drills");
+    expect(material.tags).toEqual(["sit", "it", "bit"]);
   });
 
   test("throws backend detail on failed requests", async () => {

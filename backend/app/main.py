@@ -18,6 +18,7 @@ from .audio import (
 )
 from .azure_client import AzurePronunciationScorer
 from .config import Settings
+from .drills import generate_drill
 from .passage import check_passage
 from .scoring import normalize_azure_result, normalize_continuous_azure_results
 from .storage import SessionStore
@@ -54,6 +55,10 @@ class MaterialPackImportRequest(BaseModel):
     schema_version: int
     pack: MaterialPackMetaRequest
     lessons: list[MaterialLessonRequest]
+
+
+class DrillGenerateRequest(BaseModel):
+    phoneme: str
 
 
 def create_app(
@@ -318,7 +323,39 @@ def create_app(
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    @app.post("/api/drills/generate")
+    def generate_drill_material(request: DrillGenerateRequest) -> dict[str, Any]:
+        if not active_settings.passage_check_configured:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Drill generation is optional. "
+                    "Set LLM_BASE_URL and LLM_API_KEY to enable it."
+                ),
+            )
+        phoneme = request.phoneme.strip().strip("/")
+        if not phoneme:
+            raise HTTPException(status_code=400, detail="phoneme is required.")
+        seed_words = _seed_words_for_phoneme(active_store, phoneme)
+        try:
+            drill = generate_drill(active_settings, phoneme, seed_words=seed_words)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return active_store.save_drill_material(
+            phoneme=phoneme,
+            title=drill["title"],
+            passage=drill["passage"],
+            focus_words=drill["focus_words"],
+        )
+
     return app
+
+
+def _seed_words_for_phoneme(store: SessionStore, phoneme: str) -> list[str]:
+    for stat in store.list_phoneme_stats(min_attempts=1):
+        if stat["phoneme"] == phoneme:
+            return [example["word"] for example in stat["example_words"]]
+    return []
 
 
 def _single_word_reference(text: str) -> str:

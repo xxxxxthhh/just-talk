@@ -130,7 +130,7 @@ function App() {
     refreshMaterials
   } = useServerState(setError);
 
-  const insights = usePhonemeInsights();
+  const insights = usePhonemeInsights(practiceGeneratedDrill);
 
   const {
     speakingText,
@@ -504,6 +504,12 @@ function App() {
     }
   }
 
+  function practiceGeneratedDrill(material: MaterialItem) {
+    void refreshMaterials();
+    practiceMaterial(material);
+    setAppView("practice");
+  }
+
   function startDrillFromInsights(word: string) {
     resetPractice();
     setActiveMaterial(null);
@@ -717,6 +723,10 @@ function App() {
             speakingText={speakingText}
             speechStatus={speechStatus}
             onRefresh={() => void insights.loadStats()}
+            drillsEnabled={Boolean(health?.passage_check_configured)}
+            generatingPhoneme={insights.generatingPhoneme}
+            drillError={insights.drillError}
+            onGenerateDrill={(phoneme) => void insights.generateDrill(phoneme)}
           />
         ) : null}
         <aside className="history-panel side-panel" hidden={appView === "insights"}>

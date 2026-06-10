@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertCircle, ChevronRight, History, Loader2, Mic, RefreshCw, Sparkles } from "lucide-react";
+import { AlertCircle, ChevronRight, History, Loader2, Mic, RefreshCw, Sparkles, Wand2 } from "lucide-react";
 import { scoreTone } from "../scoreUtils";
 import type { SpeechStatus } from "../hooks/useSpeech";
 import type { PhonemeStat } from "../types";
@@ -25,6 +25,10 @@ type InsightsPanelProps = {
   speakingText?: string;
   speechStatus?: SpeechStatus;
   onRefresh: () => void;
+  drillsEnabled?: boolean;
+  generatingPhoneme?: string | null;
+  drillError?: string;
+  onGenerateDrill?: (phoneme: string) => void;
 };
 
 const PHONEME_GUIDE_WORDS: Record<string, string> = {
@@ -283,13 +287,21 @@ function ExpandedPhonemeDetails({
   onPlayWord,
   speakingText,
   speechStatus,
+  drillsEnabled,
+  generatingPhoneme,
+  onGenerateDrill,
 }: {
   stat: PhonemeStat;
   onDrill: InsightsPanelProps["onDrill"];
   onPlayWord?: InsightsPanelProps["onPlayWord"];
   speakingText?: InsightsPanelProps["speakingText"];
   speechStatus?: InsightsPanelProps["speechStatus"];
+  drillsEnabled?: InsightsPanelProps["drillsEnabled"];
+  generatingPhoneme?: InsightsPanelProps["generatingPhoneme"];
+  onGenerateDrill?: InsightsPanelProps["onGenerateDrill"];
 }) {
+  const isGeneratingThis = generatingPhoneme === stat.phoneme;
+
   return (
     <div className="phoneme-expanded-coach-container">
       <PhonemeCoachCard
@@ -299,6 +311,32 @@ function ExpandedPhonemeDetails({
         speakingText={speakingText}
         speechStatus={speechStatus}
       />
+
+      {drillsEnabled && onGenerateDrill ? (
+        <button
+          type="button"
+          className="generate-drill-button"
+          disabled={generatingPhoneme != null}
+          aria-label={
+            isGeneratingThis
+              ? `Generating drill for /${stat.phoneme}/`
+              : `Generate drill passage for /${stat.phoneme}/`
+          }
+          onClick={() => onGenerateDrill(stat.phoneme)}
+        >
+          {isGeneratingThis ? (
+            <>
+              <Loader2 className="spin" size={15} />
+              <span>Generating drill…</span>
+            </>
+          ) : (
+            <>
+              <Wand2 size={15} />
+              <span>Generate drill passage</span>
+            </>
+          )}
+        </button>
+      ) : null}
 
       <div className="user-history-drill-box">
         <h4>
@@ -335,6 +373,9 @@ function PhonemePriorityRow({
   onPlayWord,
   speakingText,
   speechStatus,
+  drillsEnabled,
+  generatingPhoneme,
+  onGenerateDrill,
 }: {
   stat: PhonemeStat;
   expandedPhoneme: InsightsPanelProps["expandedPhoneme"];
@@ -343,6 +384,9 @@ function PhonemePriorityRow({
   onPlayWord?: InsightsPanelProps["onPlayWord"];
   speakingText?: InsightsPanelProps["speakingText"];
   speechStatus?: InsightsPanelProps["speechStatus"];
+  drillsEnabled?: InsightsPanelProps["drillsEnabled"];
+  generatingPhoneme?: InsightsPanelProps["generatingPhoneme"];
+  onGenerateDrill?: InsightsPanelProps["onGenerateDrill"];
 }) {
   const isOpen = expandedPhoneme === stat.phoneme;
 
@@ -361,6 +405,9 @@ function PhonemePriorityRow({
           onPlayWord={onPlayWord}
           speakingText={speakingText}
           speechStatus={speechStatus}
+          drillsEnabled={drillsEnabled}
+          generatingPhoneme={generatingPhoneme}
+          onGenerateDrill={onGenerateDrill}
         />
       ) : null}
     </li>
@@ -419,6 +466,9 @@ function PhonemeMapGroupSection({
   onPlayWord,
   speakingText,
   speechStatus,
+  drillsEnabled,
+  generatingPhoneme,
+  onGenerateDrill,
 }: {
   group: PhonemeMapGroup;
   statsByPhoneme: Map<string, PhonemeStat>;
@@ -428,6 +478,9 @@ function PhonemeMapGroupSection({
   onPlayWord?: InsightsPanelProps["onPlayWord"];
   speakingText?: InsightsPanelProps["speakingText"];
   speechStatus?: InsightsPanelProps["speechStatus"];
+  drillsEnabled?: InsightsPanelProps["drillsEnabled"];
+  generatingPhoneme?: InsightsPanelProps["generatingPhoneme"];
+  onGenerateDrill?: InsightsPanelProps["onGenerateDrill"];
 }) {
   const headingId = `phoneme-map-${group.id}`;
   const expandedStat = group.phonemes
@@ -463,6 +516,9 @@ function PhonemeMapGroupSection({
           onPlayWord={onPlayWord}
           speakingText={speakingText}
           speechStatus={speechStatus}
+          drillsEnabled={drillsEnabled}
+          generatingPhoneme={generatingPhoneme}
+          onGenerateDrill={onGenerateDrill}
         />
       ) : null}
     </section>
@@ -480,6 +536,10 @@ export function InsightsPanel({
   speakingText,
   speechStatus,
   onRefresh,
+  drillsEnabled,
+  generatingPhoneme,
+  drillError,
+  onGenerateDrill,
 }: InsightsPanelProps) {
   const [viewMode, setViewMode] = useState<InsightsViewMode>("map");
   const statsByPhoneme = useMemo(() => {
@@ -552,6 +612,13 @@ export function InsightsPanel({
         </div>
       ) : null}
 
+      {drillError ? (
+        <div className="banner" role="alert">
+          <AlertCircle size={18} />
+          <span>{drillError}</span>
+        </div>
+      ) : null}
+
       {loading ? (
         <div className="empty-state">
           <Loader2 className="spin" size={22} />
@@ -575,6 +642,9 @@ export function InsightsPanel({
               onPlayWord={onPlayWord}
               speakingText={speakingText}
               speechStatus={speechStatus}
+              drillsEnabled={drillsEnabled}
+              generatingPhoneme={generatingPhoneme}
+              onGenerateDrill={onGenerateDrill}
             />
           ))}
         </div>
@@ -590,6 +660,9 @@ export function InsightsPanel({
               onPlayWord={onPlayWord}
               speakingText={speakingText}
               speechStatus={speechStatus}
+              drillsEnabled={drillsEnabled}
+              generatingPhoneme={generatingPhoneme}
+              onGenerateDrill={onGenerateDrill}
             />
           ))}
         </ol>

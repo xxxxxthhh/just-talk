@@ -3228,6 +3228,34 @@ button.phoneme-row.interactive-row:hover .coach-trigger-icon-wrapper {
   to { opacity: 1; transform: translateY(0); }
 }
 
+.generate-drill-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  align-self: flex-start;
+  margin-top: 10px;
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-inverse);
+  background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-color-hover) 100%);
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition-normal);
+}
+
+.generate-drill-button:hover:not(:disabled) {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+
+.generate-drill-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .user-history-drill-box {
   margin-top: 10px;
   border-top: 1px dashed var(--border-card);

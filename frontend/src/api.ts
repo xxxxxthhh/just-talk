@@ -75,6 +75,16 @@ export async function importMaterialPack(
   );
 }
 
+export async function generateDrill(phoneme: string): Promise<MaterialItem> {
+  return parseResponse<MaterialItem>(
+    await fetch("/api/drills/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneme })
+    })
+  );
+}
+
 export async function deleteMaterialGroup(
   packId: string,
   book: string

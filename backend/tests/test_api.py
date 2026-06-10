@@ -714,6 +714,120 @@ class PhonemeStatsApiTests(unittest.TestCase):
         # min_attempts=10 should return empty (only 3 of each)
         self.assertEqual(response_filter.json(), [])
 
+    def _drill_app(self, temp_dir: str, *, configured: bool = True):
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+        settings = Settings(
+            database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}",
+            llm_base_url="http://example.test" if configured else "",
+            llm_api_key="test-key" if configured else "",
+        )
+        app = create_app(settings=settings, store=store)
+        return app, store
+
+    def test_drill_generate_endpoint_persists_material_and_uses_seed_words(self):
+        from unittest import mock
+
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app, store = self._drill_app(temp_dir)
+            store.create_session(
+                reference_text="sit",
+                audio_duration_ms=1000,
+                normalized_result={
+                    "scores": {},
+                    "words": [
+                        {
+                            "word": "sit",
+                            "accuracy": 50.0,
+                            "bucket": "needs-work",
+                            "error_type": "None",
+                            "phonemes": [
+                                {
+                                    "phoneme": "ɪ",
+                                    "accuracy": 40.0,
+                                    "bucket": "needs-work",
+                                    "offset_ms": 0,
+                                    "duration_ms": 100,
+                                    "n_best": [],
+                                }
+                            ],
+                        }
+                    ],
+                    "raw": {},
+                },
+            )
+            client = TestClient(app)
+
+            drill = {
+                "title": "Sit With It",
+                "passage": "Sit with it a little bit.",
+                "focus_words": ["sit", "it", "bit"],
+            }
+            with mock.patch(
+                "app.main.generate_drill", return_value=drill
+            ) as generate:
+                response = client.post(
+                    "/api/drills/generate", json={"phoneme": "ɪ"}
+                )
+            materials = client.get("/api/materials")
+
+        self.assertEqual(response.status_code, 200)
+        material = response.json()
+        self.assertEqual(material["pack_id"], "phoneme-drills")
+        self.assertEqual(material["title"], "Sit With It")
+        self.assertEqual(material["text"], "Sit with it a little bit.")
+        self.assertEqual(material["book"], "/ɪ/")
+        self.assertEqual(material["tags"], ["sit", "it", "bit"])
+        self.assertIn(material["id"], [m["id"] for m in materials.json()])
+        generate.assert_called_once()
+        self.assertEqual(generate.call_args.kwargs["seed_words"], ["sit"])
+
+    def test_drill_generate_endpoint_returns_503_when_not_configured(self):
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app, _ = self._drill_app(temp_dir, configured=False)
+            client = TestClient(app)
+            response = client.post("/api/drills/generate", json={"phoneme": "θ"})
+
+        self.assertEqual(response.status_code, 503)
+
+    def test_drill_generate_endpoint_maps_runtime_error_to_502(self):
+        from unittest import mock
+
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app, _ = self._drill_app(temp_dir)
+            client = TestClient(app)
+            with mock.patch(
+                "app.main.generate_drill",
+                side_effect=RuntimeError("Drill generation returned no passage."),
+            ):
+                response = client.post(
+                    "/api/drills/generate", json={"phoneme": "θ"}
+                )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            response.json()["detail"], "Drill generation returned no passage."
+        )
+
+    def test_drill_generate_endpoint_rejects_blank_phoneme(self):
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app, _ = self._drill_app(temp_dir)
+            client = TestClient(app)
+            response = client.post("/api/drills/generate", json={"phoneme": "  "})
+
+        self.assertEqual(response.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

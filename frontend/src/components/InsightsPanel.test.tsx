@@ -39,7 +39,11 @@ function makeStat(
   };
 }
 
-function renderPanel(stats: PhonemeStat[], expandedPhoneme: string | null = null) {
+function renderPanel(
+  stats: PhonemeStat[],
+  expandedPhoneme: string | null = null,
+  drillProps: Partial<Parameters<typeof InsightsPanel>[0]> = {}
+) {
   return render(
     <InsightsPanel
       stats={stats}
@@ -49,6 +53,7 @@ function renderPanel(stats: PhonemeStat[], expandedPhoneme: string | null = null
       setExpandedPhoneme={vi.fn()}
       onDrill={vi.fn()}
       onRefresh={vi.fn()}
+      {...drillProps}
     />
   );
 }
@@ -84,5 +89,62 @@ describe("InsightsPanel", () => {
     expect(rows[0]).toHaveAccessibleName(/Open \/ɝ\/ coach, score 64/);
     expect(rows[1]).toHaveAccessibleName(/Open \/t\/ coach, score 72/);
     expect(rows[2]).toHaveAccessibleName(/Open \/p\/ coach, score 91/);
+  });
+
+  test("offers drill generation for the expanded phoneme when drills are enabled", () => {
+    const onGenerateDrill = vi.fn();
+    renderPanel([makeStat("ɝ", 64, "needs-work")], "ɝ", {
+      drillsEnabled: true,
+      onGenerateDrill,
+    });
+
+    const button = screen.getByRole("button", { name: /Generate drill passage/ });
+    fireEvent.click(button);
+
+    expect(onGenerateDrill).toHaveBeenCalledWith("ɝ");
+  });
+
+  test("hides drill generation when the LLM endpoint is not configured", () => {
+    renderPanel([makeStat("ɝ", 64, "needs-work")], "ɝ", {
+      onGenerateDrill: vi.fn(),
+    });
+
+    expect(
+      screen.queryByRole("button", { name: /Generate drill passage/ })
+    ).toBeNull();
+  });
+
+  test("disables generation while another phoneme drill is in flight", () => {
+    renderPanel([makeStat("ɝ", 64, "needs-work"), makeStat("t", 72, "watch")], "ɝ", {
+      drillsEnabled: true,
+      generatingPhoneme: "t",
+      onGenerateDrill: vi.fn(),
+    });
+
+    expect(
+      screen.getByRole("button", { name: /Generate drill passage/ })
+    ).toBeDisabled();
+  });
+
+  test("shows a busy label for the phoneme being generated", () => {
+    renderPanel([makeStat("ɝ", 64, "needs-work")], "ɝ", {
+      drillsEnabled: true,
+      generatingPhoneme: "ɝ",
+      onGenerateDrill: vi.fn(),
+    });
+
+    expect(screen.getByRole("button", { name: /Generating drill/ })).toBeDisabled();
+  });
+
+  test("surfaces drill generation errors inline", () => {
+    renderPanel([makeStat("ɝ", 64, "needs-work")], null, {
+      drillsEnabled: true,
+      drillError: "Drill generation returned no passage.",
+      onGenerateDrill: vi.fn(),
+    });
+
+    expect(
+      screen.getByText("Drill generation returned no passage.")
+    ).toBeVisible();
   });
 });
