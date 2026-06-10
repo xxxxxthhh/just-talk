@@ -1456,4 +1456,107 @@ describe("App", () => {
     expect(audioInstances[0].pause).toHaveBeenCalledTimes(1);
     expect(await screen.findByRole("button", { name: /^Stop$/ })).toBeInTheDocument();
   });
+
+  test("advances record, stop, score, and re-record with the Enter key", async () => {
+    installRecordingMocks();
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/score": {
+        result: {
+          transcript: "do you think singapore",
+          scores: { pronunciation: 93, accuracy: 95, fluency: 90, completeness: 100, prosody: 88 },
+          segments: [],
+          words: scoredRecordingWords,
+          raw: {}
+        },
+        session: { id: "session-1" }
+      },
+      "/api/words/from-session/session-1": []
+    });
+
+    render(<App />);
+    await screen.findByRole("button", { name: /^Record/ });
+
+    fireEvent.keyDown(window, { key: "Enter" });
+    await screen.findByRole("button", { name: /^Stop/ });
+
+    fireEvent.keyDown(window, { key: "Enter" });
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Score/ })).not.toBeDisabled());
+
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(await screen.findByRole("button", { name: /singapore\s*97/i })).toBeInTheDocument();
+
+    // After results, Enter starts a fresh take; Shift+Enter re-records a pending
+    // take without scoring it.
+    fireEvent.keyDown(window, { key: "Enter" });
+    await screen.findByRole("button", { name: /^Stop/ });
+    fireEvent.keyDown(window, { key: "Enter" });
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Score/ })).not.toBeDisabled());
+    fireEvent.keyDown(window, { key: "Enter", shiftKey: true });
+    await screen.findByRole("button", { name: /^Stop/ });
+
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const scoreCalls = fetchMock.mock.calls.filter(([url]) => String(url) === "/api/score");
+    expect(scoreCalls).toHaveLength(1);
+  });
+
+  test("keeps native Space and Enter activation on focused buttons", async () => {
+    const audioInstances: { play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn>; currentTime: number }[] = [];
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn()
+    });
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/speak": { audio_base64: "YXVkaW8=", content_type: "audio/mpeg" }
+    });
+
+    render(<App />);
+    const recordButton = await screen.findByRole("button", { name: /^Record/ });
+    recordButton.focus();
+
+    // Shortcuts must not call preventDefault when a button is focused, so the
+    // browser's native Space/Enter activation still works.
+    expect(fireEvent.keyDown(recordButton, { key: " " })).toBe(true);
+    expect(fireEvent.keyDown(recordButton, { key: "Enter" })).toBe(true);
+    expect(audioInstances).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: /^Stop/ })).toBeNull();
+
+    // Away from interactive elements, Space still toggles passage audio.
+    expect(fireEvent.keyDown(document.body, { key: " " })).toBe(false);
+    await waitFor(() => expect(audioInstances).toHaveLength(1));
+  });
+
+  test("ignores shortcuts while typing in the passage input", async () => {
+    installRecordingMocks();
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": []
+    });
+
+    render(<App />);
+    const passageInput = await screen.findByRole("textbox");
+
+    fireEvent.keyDown(passageInput, { key: "Enter" });
+
+    expect(screen.queryByRole("button", { name: /^Stop/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Record/ })).toBeInTheDocument();
+  });
 });

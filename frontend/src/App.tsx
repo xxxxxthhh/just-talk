@@ -586,6 +586,52 @@ function App() {
     void preloadSpeech(passage, passageSpeechOptions);
   }
 
+  const shortcutHandlerRef = useRef<(event: KeyboardEvent) => void>(() => {});
+  shortcutHandlerRef.current = (event: KeyboardEvent) => {
+    if (event.metaKey || event.ctrlKey || event.altKey || event.repeat) return;
+    if (appView !== "practice" || activeCoachPhoneme) return;
+    // Keep native keyboard behavior on focused interactive elements: typing in
+    // fields, and Space/Enter activation of buttons and links.
+    const target = event.target;
+    if (
+      target instanceof HTMLElement &&
+      (target.isContentEditable ||
+        target.closest("button, a, input, textarea, select, [role='button'], [role='link']"))
+    ) {
+      return;
+    }
+
+    if (event.key === " ") {
+      event.preventDefault();
+      if (isAudioPlaying) {
+        stopRecordingPlayback();
+      } else if (speakingText && !isPassageSpeechActive) {
+        stopCurrentSpeech();
+      } else if (trimmedPassage) {
+        togglePassageSpeech();
+      }
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      // Enter advances the practice loop: record -> stop -> score -> record again.
+      // Shift+Enter re-records without scoring the pending take.
+      if (recorderState === "recording") {
+        stopRecording();
+      } else if (isScoring) {
+        return;
+      } else if (!event.shiftKey && audioBlob && !result) {
+        void submitRecording();
+      } else {
+        void startRecording();
+      }
+    }
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => shortcutHandlerRef.current(event);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   function handlePassageChange(event: ChangeEvent<HTMLTextAreaElement>) {
     if (activeMaterial) return;
     setPassage(event.target.value);
@@ -772,7 +818,7 @@ function App() {
                 className="secondary-button"
                 onClick={togglePassageSpeech}
                 disabled={!trimmedPassage || (Boolean(speakingText) && !isPassageSpeechActive)}
-                title={isPassageSpeechPlaying ? "Pause passage audio" : "Play passage audio"}
+                title={isPassageSpeechPlaying ? "Pause passage audio (Space)" : "Play passage audio (Space)"}
               >
                 {isPassageSpeechLoading ? (
                   <Loader2 className="spin" size={17} />
@@ -908,12 +954,20 @@ function App() {
 
             <div className="record-actions">
               {recorderState === "recording" ? (
-                <button className="danger-button recording-pulse" onClick={stopRecording}>
+                <button
+                  className="danger-button recording-pulse"
+                  onClick={stopRecording}
+                  title="Stop recording (Enter)"
+                >
                   <Square size={18} />
                   Stop
                 </button>
               ) : (
-                <button className="primary-button" onClick={startRecording}>
+                <button
+                  className="primary-button"
+                  onClick={startRecording}
+                  title="Start recording (Enter; Shift+Enter to re-record without scoring)"
+                >
                   <Mic size={18} />
                   Record
                 </button>
@@ -922,6 +976,7 @@ function App() {
                 className="secondary-button"
                 disabled={!audioBlob || isScoring}
                 onClick={submitRecording}
+                title="Score recording (Enter)"
               >
                 {isScoring ? <Loader2 className="spin" size={18} /> : <UploadCloud size={18} />}
                 Score
