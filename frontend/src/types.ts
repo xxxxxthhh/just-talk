@@ -40,6 +40,7 @@ export type ScoreResult = {
   scores: ScoreMap;
   words: WordResult[];
   segments?: ScoreSegment[];
+  warnings?: string[];
   raw: unknown;
 };
 
@@ -58,6 +59,7 @@ export type PracticeSession = {
   scores: ScoreMap;
   segments?: ScoreSegment[];
   words?: WordResult[];
+  warnings?: string[];
   raw?: unknown;
 };
 

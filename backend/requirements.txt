@@ -3,3 +3,5 @@ uvicorn[standard]
 python-multipart
 azure-cognitiveservices-speech
 httpx
+pytest
+ruff

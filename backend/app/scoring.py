@@ -1,6 +1,5 @@
 from typing import Any
 
-
 AZURE_TICKS_PER_MILLISECOND = 10_000
 
 

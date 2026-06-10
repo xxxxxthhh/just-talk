@@ -24,6 +24,22 @@ def _env_with_dotenv() -> dict[str, str]:
     return values
 
 
+def _int_env(env: dict[str, str], key: str, default: str) -> int:
+    raw = env.get(key, default)
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{key} must be an integer, got {raw!r}.") from exc
+
+
+def _float_env(env: dict[str, str], key: str, default: str) -> float:
+    raw = env.get(key, default)
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{key} must be a number, got {raw!r}.") from exc
+
+
 @dataclass(frozen=True)
 class Settings:
     azure_speech_key: str = ""
@@ -54,10 +70,10 @@ class Settings:
             azure_speech_region=env.get("AZURE_SPEECH_REGION", ""),
             azure_tts_voice=env.get("AZURE_TTS_VOICE", "en-US-JennyNeural"),
             database_url=env.get("DATABASE_URL", "sqlite:///./data/just_talk.db"),
-            max_audio_seconds=int(env.get("MAX_AUDIO_SECONDS", "30")),
-            max_long_audio_seconds=int(env.get("MAX_LONG_AUDIO_SECONDS", "180")),
-            vocabulary_graduation_score=float(env.get("VOCABULARY_GRADUATION_SCORE", "85")),
-            vocabulary_graduation_streak=int(env.get("VOCABULARY_GRADUATION_STREAK", "2")),
+            max_audio_seconds=_int_env(env, "MAX_AUDIO_SECONDS", "30"),
+            max_long_audio_seconds=_int_env(env, "MAX_LONG_AUDIO_SECONDS", "180"),
+            vocabulary_graduation_score=_float_env(env, "VOCABULARY_GRADUATION_SCORE", "85"),
+            vocabulary_graduation_streak=_int_env(env, "VOCABULARY_GRADUATION_STREAK", "2"),
             llm_base_url=env.get("LLM_BASE_URL", ""),
             llm_api_key=env.get("LLM_API_KEY", ""),
             llm_model=env.get("LLM_MODEL", "gpt-4o-mini"),

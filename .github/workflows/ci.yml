@@ -38,8 +38,15 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Lint backend
+        run: .venv/bin/ruff check backend
+
       - name: Run backend tests
-        run: PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests -v
+        run: PYTHONPATH=backend .venv/bin/python -m pytest backend/tests
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
 
       - name: Run frontend tests
         working-directory: frontend

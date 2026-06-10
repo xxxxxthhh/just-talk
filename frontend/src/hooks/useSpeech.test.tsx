@@ -524,7 +524,7 @@ describe("useSpeech", () => {
           pause: vi.fn(),
           currentTime: 0,
           duration: 10,
-          onloadedmetadata: undefined as any,
+          onloadedmetadata: undefined as (() => void) | undefined,
         };
         audioInstances.push(instance);
         return instance;

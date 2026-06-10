@@ -174,6 +174,7 @@ describe("App", () => {
             phonemes: []
           }
         ],
+        warnings: ["Azure Speech stopped early, so the score may be incomplete."],
         raw: {}
       }
     });
@@ -187,6 +188,7 @@ describe("App", () => {
       expect(screen.getByDisplayValue("Quiet streets.")).toBeInTheDocument();
     });
     expect(await screen.findAllByRole("button", { name: /quiet\s*73/i })).toHaveLength(2);
+    expect(screen.getByText(/score may be incomplete/i)).toBeInTheDocument();
   });
 
   test("uses a word bank entry as the next practice prompt", async () => {
@@ -627,7 +629,7 @@ describe("App", () => {
       updated_at: "2026-05-25T00:00:00Z"
     };
     let materialListCalls = 0;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/health") {
         return { ok: true, json: async () => health };

@@ -38,6 +38,14 @@ def check_passage(settings: Settings, text: str) -> dict:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Passage check request failed: {exc}") from exc
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise RuntimeError("Passage check returned an invalid response.") from exc
 
-    content = data["choices"][0]["message"]["content"]
-    return json.loads(content)
+    try:
+        content = data["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Passage check returned an invalid response.") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Passage check returned an invalid response.")
+    return parsed

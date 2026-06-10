@@ -147,10 +147,14 @@ def create_app(
 
             if score_mode == "long":
                 try:
-                    raw_results = continuous_score(wav_path, cleaned_reference)
+                    raw_results, scoring_warnings = continuous_score(
+                        wav_path, cleaned_reference
+                    )
                 except RuntimeError as exc:
                     raise HTTPException(status_code=502, detail=str(exc)) from exc
                 normalized = normalize_continuous_azure_results(raw_results)
+                if scoring_warnings:
+                    normalized["warnings"] = scoring_warnings
             else:
                 raw_result = active_scorer.score(wav_path, cleaned_reference)
                 normalized = normalize_azure_result(raw_result)
@@ -309,7 +313,10 @@ def create_app(
                 status_code=503,
                 detail="Passage check is optional. Set LLM_BASE_URL and LLM_API_KEY to enable it.",
             )
-        return check_passage(active_settings, text.strip())
+        try:
+            return check_passage(active_settings, text.strip())
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return app
 

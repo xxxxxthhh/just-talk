@@ -103,7 +103,7 @@ LLM_MODEL=gpt-4o-mini
 ./scripts/test.sh
 ```
 
-The test script runs backend unit tests, frontend unit/component tests, and a production frontend build.
+The test script runs backend lint (ruff) and unit tests (pytest), frontend lint (ESLint), unit/component tests, and a production frontend build.
 
 ## Project Layout
 

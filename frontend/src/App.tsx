@@ -4,62 +4,63 @@ import {
   BookOpen,
   BookOpenCheck,
   Clock3,
-  FastForward,
   History,
   Loader2,
   Mic,
   Moon,
   Pause,
-  Play,
-  Plus,
   RefreshCw,
-  Rewind,
   Sparkles,
   Square,
   Sun,
-  Trash2,
   UploadCloud,
   Volume2
 } from "lucide-react";
-import type { ChangeEvent, FormEvent } from "react";
+import type { ChangeEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   addWordsFromSession,
-  checkHealth,
   checkPassage,
   createWord,
   deleteMaterialGroup,
   deleteWord,
-  fetchPhonemeStats,
   getSession,
   importMaterialPack,
-  listMaterials,
-  listSessions,
-  listWords,
   scoreRecording
 } from "./api";
-import { AudioPlayer, type AudioSeekRequest } from "./components/AudioPlayer";
+import { AudioPlayer } from "./components/AudioPlayer";
 import { AudioVisualizer } from "./components/AudioVisualizer";
+import { BrandMark } from "./components/BrandMark";
+import { HistoryList } from "./components/HistoryList";
 import { InsightsPanel } from "./components/InsightsPanel";
 import {
   MaterialImportAction,
   MaterialLibrary,
   type MaterialGroupDeleteTarget
 } from "./components/MaterialLibrary";
-import { PhonemeInspector } from "./components/PhonemeInspector";
+import {
+  buildPassageReadAlongParts,
+  PassageAudioControls,
+  PassageReadAlong
+} from "./components/PassagePlayback";
 import { PhonemeCoachModal } from "./components/PhonemeCoachModal";
-import { ScoreGrid } from "./components/ScoreGrid";
+import { ResultsPanel } from "./components/ResultsPanel";
+import { ScoredPassage } from "./components/ScoredPassage";
 import { SidebarSection } from "./components/SidebarSection";
 import { StatusPill } from "./components/StatusPill";
+import { WordBankPanel, type WordBankTab } from "./components/WordBankPanel";
+import { usePhonemeInsights } from "./hooks/usePhonemeInsights";
+import { useRecorder } from "./hooks/useRecorder";
+import { useRecordingPlayback } from "./hooks/useRecordingPlayback";
+import { useServerState } from "./hooks/useServerState";
 import { useSpeech, type SpeechOptions } from "./hooks/useSpeech";
+import { useTheme } from "./hooks/useTheme";
 import { validateMaterialPackImportPayload } from "./materialImport";
-import { formatDuration, scoreTone, scoreValue, weakWordsFromResult } from "./scoreUtils";
+import { normalizedWord, weakWordsFromResult } from "./scoreUtils";
 import type {
-  Health,
   MaterialItem,
   PassageIssue,
-  PhonemeStat,
   PracticeSession,
   ScoreResult,
   SpeechWordBoundary,
@@ -72,28 +73,12 @@ const DEFAULT_PASSAGE =
 
 const WORD_REPLAY_LEAD_IN_SECONDS = 0.15;
 
-type RecorderState = "idle" | "recording" | "recorded";
-type WordBankTab = "active" | "graduated";
 type PracticeMode = "short" | "long";
 type AppView = "practice" | "insights";
 type SidebarPanel = "materials" | "history" | "word-bank";
-type PassageReadAlongPart =
-  | { kind: "text"; key: string; text: string }
-  | { kind: "word"; boundaryIndex: number; key: string; text: string };
-
-function normalizedWord(word: string): string {
-  return word.trim().toLocaleLowerCase();
-}
 
 function materialSpeechCacheKey(material: MaterialItem): string {
   return `material:${material.id}`;
-}
-
-function formatPlaybackTime(seconds: number): string {
-  if (!Number.isFinite(seconds)) return "0:00";
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.floor(seconds % 60);
-  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
 }
 
 function wordReplayStartSeconds(word: WordResult): number {
@@ -111,107 +96,9 @@ function activeWordIndexForRecordingTime(words: WordResult[], currentTimeSeconds
   });
 }
 
-function buildPassageReadAlongParts(
-  text: string,
-  boundaries: SpeechWordBoundary[]
-): PassageReadAlongPart[] {
-  if (!text || boundaries.length === 0) return [];
-
-  const parts: PassageReadAlongPart[] = [];
-  let cursor = 0;
-  const orderedBoundaries = boundaries
-    .map((boundary, index) => ({ boundary, index }))
-    .filter(({ boundary }) => boundary.word_length > 0 && boundary.text_offset >= 0)
-    .sort((left, right) => left.boundary.text_offset - right.boundary.text_offset);
-
-  for (const { boundary, index } of orderedBoundaries) {
-    const start = Math.min(Math.max(Math.floor(boundary.text_offset), 0), text.length);
-    const end = Math.min(start + Math.max(Math.floor(boundary.word_length), 0), text.length);
-    if (end <= cursor || start < cursor) {
-      continue;
-    }
-    if (start > cursor) {
-      parts.push({
-        kind: "text",
-        key: `text-${cursor}-${start}`,
-        text: text.slice(cursor, start)
-      });
-    }
-    parts.push({
-      kind: "word",
-      boundaryIndex: index,
-      key: `word-${index}-${start}`,
-      text: text.slice(start, end) || boundary.text
-    });
-    cursor = end;
-  }
-
-  if (cursor < text.length) {
-    parts.push({
-      kind: "text",
-      key: `text-${cursor}-end`,
-      text: text.slice(cursor)
-    });
-  }
-
-  return parts;
-}
-
-function safeGetLocalStorage(key: string): string | null {
-  try {
-    if (typeof window !== "undefined" && window.localStorage) {
-      return window.localStorage.getItem(key);
-    }
-  } catch (e) {
-    // Ignore security or accessibility errors in JSDOM sandbox
-  }
-  return null;
-}
-
-function safeSetLocalStorage(key: string, value: string): void {
-  try {
-    if (typeof window !== "undefined" && window.localStorage) {
-      window.localStorage.setItem(key, value);
-    }
-  } catch (e) {
-    // Ignore security or accessibility errors in JSDOM sandbox
-  }
-}
-
-function BrandMark() {
-  return (
-    <svg className="brand-mark-glyph" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-      <path
-        className="brand-mimic-model"
-        d="M 13 27 Q 18.5 7 22.5 21 Q 24 26 25.5 21 Q 29.5 7 35 27"
-      />
-      <path
-        className="brand-mimic-user"
-        d="M 13 35 Q 18.5 15 22.5 29 Q 24 34 25.5 29 Q 29.5 15 35 35"
-      />
-    </svg>
-  );
-}
-
 function App() {
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    const saved = safeGetLocalStorage("theme");
-    if (saved === "light" || saved === "dark") return saved;
-    if (typeof window !== "undefined" && window.matchMedia) {
-      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    }
-    return "light";
-  });
+  const { theme, toggleTheme } = useTheme();
 
-  useEffect(() => {
-    document.body.setAttribute("data-theme", theme);
-    safeSetLocalStorage("theme", theme);
-  }, [theme]);
-
-  const [health, setHealth] = useState<Health | null>(null);
-  const [sessions, setSessions] = useState<PracticeSession[]>([]);
-  const [vocabulary, setVocabulary] = useState<VocabularyItem[]>([]);
-  const [materials, setMaterials] = useState<MaterialItem[]>([]);
   const [passage, setPassage] = useState(DEFAULT_PASSAGE);
   const [activeMaterial, setActiveMaterial] = useState<MaterialItem | null>(null);
   const passageInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -219,29 +106,11 @@ function App() {
   const [selectedWordIndex, setSelectedWordIndex] = useState(0);
   const [result, setResult] = useState<ScoreResult | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState("");
-  const [recorderState, setRecorderState] = useState<RecorderState>("idle");
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [recordingPlaybackSeekRequest, setRecordingPlaybackSeekRequest] =
-    useState<AudioSeekRequest | null>(null);
-  const [recordingPlaybackStopSignal, setRecordingPlaybackStopSignal] = useState(0);
-  const [recordingPlaybackTime, setRecordingPlaybackTime] = useState(0);
-
-  const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
-  const [recordedAmplitudes, setRecordedAmplitudes] = useState<number[] | null>(null);
-  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-  const [audioDuration, setAudioDuration] = useState(0);
 
   const [appView, setAppView] = useState<AppView>("practice");
   const [expandedSidebarPanel, setExpandedSidebarPanel] = useState<SidebarPanel | null>("materials");
-  const [phonemeStats, setPhonemeStats] = useState<PhonemeStat[]>([]);
-  const [phonemeStatsLoading, setPhonemeStatsLoading] = useState(false);
-  const [phonemeStatsError, setPhonemeStatsError] = useState("");
-  const [expandedPhoneme, setExpandedPhoneme] = useState<string | null>(null);
   const [activeCoachPhoneme, setActiveCoachPhoneme] = useState<string | null>(null);
 
-  const [newWord, setNewWord] = useState("");
   const [wordBankTab, setWordBankTab] = useState<WordBankTab>("active");
   const [practiceMode, setPracticeMode] = useState<PracticeMode>("short");
   const [status, setStatus] = useState("");
@@ -250,6 +119,18 @@ function App() {
   const [isSavingWords, setIsSavingWords] = useState(false);
   const [isImportingMaterials, setIsImportingMaterials] = useState(false);
   const [error, setError] = useState("");
+
+  const {
+    health,
+    sessions,
+    vocabulary,
+    materials,
+    refreshServerState,
+    refreshVocabulary,
+    refreshMaterials
+  } = useServerState(setError);
+
+  const insights = usePhonemeInsights();
 
   const {
     speakingText,
@@ -265,6 +146,42 @@ function App() {
     skipCurrentSpeech,
     stopCurrentSpeech
   } = useSpeech(setError);
+
+  const shortLimitSeconds = health?.max_audio_seconds ?? 30;
+  const longLimitSeconds = health?.max_long_audio_seconds ?? 180;
+  const isLongMode = practiceMode === "long";
+  const maxMs = (isLongMode ? longLimitSeconds : shortLimitSeconds) * 1000;
+
+  const {
+    recorderState,
+    elapsedMs,
+    audioBlob,
+    audioUrl,
+    recordingStream,
+    startRecording: startRecorderCapture,
+    stopRecording,
+    resetRecording
+  } = useRecorder({
+    maxMs,
+    onUnsupported: () => setError("This browser cannot access the microphone."),
+    onRecordingReady: () => setStatus("Recording ready")
+  });
+
+  const {
+    seekRequest: recordingPlaybackSeekRequest,
+    stopSignal: recordingPlaybackStopSignal,
+    playbackTime: recordingPlaybackTime,
+    setPlaybackTime: setRecordingPlaybackTime,
+    isPlaying: isAudioPlaying,
+    setIsPlaying: setIsAudioPlaying,
+    duration: audioDuration,
+    setDuration: setAudioDuration,
+    recordedAmplitudes,
+    setRecordedAmplitudes,
+    stopPlayback: stopRecordingPlayback,
+    seekTo: seekRecordingPlayback,
+    resetForNewAudio
+  } = useRecordingPlayback();
 
   const [passageCoachBoundaries, setPassageCoachBoundaries] = useState<SpeechWordBoundary[] | null>(null);
   const [passageCoachDuration, setPassageCoachDuration] = useState<number>(0);
@@ -285,7 +202,7 @@ function App() {
         setPassageCoachDuration(speechDuration);
       }
     }
-    
+
     // 2. Clear captured boundaries if the passage input has changed and no longer matches
     if (passageCoachText && trimmedCoach !== trimmedPassage) {
       setPassageCoachBoundaries(null);
@@ -294,16 +211,7 @@ function App() {
     }
   }, [speakingText, speechWordBoundaries, speechDuration, passage, passageCoachText]);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<number | null>(null);
-  const startedAtRef = useRef<number>(0);
-
   const selectedWord = result?.words[selectedWordIndex] ?? null;
-  const shortLimitSeconds = health?.max_audio_seconds ?? 30;
-  const longLimitSeconds = health?.max_long_audio_seconds ?? 180;
-  const isLongMode = practiceMode === "long";
-  const maxMs = (isLongMode ? longLimitSeconds : shortLimitSeconds) * 1000;
   const weakWords = useMemo(() => (result ? weakWordsFromResult(result) : []), [result]);
   const trimmedPassage = passage.trim();
   const isPassageSpeechActive = Boolean(trimmedPassage && speakingText === trimmedPassage);
@@ -344,42 +252,26 @@ function App() {
     input.style.overflowY = "hidden";
     input.style.height = `${input.scrollHeight}px`;
   }, [passage, result?.words?.length, showPassageReadAlong]);
+
   const savedWords = useMemo(
     () => new Set(vocabulary.map((item) => normalizedWord(item.word))),
     [vocabulary]
   );
   const requiredSuccesses = health?.vocabulary_graduation_streak ?? 2;
-  const activeVocabulary = useMemo(
-    () => vocabulary.filter((item) => item.status !== "graduated"),
-    [vocabulary]
-  );
-  const graduatedVocabulary = useMemo(
-    () => vocabulary.filter((item) => item.status === "graduated"),
-    [vocabulary]
-  );
-  const visibleVocabulary =
-    wordBankTab === "active" ? activeVocabulary : graduatedVocabulary;
 
   useEffect(() => {
     void refreshServerState();
-  }, []);
+  }, [refreshServerState]);
 
   useEffect(() => {
     return () => {
-      if (timerRef.current) {
-        window.clearInterval(timerRef.current);
-      }
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
-      }
       stopCurrentSpeech();
     };
   }, [audioUrl, stopCurrentSpeech]);
 
   useEffect(() => {
-    setRecordingPlaybackSeekRequest(null);
-    setRecordingPlaybackTime(0);
-  }, [audioUrl]);
+    resetForNewAudio();
+  }, [audioUrl, resetForNewAudio]);
 
   useEffect(() => {
     if (selectedWord?.word) {
@@ -393,103 +285,21 @@ function App() {
     }
   }, [weakWords, preloadSpeech]);
 
-  async function refreshServerState() {
-    try {
-      setError("");
-      const [nextHealth, nextSessions, nextWords, nextMaterials] = await Promise.all([
-        checkHealth(),
-        listSessions(),
-        listWords(),
-        listMaterials()
-      ]);
-      setHealth(nextHealth);
-      setSessions(nextSessions);
-      setVocabulary(nextWords);
-      setMaterials(nextMaterials);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Backend is not reachable.");
-    }
-  }
-
-  async function refreshVocabulary() {
-    setVocabulary(await listWords());
-  }
-
-  async function refreshMaterials() {
-    setMaterials(await listMaterials());
-  }
-
   async function startRecording() {
     setError("");
     setStatus("");
     stopCurrentSpeech();
     stopRecordingPlayback();
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setError("This browser cannot access the microphone.");
+    const started = await startRecorderCapture();
+    if (!started) {
       return;
     }
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    });
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : "";
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    chunksRef.current = [];
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        chunksRef.current.push(event.data);
-      }
-    };
-    recorder.onstop = () => {
-      stream.getTracks().forEach((track) => track.stop());
-      const blob = new Blob(chunksRef.current, {
-        type: mimeType || "audio/webm"
-      });
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
-      }
-      setAudioBlob(blob);
-      setAudioUrl(URL.createObjectURL(blob));
-      setRecorderState("recorded");
-      setStatus("Recording ready");
-      setRecordingStream(null);
-    };
-    recorder.start();
-    mediaRecorderRef.current = recorder;
-    startedAtRef.current = Date.now();
-    setElapsedMs(0);
-    setAudioBlob(null);
     setResult(null);
     setCurrentSessionId("");
     setSelectedWordIndex(0);
-    setRecorderState("recording");
-    setRecordingStream(stream);
     setRecordedAmplitudes(null);
     setIsAudioPlaying(false);
     setAudioDuration(0);
-    timerRef.current = window.setInterval(() => {
-      const nextElapsed = Date.now() - startedAtRef.current;
-      setElapsedMs(nextElapsed);
-      if (nextElapsed >= maxMs) {
-        stopRecording();
-      }
-    }, 150);
-  }
-
-  function stopRecording() {
-    if (timerRef.current) {
-      window.clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    if (mediaRecorderRef.current?.state === "recording") {
-      mediaRecorderRef.current.stop();
-    }
   }
 
   async function submitRecording() {
@@ -544,6 +354,7 @@ function App() {
         scores: loaded.scores,
         segments: loaded.segments ?? [],
         words: loaded.words ?? [],
+        warnings: loaded.warnings ?? [],
         raw: loaded.raw ?? {}
       });
       setCurrentSessionId(loaded.id);
@@ -557,22 +368,17 @@ function App() {
     }
   }
 
-  async function addManualWord(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const word = newWord.trim();
-    if (!word) {
-      return;
-    }
+  async function addManualWord(word: string) {
     setIsSavingWords(true);
     setError("");
     try {
       await createWord(word);
-      setNewWord("");
       setWordBankTab("active");
       await refreshVocabulary();
       setStatus(`${word} added to word bank`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not add word.");
+      throw err;
     } finally {
       setIsSavingWords(false);
     }
@@ -625,44 +431,29 @@ function App() {
     }
   }
 
-  function practiceVocabularyWord(item: VocabularyItem) {
+  function resetPractice() {
     stopCurrentSpeech();
     stopRecordingPlayback();
-    if (audioUrl) {
-      URL.revokeObjectURL(audioUrl);
-    }
-    setActiveMaterial(null);
-    setPassage(item.word);
+    resetRecording();
     setResult(null);
     setCurrentSessionId("");
     setSelectedWordIndex(0);
-    setAudioBlob(null);
-    setAudioUrl(null);
-    setRecorderState("idle");
-    setElapsedMs(0);
     setRecordedAmplitudes(null);
     setAudioDuration(0);
+  }
+
+  function practiceVocabularyWord(item: VocabularyItem) {
+    resetPractice();
+    setActiveMaterial(null);
+    setPassage(item.word);
     setStatus("Word drill ready");
   }
 
   function practiceMaterial(material: MaterialItem) {
-    stopCurrentSpeech();
-    stopRecordingPlayback();
-    if (audioUrl) {
-      URL.revokeObjectURL(audioUrl);
-    }
+    resetPractice();
     setActiveMaterial(material);
     setPassage(material.text);
-    setResult(null);
-    setCurrentSessionId("");
     setIssues([]);
-    setSelectedWordIndex(0);
-    setAudioBlob(null);
-    setAudioUrl(null);
-    setRecorderState("idle");
-    setElapsedMs(0);
-    setRecordedAmplitudes(null);
-    setAudioDuration(0);
     setStatus(`Material ready: ${material.title}`);
   }
 
@@ -712,38 +503,12 @@ function App() {
     }
   }
 
-  async function loadPhonemeStats() {
-    setPhonemeStatsLoading(true);
-    setPhonemeStatsError("");
-    try {
-      setPhonemeStats(await fetchPhonemeStats());
-    } catch (err) {
-      setPhonemeStats([]);
-      setPhonemeStatsError(
-        err instanceof Error ? err.message : "Could not load phoneme stats."
-      );
-    } finally {
-      setPhonemeStatsLoading(false);
-    }
-  }
-
   function startDrillFromInsights(word: string) {
-    stopCurrentSpeech();
-    stopRecordingPlayback();
-    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    resetPractice();
     setActiveMaterial(null);
     setPassage(word);
     setPracticeMode("short");
-    setResult(null);
-    setCurrentSessionId("");
     setIssues([]);
-    setSelectedWordIndex(0);
-    setAudioBlob(null);
-    setAudioUrl(null);
-    setRecorderState("idle");
-    setElapsedMs(0);
-    setRecordedAmplitudes(null);
-    setAudioDuration(0);
     setStatus(`Drill ready: ${word}`);
     setAppView("practice");
   }
@@ -758,20 +523,8 @@ function App() {
     }
   }
 
-  function stopRecordingPlayback() {
-    setRecordingPlaybackSeekRequest(null);
-    setRecordingPlaybackTime(0);
-    setRecordingPlaybackStopSignal((signal) => signal + 1);
-    setIsAudioPlaying(false);
-  }
-
   function handleVisualizerSeek(timeSeconds: number) {
-    setRecordingPlaybackTime(timeSeconds);
-    setRecordingPlaybackSeekRequest((request) => ({
-      id: (request?.id ?? 0) + 1,
-      timeSeconds,
-      play: isAudioPlaying
-    }));
+    seekRecordingPlayback(timeSeconds, isAudioPlaying);
   }
 
   function handleTrackClick(track: "coach" | "user", timeSeconds: number, percent?: number) {
@@ -780,12 +533,7 @@ function App() {
       playPronunciation(passage, passageSpeechOptions, timeSeconds, percent);
     } else {
       stopCurrentSpeech();
-      setRecordingPlaybackTime(timeSeconds);
-      setRecordingPlaybackSeekRequest((request) => ({
-        id: (request?.id ?? 0) + 1,
-        timeSeconds,
-        play: true
-      }));
+      seekRecordingPlayback(timeSeconds, true);
       setIsAudioPlaying(true);
     }
   }
@@ -798,18 +546,12 @@ function App() {
     }
 
     stopCurrentSpeech();
-    const timeSeconds = wordReplayStartSeconds(word);
-    setRecordingPlaybackTime(timeSeconds);
-    setRecordingPlaybackSeekRequest((request) => ({
-      id: (request?.id ?? 0) + 1,
-      timeSeconds,
-      play: true
-    }));
+    seekRecordingPlayback(wordReplayStartSeconds(word), true);
   }
 
   function playPronunciation(
-    text: string, 
-    options?: SpeechOptions, 
+    text: string,
+    options?: SpeechOptions,
     startAtSeconds?: number,
     startAtPercent?: number
   ) {
@@ -887,7 +629,7 @@ function App() {
             aria-pressed={appView === "insights"}
             disabled={recorderState === "recording"}
             title={recorderState === "recording" ? "Stop recording before switching views" : undefined}
-            onClick={() => { setAppView("insights"); void loadPhonemeStats(); }}
+            onClick={() => { setAppView("insights"); void insights.loadStats(); }}
           >
             <Sparkles size={15} />
             <span>Phoneme Insights</span>
@@ -897,7 +639,7 @@ function App() {
           <StatusPill health={health} />
           <button
             className="icon-button"
-            onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+            onClick={toggleTheme}
             title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
           >
             {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
@@ -918,16 +660,16 @@ function App() {
       <section className="workspace">
         {appView === "insights" ? (
           <InsightsPanel
-            stats={phonemeStats}
-            loading={phonemeStatsLoading}
-            error={phonemeStatsError}
-            expandedPhoneme={expandedPhoneme}
-            setExpandedPhoneme={setExpandedPhoneme}
+            stats={insights.stats}
+            loading={insights.loading}
+            error={insights.error}
+            expandedPhoneme={insights.expandedPhoneme}
+            setExpandedPhoneme={insights.setExpandedPhoneme}
             onDrill={startDrillFromInsights}
             onPlayWord={playPronunciation}
             speakingText={speakingText}
             speechStatus={speechStatus}
-            onRefresh={() => void loadPhonemeStats()}
+            onRefresh={() => void insights.loadStats()}
           />
         ) : null}
         <aside className="history-panel side-panel" hidden={appView === "insights"}>
@@ -960,23 +702,7 @@ function App() {
             isExpanded={expandedSidebarPanel === "history"}
             onToggle={() => toggleSidebarPanel("history")}
           >
-            <div className="history-list">
-              {sessions.length === 0 ? (
-                <p className="muted">No sessions yet.</p>
-              ) : (
-                sessions.map((session) => (
-                  <button
-                    key={session.id}
-                    className="history-row"
-                    onClick={() => void loadSession(session)}
-                  >
-                    <span>{new Date(session.created_at).toLocaleDateString()}</span>
-                    <strong>{scoreValue(session.scores.pronunciation)}</strong>
-                    <small>{formatDuration(session.audio_duration_ms)}</small>
-                  </button>
-                ))
-              )}
-            </div>
+            <HistoryList sessions={sessions} onSelect={(session) => void loadSession(session)} />
           </SidebarSection>
 
           <SidebarSection
@@ -987,78 +713,16 @@ function App() {
             isExpanded={expandedSidebarPanel === "word-bank"}
             onToggle={() => toggleSidebarPanel("word-bank")}
           >
-            <form className="word-form" onSubmit={(event) => void addManualWord(event)}>
-              <input
-                value={newWord}
-                onChange={(event) => setNewWord(event.target.value)}
-                placeholder="Add a word"
-                aria-label="Add a word"
-              />
-              <button className="icon-button" disabled={isSavingWords} title="Add word">
-                {isSavingWords ? <Loader2 className="spin" size={17} /> : <Plus size={17} />}
-              </button>
-            </form>
-            <div className="word-tabs" aria-label="Word bank status">
-              <button
-                type="button"
-                className={`word-tab ${wordBankTab === "active" ? "selected" : ""}`}
-                aria-pressed={wordBankTab === "active"}
-                onClick={() => setWordBankTab("active")}
-              >
-                In Progress <span>{activeVocabulary.length}</span>
-              </button>
-              <button
-                type="button"
-                className={`word-tab ${wordBankTab === "graduated" ? "selected" : ""}`}
-                aria-pressed={wordBankTab === "graduated"}
-                onClick={() => setWordBankTab("graduated")}
-              >
-                Graduated <span>{graduatedVocabulary.length}</span>
-              </button>
-            </div>
-            <div className="word-bank-list">
-              {vocabulary.length === 0 ? (
-                <p className="muted">No saved words yet.</p>
-              ) : visibleVocabulary.length === 0 ? (
-                <p className="muted">
-                  {wordBankTab === "active"
-                    ? "No in-progress words."
-                    : "No graduated words yet."}
-                </p>
-              ) : (
-                visibleVocabulary.map((item) => (
-                  <div className="bank-row" key={item.id}>
-                    <button
-                      className={`bank-word ${
-                        item.status === "graduated"
-                          ? "graduated-word"
-                          : `active-word ${scoreTone(item.latest_score)}`
-                      }`}
-                      onClick={() => practiceVocabularyWord(item)}
-                    >
-                      <strong>{item.word}</strong>
-                      <span>{scoreValue(item.latest_score)}</span>
-                      <small>
-                        {item.status === "graduated"
-                          ? "Graduated"
-                          : `${Math.min(
-                              item.consecutive_successes ?? 0,
-                              requiredSuccesses
-                            )}/${requiredSuccesses} streak`}{" "}
-                        · {item.practice_count} reps
-                      </small>
-                    </button>
-                    <button
-                      className="icon-button small"
-                      onClick={() => void removeVocabularyWord(item.id)}
-                      title={`Delete ${item.word}`}
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
+            <WordBankPanel
+              vocabulary={vocabulary}
+              tab={wordBankTab}
+              onTabChange={setWordBankTab}
+              requiredSuccesses={requiredSuccesses}
+              isSaving={isSavingWords}
+              onAddWord={addManualWord}
+              onPracticeWord={practiceVocabularyWord}
+              onDeleteWord={(wordId) => void removeVocabularyWord(wordId)}
+            />
           </SidebarSection>
         </aside>
 
@@ -1158,67 +822,23 @@ function App() {
           ) : null}
 
           {isPassageSpeechActive && !result ? (
-            <div className="passage-audio-controls">
-              <button
-                type="button"
-                className="passage-audio-step"
-                onClick={() => skipCurrentSpeech(-5)}
-                aria-label="Back 5 seconds"
-                disabled={isPassageSpeechLoading}
-              >
-                <Rewind size={15} />
-                5s
-              </button>
-              <input
-                type="range"
-                min={0}
-                max={speechDuration || 1}
-                step={0.05}
-                value={Math.min(speechCurrentTime, speechDuration || 1)}
-                onChange={(event) => seekCurrentSpeech(parseFloat(event.target.value))}
-                className="passage-audio-slider"
-                aria-label="Passage audio progress"
-                disabled={isPassageSpeechLoading}
-              />
-              <span className="passage-audio-time">
-                {formatPlaybackTime(speechCurrentTime)} / {formatPlaybackTime(speechDuration)}
-              </span>
-              <button
-                type="button"
-                className="passage-audio-step"
-                onClick={() => skipCurrentSpeech(5)}
-                aria-label="Forward 5 seconds"
-                disabled={isPassageSpeechLoading}
-              >
-                <FastForward size={15} />
-                5s
-              </button>
-            </div>
+            <PassageAudioControls
+              currentTime={speechCurrentTime}
+              duration={speechDuration}
+              disabled={isPassageSpeechLoading}
+              onSkip={skipCurrentSpeech}
+              onSeek={seekCurrentSpeech}
+            />
           ) : null}
 
           {showPassageReadAlong ? (
-            <div className="passage-read-along" aria-label="Passage read-along">
-              {readAlongParts.map((part) =>
-                part.kind === "word" ? (
-                  <button
-                    type="button"
-                    key={part.key}
-                    className={`passage-read-word ${
-                      part.boundaryIndex === activeSpeechBoundaryIndex ? "playing" : ""
-                    }`}
-                    onClick={() =>
-                      seekPassageReadAlongWord(speechWordBoundaries[part.boundaryIndex])
-                    }
-                  >
-                    {part.text}
-                  </button>
-                ) : (
-                  <span className="passage-read-text" key={part.key}>
-                    {part.text}
-                  </span>
-                )
-              )}
-            </div>
+            <PassageReadAlong
+              parts={readAlongParts}
+              activeBoundaryIndex={activeSpeechBoundaryIndex}
+              onWordClick={(boundaryIndex) =>
+                seekPassageReadAlongWord(speechWordBoundaries[boundaryIndex])
+              }
+            />
           ) : null}
 
           <textarea
@@ -1234,26 +854,12 @@ function App() {
           />
 
           {result?.words?.length ? (
-            <div className="scored-passage-container">
-              <div className="scored-passage-box">
-                {result.words.map((word, index) => (
-                  <button
-                    type="button"
-                    key={`${word.word}-${index}`}
-                    className={`scored-word-token ${word.bucket} ${
-                      index === selectedWordIndex ? "selected" : ""
-                    } ${index === activeSpokenWordIndex ? "playing" : ""}`}
-                    onClick={() => selectScoredWord(index)}
-                  >
-                    <span>{word.word} </span>
-                    <strong>{scoreValue(word.accuracy)}</strong>
-                  </button>
-                ))}
-              </div>
-              <p className="muted" style={{ marginTop: "4px", fontSize: "11.5px" }}>
-                💡 Tip: Click any colored word token above to inspect its detailed sound/phoneme analysis.
-              </p>
-            </div>
+            <ScoredPassage
+              words={result.words}
+              selectedWordIndex={selectedWordIndex}
+              activeSpokenWordIndex={activeSpokenWordIndex}
+              onSelectWord={selectScoredWord}
+            />
           ) : null}
 
           {!result?.words?.length && issues.length > 0 ? (
@@ -1335,106 +941,20 @@ function App() {
           </div>
         </section>
 
-        <section className="results-panel" hidden={appView === "insights"}>
-          <div className="panel-heading split">
-            <div>
-              <h2>Score</h2>
-              <p className="result-transcript hidden-declutter">
-                {result?.transcript || "Waiting for recording"}
-              </p>
-            </div>
-            <Sparkles size={20} />
-          </div>
-
-          <ScoreGrid scores={result?.scores ?? null} />
-
-          {result?.segments?.length ? (
-            <section className="segment-section">
-              <div className="section-heading">
-                <div>
-                  <h3>Passage segments</h3>
-                  <p>{result.segments.length} continuous scoring segments</p>
-                </div>
-              </div>
-              <div className="segment-list">
-                {result.segments.map((segment) => (
-                  <div className="segment-row" key={segment.index}>
-                    <div>
-                      <strong>Segment {segment.index}</strong>
-                      <p>{segment.transcript || "No transcript"}</p>
-                    </div>
-                    <span>{scoreValue(segment.scores.pronunciation)}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          ) : null}
-
-          {weakWords.length ? (
-            <section className="weak-section">
-              <div className="section-heading">
-                <div>
-                  <h3>Needs practice</h3>
-                  <p>{weakWords.length} words to drill</p>
-                </div>
-                <button
-                  className="secondary-button compact"
-                  onClick={() => void saveWeakWords()}
-                  disabled={isSavingWords}
-                >
-                  {isSavingWords ? <Loader2 className="spin" size={16} /> : <BookmarkPlus size={16} />}
-                  Save all
-                </button>
-              </div>
-              <div className="weak-list">
-                {weakWords.map((word) => {
-                  const saved = savedWords.has(normalizedWord(word.word));
-                  return (
-                    <div className={`weak-row ${scoreTone(word.accuracy)}`} key={word.word}>
-                      <button className="weak-main" onClick={() => selectWeakWord(word)}>
-                        <strong>{word.word}</strong>
-                        <span>{scoreValue(word.accuracy)}</span>
-                      </button>
-                      <button
-                        className="icon-button small"
-                        onClick={() => playPronunciation(word.word)}
-                        title={`Play ${word.word}`}
-                        disabled={Boolean(speakingText)}
-                      >
-                        <Volume2 size={15} />
-                      </button>
-                      <button
-                        className="secondary-button compact"
-                        onClick={() => void saveWeakWord(word)}
-                        disabled={saved || isSavingWords}
-                      >
-                        {saved ? "Saved" : "Save"}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          ) : null}
-
-          {!result?.words.length ? (
-            <div className="words">
-              <div className="empty-state">
-                <Play size={22} />
-                <p>Record a passage to see word and phoneme feedback.</p>
-              </div>
-            </div>
-          ) : null}
-
-          {selectedWord ? (
-            <PhonemeInspector
-              word={selectedWord}
-              onPlay={() => playPronunciation(selectedWord.word)}
-              isSpeaking={speakingText === selectedWord.word}
-              onSelectPhoneme={setActiveCoachPhoneme}
-            />
-          ) : null}
-        </section>
+        <ResultsPanel
+          hidden={appView === "insights"}
+          result={result}
+          weakWords={weakWords}
+          savedWords={savedWords}
+          selectedWord={selectedWord}
+          speakingText={speakingText}
+          isSavingWords={isSavingWords}
+          onSaveWeakWords={() => void saveWeakWords()}
+          onSaveWeakWord={(word) => void saveWeakWord(word)}
+          onSelectWeakWord={selectWeakWord}
+          onPlayWord={(text) => playPronunciation(text)}
+          onSelectPhoneme={setActiveCoachPhoneme}
+        />
       </section>
 
       {/* Reusable Phoneme Pronunciation Coach Overlay */}

@@ -495,5 +495,95 @@ class PhonemeStatsTests(unittest.TestCase):
         self.assertAlmostEqual(stat["average_accuracy"], 50.0)
 
 
+class MigrationTests(unittest.TestCase):
+    def _user_version(self, database_path: Path) -> int:
+        import sqlite3
+
+        with sqlite3.connect(database_path) as connection:
+            return connection.execute("PRAGMA user_version").fetchone()[0]
+
+    def test_initialize_stamps_latest_schema_version(self):
+        from app.storage import MIGRATIONS, SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "db.db"
+            store = SessionStore(f"sqlite:///{database_path}")
+            store.initialize(seed_builtin_materials=False)
+
+            self.assertEqual(self._user_version(database_path), len(MIGRATIONS))
+
+    def test_initialize_is_idempotent(self):
+        from app.storage import MIGRATIONS, SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "db.db"
+            store = SessionStore(f"sqlite:///{database_path}")
+            store.initialize(seed_builtin_materials=False)
+            store.initialize(seed_builtin_materials=False)
+
+            self.assertEqual(self._user_version(database_path), len(MIGRATIONS))
+
+    def test_initialize_upgrades_pre_versioning_database(self):
+        import sqlite3
+
+        from app.storage import MIGRATIONS, SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "db.db"
+            # A database created before versioning: tables exist but
+            # user_version is 0 and newer columns are missing.
+            with sqlite3.connect(database_path) as connection:
+                connection.execute(
+                    """
+                    CREATE TABLE vocabulary_items (
+                        id TEXT PRIMARY KEY,
+                        word TEXT NOT NULL,
+                        normalized_word TEXT NOT NULL UNIQUE,
+                        source TEXT NOT NULL,
+                        notes TEXT NOT NULL,
+                        latest_score REAL,
+                        practice_count INTEGER NOT NULL,
+                        last_practiced_at TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+
+            store = SessionStore(f"sqlite:///{database_path}")
+            store.initialize(seed_builtin_materials=False)
+
+            with sqlite3.connect(database_path) as connection:
+                columns = {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info(vocabulary_items)"
+                    ).fetchall()
+                }
+            self.assertIn("status", columns)
+            self.assertIn("consecutive_successes", columns)
+            self.assertIn("graduated_at", columns)
+            self.assertEqual(self._user_version(database_path), len(MIGRATIONS))
+
+    def test_initialize_only_runs_pending_migrations(self):
+        from unittest import mock
+
+        from app.storage import MIGRATIONS, SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "db.db"
+            store = SessionStore(f"sqlite:///{database_path}")
+            store.initialize(seed_builtin_materials=False)
+
+            extra_migration = mock.Mock()
+            with mock.patch(
+                "app.storage.MIGRATIONS", [*MIGRATIONS, extra_migration]
+            ):
+                store.initialize(seed_builtin_materials=False)
+
+            extra_migration.assert_called_once()
+            self.assertEqual(self._user_version(database_path), len(MIGRATIONS) + 1)
+
+
 if __name__ == "__main__":
     unittest.main()

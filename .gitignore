@@ -16,3 +16,4 @@ frontend/vite.config.js
 
 *.pyc
 .DS_Store
+.omo/

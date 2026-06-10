@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { MouseEvent } from "react";
-import type { ScoreResult } from "../types";
+import type { ScoreResult, SpeechWordBoundary } from "../types";
 
 interface AudioVisualizerProps {
   recorderState: "idle" | "recording" | "recorded";
@@ -9,7 +9,7 @@ interface AudioVisualizerProps {
   playbackDuration: number;
   isAudioPlaying: boolean;
   activeTrack?: "coach" | "user" | null;
-  coachBoundaries?: any[] | null;
+  coachBoundaries?: SpeechWordBoundary[] | null;
   coachDuration?: number;
   userDuration?: number;
   coachCurrentTime?: number;
@@ -184,7 +184,9 @@ export function AudioVisualizer({
       recordingStartRef.current = Date.now();
 
       try {
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const AudioContextClass =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         const ctx = new AudioContextClass();
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 256;

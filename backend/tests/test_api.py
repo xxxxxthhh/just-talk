@@ -1,6 +1,6 @@
-import io
 import hashlib
 import inspect
+import io
 import tempfile
 import unittest
 import wave
@@ -38,7 +38,11 @@ class FakeScorer:
             ],
         }
 
-    def score_continuous(self, wav_path: Path, reference_text: str) -> list[dict]:
+    continuous_warnings: list[str] = []
+
+    def score_continuous(
+        self, wav_path: Path, reference_text: str
+    ) -> tuple[list[dict], list[str]]:
         self.continuous_wav_path = wav_path
         self.continuous_reference_text = reference_text
         return [
@@ -83,7 +87,7 @@ class FakeScorer:
                     }
                 ],
             },
-        ]
+        ], self.continuous_warnings
 
 
 class FakeSynthesizer:
@@ -453,6 +457,79 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.json()["session"]["segments"][0]["transcript"], "Quiet streets.")
         self.assertEqual(history.json()[0]["scores"]["pronunciation"], 84.0)
         self.assertEqual(scorer.continuous_reference_text, "Quiet streets. We kept walking.")
+
+    def test_score_endpoint_long_mode_surfaces_scoring_warnings(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+            scorer = FakeScorer()
+            scorer.continuous_warnings = [
+                "Azure Speech stopped early, so the score may be incomplete."
+            ]
+            app = create_app(
+                settings=Settings(database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}"),
+                store=store,
+                scorer=scorer,
+            )
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/score",
+                data={
+                    "reference_text": "Quiet streets. We kept walking.",
+                    "mode": "long",
+                },
+                files={"audio": ("sample.wav", make_wav_bytes(), "audio/wav")},
+            )
+            session_id = response.json()["session"]["id"]
+            reloaded = client.get(f"/api/sessions/{session_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["result"]["warnings"],
+            ["Azure Speech stopped early, so the score may be incomplete."],
+        )
+        self.assertEqual(
+            reloaded.json()["warnings"],
+            ["Azure Speech stopped early, so the score may be incomplete."],
+        )
+
+    def test_passage_check_endpoint_maps_runtime_error_to_502(self):
+        from unittest import mock
+
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = create_app(
+                settings=Settings(
+                    database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}",
+                    llm_base_url="http://example.test",
+                    llm_api_key="test-key",
+                ),
+                store=SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}"),
+            )
+            client = TestClient(app)
+
+            with mock.patch(
+                "app.main.check_passage",
+                side_effect=RuntimeError("Passage check returned an invalid response."),
+            ):
+                response = client.post("/api/passage-check", data={"text": "Hello."})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            response.json()["detail"],
+            "Passage check returned an invalid response.",
+        )
 
     def test_material_endpoints_import_and_list_materials(self):
         from fastapi.testclient import TestClient

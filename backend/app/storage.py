@@ -1,13 +1,13 @@
 import json
 import sqlite3
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .scoring import score_bucket
-
 
 VOCABULARY_STATUSES = {"active", "graduated"}
 PHONEME_STAT_MIN_ATTEMPTS = 3
@@ -60,6 +60,165 @@ BUILTIN_MATERIAL_PACK: dict[str, Any] = {
 }
 
 
+def _migration_initial_schema(connection: sqlite3.Connection) -> None:
+    """Schema as of the first versioned release.
+
+    Must stay idempotent: databases created before versioning report
+    user_version 0 and re-run this migration over existing tables.
+    """
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS practice_sessions (
+            id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            reference_text TEXT NOT NULL,
+            audio_duration_ms INTEGER NOT NULL,
+            overall_scores_json TEXT NOT NULL,
+            words_json TEXT NOT NULL,
+            segments_json TEXT NOT NULL DEFAULT '[]',
+            raw_azure_json TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vocabulary_items (
+            id TEXT PRIMARY KEY,
+            word TEXT NOT NULL,
+            normalized_word TEXT NOT NULL UNIQUE,
+            source TEXT NOT NULL,
+            notes TEXT NOT NULL,
+            latest_score REAL,
+            practice_count INTEGER NOT NULL,
+            last_practiced_at TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            consecutive_successes INTEGER NOT NULL DEFAULT 0,
+            graduated_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS material_packs (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            source TEXT NOT NULL,
+            license TEXT NOT NULL,
+            imported_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS materials (
+            id TEXT PRIMARY KEY,
+            pack_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            text TEXT NOT NULL,
+            book TEXT NOT NULL,
+            lesson TEXT NOT NULL,
+            tags_json TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(pack_id) REFERENCES material_packs(id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_materials_pack_position
+        ON materials (pack_id, position)
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS speech_cache (
+            cache_key TEXT PRIMARY KEY,
+            text_hash TEXT NOT NULL,
+            voice TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            audio_bytes BLOB NOT NULL,
+            word_boundaries_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_speech_cache_text_voice
+        ON speech_cache (text_hash, voice)
+        """
+    )
+    _add_missing_column(
+        connection,
+        table="speech_cache",
+        column="word_boundaries_json",
+        definition="TEXT NOT NULL DEFAULT '[]'",
+    )
+    _add_missing_column(
+        connection,
+        table="practice_sessions",
+        column="segments_json",
+        definition="TEXT NOT NULL DEFAULT '[]'",
+    )
+    _add_missing_column(
+        connection,
+        table="vocabulary_items",
+        column="status",
+        definition="TEXT NOT NULL DEFAULT 'active'",
+    )
+    _add_missing_column(
+        connection,
+        table="vocabulary_items",
+        column="consecutive_successes",
+        definition="INTEGER NOT NULL DEFAULT 0",
+    )
+    _add_missing_column(
+        connection,
+        table="vocabulary_items",
+        column="graduated_at",
+        definition="TEXT",
+    )
+
+
+def _add_missing_column(
+    connection: sqlite3.Connection,
+    *,
+    table: str,
+    column: str,
+    definition: str,
+) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in columns:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _migration_add_session_warnings(connection: sqlite3.Connection) -> None:
+    _add_missing_column(
+        connection,
+        table="practice_sessions",
+        column="warnings_json",
+        definition="TEXT NOT NULL DEFAULT '[]'",
+    )
+
+
+# Ordered schema migrations. Each entry upgrades the database by one
+# user_version step; append new migrations here, never reorder or edit
+# released ones (except the idempotent initial migration above).
+MIGRATIONS: list = [
+    _migration_initial_schema,
+    _migration_add_session_warnings,
+]
+
+
 class SessionStore:
     def __init__(self, database_url: str) -> None:
         if not database_url.startswith("sqlite:///"):
@@ -69,97 +228,12 @@ class SessionStore:
     def initialize(self, *, seed_builtin_materials: bool = True) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connection() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS practice_sessions (
-                    id TEXT PRIMARY KEY,
-                    created_at TEXT NOT NULL,
-                    reference_text TEXT NOT NULL,
-                    audio_duration_ms INTEGER NOT NULL,
-                    overall_scores_json TEXT NOT NULL,
-                    words_json TEXT NOT NULL,
-                    segments_json TEXT NOT NULL DEFAULT '[]',
-                    raw_azure_json TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS vocabulary_items (
-                    id TEXT PRIMARY KEY,
-                    word TEXT NOT NULL,
-                    normalized_word TEXT NOT NULL UNIQUE,
-                    source TEXT NOT NULL,
-                    notes TEXT NOT NULL,
-                    latest_score REAL,
-                    practice_count INTEGER NOT NULL,
-                    last_practiced_at TEXT,
-                    status TEXT NOT NULL DEFAULT 'active',
-                    consecutive_successes INTEGER NOT NULL DEFAULT 0,
-                    graduated_at TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS material_packs (
-                    id TEXT PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    license TEXT NOT NULL,
-                    imported_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS materials (
-                    id TEXT PRIMARY KEY,
-                    pack_id TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    text TEXT NOT NULL,
-                    book TEXT NOT NULL,
-                    lesson TEXT NOT NULL,
-                    tags_json TEXT NOT NULL,
-                    position INTEGER NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY(pack_id) REFERENCES material_packs(id)
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_materials_pack_position
-                ON materials (pack_id, position)
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS speech_cache (
-                    cache_key TEXT PRIMARY KEY,
-                    text_hash TEXT NOT NULL,
-                    voice TEXT NOT NULL,
-                    content_type TEXT NOT NULL,
-                    audio_bytes BLOB NOT NULL,
-                    word_boundaries_json TEXT NOT NULL DEFAULT '[]',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_speech_cache_text_voice
-                ON speech_cache (text_hash, voice)
-                """
-            )
-            self._ensure_speech_cache_columns(connection)
-            self._ensure_practice_session_columns(connection)
-            self._ensure_vocabulary_columns(connection)
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            for next_version, migration in enumerate(MIGRATIONS, start=1):
+                if next_version <= version:
+                    continue
+                migration(connection)
+                connection.execute(f"PRAGMA user_version = {next_version}")
         if seed_builtin_materials:
             self.import_material_pack(BUILTIN_MATERIAL_PACK)
 
@@ -199,7 +273,7 @@ class SessionStore:
         audio_bytes: bytes,
         word_boundaries: list[dict[str, Any]] | None = None,
     ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         with self._connection() as connection:
             connection.execute(
                 """
@@ -242,7 +316,7 @@ class SessionStore:
         normalized_result: dict[str, Any],
     ) -> dict[str, Any]:
         session_id = str(uuid.uuid4())
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.now(UTC).isoformat()
         with self._connection() as connection:
             connection.execute(
                 """
@@ -254,9 +328,10 @@ class SessionStore:
                     overall_scores_json,
                     words_json,
                     segments_json,
+                    warnings_json,
                     raw_azure_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -266,6 +341,7 @@ class SessionStore:
                     json.dumps(normalized_result.get("scores", {})),
                     json.dumps(normalized_result.get("words", [])),
                     json.dumps(normalized_result.get("segments", [])),
+                    json.dumps(normalized_result.get("warnings", [])),
                     json.dumps(normalized_result.get("raw", {})),
                 ),
             )
@@ -312,6 +388,7 @@ class SessionStore:
             "scores": json.loads(row["overall_scores_json"]),
             "segments": json.loads(row["segments_json"]),
             "words": json.loads(row["words_json"]),
+            "warnings": json.loads(row["warnings_json"]),
             "raw": json.loads(row["raw_azure_json"]),
         }
 
@@ -335,7 +412,7 @@ class SessionStore:
 
     def import_material_pack(self, payload: dict[str, Any]) -> dict[str, Any]:
         pack, lessons = self._normalize_material_pack(payload)
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         with self._connection() as connection:
             existing_pack = connection.execute(
                 """
@@ -533,7 +610,7 @@ class SessionStore:
             if existing is not None:
                 return self._row_to_word(existing)
 
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             word_id = str(uuid.uuid4())
             connection.execute(
                 """
@@ -630,7 +707,7 @@ class SessionStore:
             if existing is None:
                 raise KeyError(display_word)
 
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             next_count = int(existing["practice_count"]) + (1 if increment else 0)
             next_status = existing["status"]
             next_streak = int(existing["consecutive_successes"])
@@ -821,42 +898,6 @@ class SessionStore:
                 yield connection
         finally:
             connection.close()
-
-    def _ensure_practice_session_columns(self, connection: sqlite3.Connection) -> None:
-        columns = {
-            row["name"]
-            for row in connection.execute("PRAGMA table_info(practice_sessions)").fetchall()
-        }
-        if "segments_json" not in columns:
-            connection.execute(
-                "ALTER TABLE practice_sessions ADD COLUMN segments_json TEXT NOT NULL DEFAULT '[]'"
-            )
-
-    def _ensure_speech_cache_columns(self, connection: sqlite3.Connection) -> None:
-        columns = {
-            row["name"]
-            for row in connection.execute("PRAGMA table_info(speech_cache)").fetchall()
-        }
-        if "word_boundaries_json" not in columns:
-            connection.execute(
-                "ALTER TABLE speech_cache ADD COLUMN word_boundaries_json TEXT NOT NULL DEFAULT '[]'"
-            )
-
-    def _ensure_vocabulary_columns(self, connection: sqlite3.Connection) -> None:
-        columns = {
-            row["name"]
-            for row in connection.execute("PRAGMA table_info(vocabulary_items)").fetchall()
-        }
-        if "status" not in columns:
-            connection.execute(
-                "ALTER TABLE vocabulary_items ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
-            )
-        if "consecutive_successes" not in columns:
-            connection.execute(
-                "ALTER TABLE vocabulary_items ADD COLUMN consecutive_successes INTEGER NOT NULL DEFAULT 0"
-            )
-        if "graduated_at" not in columns:
-            connection.execute("ALTER TABLE vocabulary_items ADD COLUMN graduated_at TEXT")
 
     def _find_word(
         self,

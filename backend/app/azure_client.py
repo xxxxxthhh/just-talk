@@ -58,7 +58,9 @@ class AzurePronunciationScorer:
         )
         return json.loads(payload)
 
-    def score_continuous(self, wav_path: Path, reference_text: str) -> list[dict]:
+    def score_continuous(
+        self, wav_path: Path, reference_text: str
+    ) -> tuple[list[dict], list[str]]:
         import azure.cognitiveservices.speech as speechsdk
 
         recognizer = self._build_recognizer(wav_path, reference_text, enable_miscue=False)
@@ -77,7 +79,12 @@ class AzurePronunciationScorer:
                     segments.append(json.loads(payload))
 
         def on_canceled(event: object) -> None:
-            errors.append(str(event.reason))
+            if event.reason == speechsdk.CancellationReason.Error:
+                detail = str(event.reason)
+                error_details = getattr(event, "error_details", "")
+                if error_details:
+                    detail = f"{detail}: {error_details}"
+                errors.append(detail)
             done.set()
 
         def on_session_stopped(event: object) -> None:
@@ -94,6 +101,11 @@ class AzurePronunciationScorer:
 
         if not finished:
             raise RuntimeError("Timed out while scoring long passage audio.")
-        if errors and not segments:
-            raise RuntimeError("Azure Speech canceled long passage scoring.")
-        return segments
+        if not segments:
+            detail = "; ".join(errors) or "no speech was recognized"
+            raise RuntimeError(f"Azure Speech returned no long passage segments ({detail}).")
+        warnings = [
+            f"Azure Speech stopped early, so the score may be incomplete ({error})."
+            for error in errors
+        ]
+        return segments, warnings
