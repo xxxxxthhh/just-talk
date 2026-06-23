@@ -27,6 +27,10 @@ export function useServerState(setError: (msg: string) => void) {
     }
   }, [setError]);
 
+  const refreshSessions = useCallback(async () => {
+    setSessions(await listSessions());
+  }, []);
+
   const refreshVocabulary = useCallback(async () => {
     setVocabulary(await listWords());
   }, []);
@@ -41,6 +45,7 @@ export function useServerState(setError: (msg: string) => void) {
     vocabulary,
     materials,
     refreshServerState,
+    refreshSessions,
     refreshVocabulary,
     refreshMaterials
   };
