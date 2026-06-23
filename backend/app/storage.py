@@ -229,6 +229,27 @@ def _migration_add_vocabulary_schedule(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_index_sessions_by_created_at(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_practice_sessions_created_at
+        ON practice_sessions (created_at)
+        """
+    )
+
+
+def _migration_clear_stored_raw_azure(connection: sqlite3.Connection) -> None:
+    """Reclaim historical raw Azure payloads.
+
+    The full Azure response is never read back by the app, yet it was the
+    single largest contributor to database size. Clearing it frees the pages
+    for reuse; run VACUUM separately to shrink the file on disk.
+    """
+    connection.execute(
+        "UPDATE practice_sessions SET raw_azure_json = '{}' WHERE raw_azure_json != '{}'"
+    )
+
+
 # Ordered schema migrations. Each entry upgrades the database by one
 # user_version step; append new migrations here, never reorder or edit
 # released ones (except the idempotent initial migration above).
@@ -236,6 +257,8 @@ MIGRATIONS: list = [
     _migration_initial_schema,
     _migration_add_session_warnings,
     _migration_add_vocabulary_schedule,
+    _migration_index_sessions_by_created_at,
+    _migration_clear_stored_raw_azure,
 ]
 
 
@@ -362,7 +385,9 @@ class SessionStore:
                     json.dumps(normalized_result.get("words", [])),
                     json.dumps(normalized_result.get("segments", [])),
                     json.dumps(normalized_result.get("warnings", [])),
-                    json.dumps(normalized_result.get("raw", {})),
+                    # The full Azure payload is never read back; persisting it
+                    # dominated database size, so we keep the column empty.
+                    "{}",
                 ),
             )
         return self.get_session(session_id)
@@ -392,7 +417,15 @@ class SessionStore:
         with self._connection() as connection:
             row = connection.execute(
                 """
-                SELECT *
+                SELECT
+                    id,
+                    created_at,
+                    reference_text,
+                    audio_duration_ms,
+                    overall_scores_json,
+                    segments_json,
+                    words_json,
+                    warnings_json
                 FROM practice_sessions
                 WHERE id = ?
                 """,
@@ -409,7 +442,6 @@ class SessionStore:
             "segments": json.loads(row["segments_json"]),
             "words": json.loads(row["words_json"]),
             "warnings": json.loads(row["warnings_json"]),
-            "raw": json.loads(row["raw_azure_json"]),
         }
 
     def list_materials(self) -> list[dict[str, Any]]:
@@ -1004,6 +1036,12 @@ class SessionStore:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path)
         connection.row_factory = sqlite3.Row
+        # WAL lets reads proceed during writes; the others trade a sliver of
+        # crash durability for lower write latency and avoid spurious "database
+        # is locked" errors when requests overlap in the thread pool.
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA synchronous=NORMAL")
+        connection.execute("PRAGMA busy_timeout=5000")
         return connection
 
     @contextmanager

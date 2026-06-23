@@ -17,7 +17,7 @@ import {
   Volume2
 } from "lucide-react";
 import type { ChangeEvent } from "react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   addWordsFromSession,
@@ -33,7 +33,6 @@ import { AudioPlayer } from "./components/AudioPlayer";
 import { AudioVisualizer } from "./components/AudioVisualizer";
 import { BrandMark } from "./components/BrandMark";
 import { HistoryList } from "./components/HistoryList";
-import { InsightsPanel } from "./components/InsightsPanel";
 import {
   MaterialImportAction,
   MaterialLibrary,
@@ -44,7 +43,6 @@ import {
   PassageAudioControls,
   PassageReadAlong
 } from "./components/PassagePlayback";
-import { PhonemeCoachModal } from "./components/PhonemeCoachModal";
 import { ResultsPanel } from "./components/ResultsPanel";
 import { ScoredPassage } from "./components/ScoredPassage";
 import { SidebarSection } from "./components/SidebarSection";
@@ -77,8 +75,27 @@ type PracticeMode = "short" | "long";
 type AppView = "practice" | "insights";
 type SidebarPanel = "materials" | "history" | "word-bank";
 
+// Lazy-loaded so the phoneme guide data, mouth visualizer, and coach card
+// (only reachable through these two) stay out of the initial bundle.
+const InsightsPanel = lazy(() =>
+  import("./components/InsightsPanel").then((module) => ({ default: module.InsightsPanel }))
+);
+const PhonemeCoachModal = lazy(() =>
+  import("./components/PhonemeCoachModal").then((module) => ({ default: module.PhonemeCoachModal }))
+);
+
+const lazyPanelFallback = (
+  <div style={{ display: "flex", justifyContent: "center", padding: "2rem" }}>
+    <Loader2 className="spin" size={20} />
+  </div>
+);
+
 function materialSpeechCacheKey(material: MaterialItem): string {
   return `material:${material.id}`;
+}
+
+function wordSpeechCacheKey(word: string): string {
+  return `word:${word.trim().toLowerCase()}`;
 }
 
 function wordReplayStartSeconds(word: WordResult): number {
@@ -126,6 +143,7 @@ function App() {
     vocabulary,
     materials,
     refreshServerState,
+    refreshSessions,
     refreshVocabulary,
     refreshMaterials
   } = useServerState(setError);
@@ -276,13 +294,13 @@ function App() {
 
   useEffect(() => {
     if (selectedWord?.word) {
-      void preloadSpeech(selectedWord.word);
+      void preloadSpeech(selectedWord.word, { cacheKey: wordSpeechCacheKey(selectedWord.word) });
     }
   }, [selectedWord?.word, preloadSpeech]);
 
   useEffect(() => {
     for (const word of weakWords.slice(0, 5)) {
-      void preloadSpeech(word.word);
+      void preloadSpeech(word.word, { cacheKey: wordSpeechCacheKey(word.word) });
     }
   }, [weakWords, preloadSpeech]);
 
@@ -316,7 +334,9 @@ function App() {
       setCurrentSessionId(response.session.id);
       setSelectedWordIndex(0);
       const addedWords = await addWordsFromSession(response.session.id);
-      await refreshServerState();
+      // Scoring only changes history and the word bank; skip refetching
+      // materials and health.
+      await Promise.all([refreshSessions(), refreshVocabulary()]);
       setStatus(
         addedWords.length
           ? `Score complete · ${addedWords.length} weak words saved`
@@ -566,6 +586,13 @@ function App() {
     void playCorrect(text, options, startAtSeconds, startAtPercent);
   }
 
+  // Single words get a stable cache key so the synthesized audio persists in
+  // the server speech cache and is reused across reloads instead of re-hitting
+  // Azure TTS each time.
+  function playWord(text: string) {
+    playPronunciation(text, { cacheKey: wordSpeechCacheKey(text) });
+  }
+
   function seekPassageReadAlongWord(boundary: SpeechWordBoundary | undefined) {
     if (!boundary) {
       return;
@@ -712,22 +739,24 @@ function App() {
 
       <section className="workspace">
         {appView === "insights" ? (
-          <InsightsPanel
-            stats={insights.stats}
-            loading={insights.loading}
-            error={insights.error}
-            expandedPhoneme={insights.expandedPhoneme}
-            setExpandedPhoneme={insights.setExpandedPhoneme}
-            onDrill={startDrillFromInsights}
-            onPlayWord={playPronunciation}
-            speakingText={speakingText}
-            speechStatus={speechStatus}
-            onRefresh={() => void insights.loadStats()}
-            drillsEnabled={Boolean(health?.passage_check_configured)}
-            generatingPhoneme={insights.generatingPhoneme}
-            drillError={insights.drillError}
-            onGenerateDrill={(phoneme) => void insights.generateDrill(phoneme)}
-          />
+          <Suspense fallback={lazyPanelFallback}>
+            <InsightsPanel
+              stats={insights.stats}
+              loading={insights.loading}
+              error={insights.error}
+              expandedPhoneme={insights.expandedPhoneme}
+              setExpandedPhoneme={insights.setExpandedPhoneme}
+              onDrill={startDrillFromInsights}
+              onPlayWord={playWord}
+              speakingText={speakingText}
+              speechStatus={speechStatus}
+              onRefresh={() => void insights.loadStats()}
+              drillsEnabled={Boolean(health?.passage_check_configured)}
+              generatingPhoneme={insights.generatingPhoneme}
+              drillError={insights.drillError}
+              onGenerateDrill={(phoneme) => void insights.generateDrill(phoneme)}
+            />
+          </Suspense>
         ) : null}
         <aside className="history-panel side-panel" hidden={appView === "insights"}>
           <SidebarSection
@@ -1019,21 +1048,25 @@ function App() {
           onSaveWeakWords={() => void saveWeakWords()}
           onSaveWeakWord={(word) => void saveWeakWord(word)}
           onSelectWeakWord={selectWeakWord}
-          onPlayWord={(text) => playPronunciation(text)}
+          onPlayWord={playWord}
           onSelectPhoneme={setActiveCoachPhoneme}
         />
       </section>
 
       {/* Reusable Phoneme Pronunciation Coach Overlay */}
-      <PhonemeCoachModal
-        phoneme={activeCoachPhoneme}
-        onClose={() => setActiveCoachPhoneme(null)}
-        onDrill={startDrillFromInsights}
-        onPlayWord={playPronunciation}
-        onStopAudio={stopCurrentSpeech}
-        speakingText={speakingText}
-        speechStatus={speechStatus}
-      />
+      {activeCoachPhoneme ? (
+        <Suspense fallback={null}>
+          <PhonemeCoachModal
+            phoneme={activeCoachPhoneme}
+            onClose={() => setActiveCoachPhoneme(null)}
+            onDrill={startDrillFromInsights}
+            onPlayWord={playWord}
+            onStopAudio={stopCurrentSpeech}
+            speakingText={speakingText}
+            speechStatus={speechStatus}
+          />
+        </Suspense>
+      ) : null}
     </main>
   );
 }
