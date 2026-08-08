@@ -216,6 +216,9 @@ export function useSpeech(setError: (msg: string) => void) {
       if (startAtPercent !== undefined && startAtPercent >= 0 && duration > 0) {
         finalSeek = startAtPercent * duration;
       }
+      if (finalSeek === undefined && duration > 0 && speechAudioRef.current.currentTime >= duration - 0.05) {
+        finalSeek = 0;
+      }
       if (finalSeek !== undefined && finalSeek >= 0) {
         speechAudioRef.current.currentTime = finalSeek;
         setSpeechCurrentTime(finalSeek);
@@ -341,9 +344,12 @@ export function useSpeech(setError: (msg: string) => void) {
     }
   }, [loadSpeechUrl, resetCurrentSpeechAudio, setError, stopCurrentSpeech]);
 
+  const isSpeechBusy = speechStatus === "loading" || speechStatus === "playing";
+
   return {
     speakingText,
     speechStatus,
+    isSpeechBusy,
     speechCurrentTime,
     speechDuration,
     speechWordBoundaries,

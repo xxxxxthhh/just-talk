@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -142,6 +142,94 @@ describe("App", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  test("offers a JSON backup download near the health pill", async () => {
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": []
+    });
+
+    render(<App />);
+
+    const exportLink = await screen.findByRole("link", { name: /Download backup/i });
+    expect(exportLink).toHaveAttribute("href", "/api/export");
+    expect(exportLink).toHaveAttribute("download");
+  });
+
+  test("fetches and renders activity stats when the Insights tab opens", async () => {
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/phoneme-stats": [],
+      "/api/stats/activity": {
+        days: [{ date: "2026-06-09", sessions: 2 }],
+        streak_days: 5,
+        sessions_this_week: 4,
+        recent_scores: [
+          { created_at: "2026-06-09T00:00:00Z", pron_score: 82, accuracy_score: 80, fluency_score: 85, prosody_score: 78, mode: "short" }
+        ]
+      }
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Phoneme Insights/i }));
+
+    const progressSection = await screen.findByRole("region", { name: "Progress" });
+    expect(within(progressSection).getByText("5")).toBeInTheDocument();
+    expect(within(progressSection).getByText("Day streak")).toBeInTheDocument();
+    expect(within(progressSection).getByText("4")).toBeInTheDocument();
+    expect(within(progressSection).getByText("Sessions this week")).toBeInTheDocument();
+  });
+
+  test("clears stale passage-check issues when a history session is loaded", async () => {
+    mockApi({
+      "/api/health": { ...health, passage_check_configured: true },
+      "/api/sessions": [
+        {
+          id: "session-1",
+          created_at: "2026-05-24T10:00:00Z",
+          reference_text: "Quiet streets.",
+          audio_duration_ms: 1400,
+          scores: { pronunciation: 90, accuracy: 88, fluency: 91, completeness: 100, prosody: 84 }
+        }
+      ],
+      "/api/words": [],
+      "/api/passage-check": {
+        issues: [
+          {
+            span: "quikly",
+            problem: "Misspelled word",
+            suggestion: "quickly",
+            explanation: "Likely a typo for 'quickly'."
+          }
+        ]
+      },
+      "/api/sessions/session-1": {
+        id: "session-1",
+        created_at: "2026-05-24T10:00:00Z",
+        reference_text: "Quiet streets.",
+        audio_duration_ms: 1400,
+        scores: { pronunciation: 90, accuracy: 88, fluency: 91, completeness: 100, prosody: 84 },
+        words: [],
+        raw: {}
+      }
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /^Check$/ }));
+
+    expect(await screen.findByText("quikly")).toBeInTheDocument();
+
+    await userEvent.click(await screen.findByRole("button", { name: /History/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /90/ }));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Quiet streets.")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("quikly")).not.toBeInTheDocument();
   });
 
   test("loads full history details when a session row is clicked", async () => {
@@ -1558,5 +1646,557 @@ describe("App", () => {
 
     expect(screen.queryByRole("button", { name: /^Stop/ })).toBeNull();
     expect(screen.getByRole("button", { name: /^Record/ })).toBeInTheDocument();
+  });
+
+  test("surfaces an error instead of crashing if a successful score response has no session", async () => {
+    installRecordingMocks();
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/score": {
+        result: {
+          transcript: "do you think singapore",
+          scores: { pronunciation: 93, accuracy: 95, fluency: 90, completeness: 100, prosody: 88 },
+          segments: [],
+          words: scoredRecordingWords,
+          raw: {}
+        },
+        // Inconsistent server response: recognition succeeded but no session
+        // was persisted. Nothing downstream should assume session is non-null.
+        session: null
+      }
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /^Record$/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /^Stop$/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Score$/ })).not.toBeDisabled());
+    await userEvent.click(screen.getByRole("button", { name: /^Score$/ }));
+
+    expect(await screen.findByText(/no session was returned/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /singapore/i })).not.toBeInTheDocument();
+  });
+
+  test("shows a no-match banner and replaces the onboarding state instead of scoring", async () => {
+    installRecordingMocks();
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/score": {
+        result: {
+          transcript: "",
+          recognition_status: "no_match",
+          scores: { pronunciation: null, accuracy: null, fluency: null, completeness: null, prosody: null },
+          segments: [],
+          words: [],
+          raw: {}
+        },
+        session: null
+      }
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /^Record$/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /^Stop$/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Score$/ })).not.toBeDisabled());
+
+    const sessionFetchesBeforeScoring = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => String(call[0]) === "/api/sessions"
+    ).length;
+
+    await userEvent.click(screen.getByRole("button", { name: /^Score$/ }));
+
+    const banners = await screen.findAllByRole("alert");
+    expect(banners.some((banner) => /No speech detected/i.test(banner.textContent ?? ""))).toBe(true);
+    expect(screen.queryByText("Ready when you are")).not.toBeInTheDocument();
+
+    // Nothing was saved server-side, so history must not be refetched.
+    const sessionFetchesAfterScoring = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => String(call[0]) === "/api/sessions"
+    ).length;
+    expect(sessionFetchesAfterScoring).toBe(sessionFetchesBeforeScoring);
+  });
+
+  test("clears the no-match banner when a new recording starts", async () => {
+    installRecordingMocks();
+    mockApi({
+      "/api/health": health,
+      "/api/sessions": [],
+      "/api/words": [],
+      "/api/score": {
+        result: {
+          transcript: "",
+          recognition_status: "no_match",
+          scores: { pronunciation: null, accuracy: null, fluency: null, completeness: null, prosody: null },
+          segments: [],
+          words: [],
+          raw: {}
+        },
+        session: null
+      }
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /^Record$/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /^Stop$/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Score$/ })).not.toBeDisabled());
+    await userEvent.click(screen.getByRole("button", { name: /^Score$/ }));
+    await screen.findAllByText(/No speech detected/i);
+
+    await userEvent.click(screen.getByRole("button", { name: /^Record$/ }));
+
+    expect(screen.queryAllByText(/No speech detected/i)).toHaveLength(0);
+  });
+
+  describe("guided review session", () => {
+    const reviewWordBase = {
+      source: "manual",
+      notes: "",
+      latest_score: 80,
+      practice_count: 1,
+      last_practiced_at: "2026-06-01T00:00:00Z",
+      status: "active",
+      consecutive_successes: 1,
+      graduated_at: null,
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-06-01T00:00:00Z"
+    };
+
+    function dueWords() {
+      return [
+        {
+          ...reviewWordBase,
+          id: "w-recent",
+          word: "recent",
+          interval_days: 2,
+          due_at: new Date(Date.now() - 1 * 86_400_000).toISOString()
+        },
+        {
+          ...reviewWordBase,
+          id: "w-oldest",
+          word: "oldest",
+          interval_days: 5,
+          due_at: new Date(Date.now() - 5 * 86_400_000).toISOString()
+        },
+        {
+          ...reviewWordBase,
+          id: "w-not-due",
+          word: "notdue",
+          interval_days: 4,
+          due_at: new Date(Date.now() + 3 * 86_400_000).toISOString()
+        }
+      ];
+    }
+
+    test("starts a review queue with due-only words ordered most-overdue-first", async () => {
+      mockApi({
+        "/api/health": health,
+        "/api/sessions": [],
+        "/api/materials": [],
+        "/api/words": dueWords()
+      });
+
+      render(<App />);
+      await userEvent.click(await screen.findByRole("button", { name: /Word Bank/i }));
+      await userEvent.click(await screen.findByRole("button", { name: /Start review \(2\)/i }));
+
+      expect(await screen.findByText("Review 1/2")).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByDisplayValue("oldest")).toBeInTheDocument());
+    });
+
+    test("advances the review queue one word at a time via Skip word (unscored)", async () => {
+      mockApi({
+        "/api/health": health,
+        "/api/sessions": [],
+        "/api/materials": [],
+        "/api/words": dueWords()
+      });
+
+      render(<App />);
+      await userEvent.click(await screen.findByRole("button", { name: /Word Bank/i }));
+      await userEvent.click(await screen.findByRole("button", { name: /Start review \(2\)/i }));
+
+      await screen.findByText("Review 1/2");
+      expect(screen.getByDisplayValue("oldest")).toBeInTheDocument();
+      // The word has not been scored yet, so the advance button reads "Skip word".
+      expect(screen.getByRole("button", { name: /^Skip word$/i })).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: /^Skip word$/i }));
+
+      expect(await screen.findByText("Review 2/2")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("recent")).toBeInTheDocument();
+    });
+
+    test("labels the advance button Next word once the current word is scored, and reports practiced vs skipped in the completion summary", async () => {
+      installRecordingMocks();
+      mockApi({
+        "/api/health": health,
+        "/api/sessions": [],
+        "/api/materials": [],
+        "/api/words": dueWords(),
+        "/api/score": {
+          result: {
+            transcript: "oldest",
+            scores: { pronunciation: 90, accuracy: 88, fluency: 91, completeness: 100, prosody: 84 },
+            segments: [],
+            words: [
+              { word: "oldest", accuracy: 90, bucket: "good", error_type: "None", offset_ms: 0, duration_ms: 300, phonemes: [] }
+            ],
+            raw: {}
+          },
+          session: { id: "session-1" }
+        },
+        "/api/words/from-session/session-1": []
+      });
+
+      render(<App />);
+      await userEvent.click(await screen.findByRole("button", { name: /Word Bank/i }));
+      await userEvent.click(await screen.findByRole("button", { name: /Start review \(2\)/i }));
+
+      await screen.findByText("Review 1/2");
+      expect(screen.getByRole("button", { name: /^Skip word$/i })).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: /^Record$/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /^Stop$/ }));
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Score$/ })).not.toBeDisabled());
+      await userEvent.click(screen.getByRole("button", { name: /^Score$/ }));
+
+      // Scored: the advance button now reads "Next word".
+      await userEvent.click(await screen.findByRole("button", { name: /^Next word$/i }));
+
+      await screen.findByText("Review 2/2");
+      // The second word is skipped without scoring.
+      await userEvent.click(await screen.findByRole("button", { name: /^Skip word$/i }));
+
+      expect(await screen.findByText("Review complete")).toBeInTheDocument();
+      expect(screen.getByText("1 practiced, 1 skipped")).toBeInTheDocument();
+    });
+
+    test("discards a stale score response for a word the user has already skipped past", async () => {
+      installRecordingMocks();
+
+      let resolveScore!: (value: { ok: boolean; json: () => Promise<unknown> }) => void;
+      const scorePromise = new Promise<{ ok: boolean; json: () => Promise<unknown> }>((resolve) => {
+        resolveScore = resolve;
+      });
+      const payloads: Record<string, unknown> = {
+        "/api/health": health,
+        "/api/sessions": [],
+        "/api/materials": [],
+        "/api/words": dueWords(),
+        "/api/words/from-session/session-1": []
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url === "/api/score") {
+            return scorePromise;
+          }
+          const payload = url === "/api/materials" && payloads[url] === undefined ? [] : payloads[url];
+          if (payload === undefined) {
+            return { ok: false, json: async () => ({ detail: `No mock for ${url}` }) };
+          }
+          return { ok: true, json: async () => payload };
+        })
+      );
+
+      render(<App />);
+      await userEvent.click(await screen.findByRole("button", { name: /Word Bank/i }));
+      await userEvent.click(await screen.findByRole("button", { name: /Start review \(2\)/i }));
+
+      await screen.findByText("Review 1/2");
+      expect(screen.getByDisplayValue("oldest")).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: /^Record$/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /^Stop$/ }));
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Score$/ })).not.toBeDisabled());
+
+      // Start scoring word A ("oldest"); the response is held back deliberately.
+      await userEvent.click(screen.getByRole("button", { name: /^Score$/ }));
+
+      // Before the response arrives, skip ahead to word B ("recent").
+      await userEvent.click(screen.getByRole("button", { name: /^Skip word$/i }));
+      await screen.findByText("Review 2/2");
+      expect(screen.getByDisplayValue("recent")).toBeInTheDocument();
+
+      const sessionFetchesBeforeResolve = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => String(call[0]) === "/api/sessions"
+      ).length;
+
+      // Now let word A's stale score response resolve.
+      await act(async () => {
+        resolveScore({
+          ok: true,
+          json: async () => ({
+            result: {
+              transcript: "oldest",
+              scores: { pronunciation: 90, accuracy: 88, fluency: 91, completeness: 100, prosody: 84 },
+              segments: [],
+              words: [
+                { word: "oldest", accuracy: 90, bucket: "good", error_type: "None", offset_ms: 0, duration_ms: 300, phonemes: [] }
+              ],
+              raw: {}
+            },
+            session: { id: "session-1" }
+          })
+        });
+      });
+
+      // The stale response must not overwrite word B's view: still on
+      // "recent", no scored word token rendered, and no history refresh.
+      expect(screen.getByDisplayValue("recent")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /oldest\s*90/i })).not.toBeInTheDocument();
+      expect(screen.queryByText(/Score complete/i)).not.toBeInTheDocument();
+      const sessionFetchesAfterResolve = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => String(call[0]) === "/api/sessions"
+      ).length;
+      expect(sessionFetchesAfterResolve).toBe(sessionFetchesBeforeResolve);
+    });
+
+    test("discards a stale score response when the user advances during the post-score refreshes (not /api/score itself)", async () => {
+      installRecordingMocks();
+
+      let resolveAddedWords!: (value: { ok: boolean; json: () => Promise<unknown> }) => void;
+      const addedWordsPromise = new Promise<{ ok: boolean; json: () => Promise<unknown> }>((resolve) => {
+        resolveAddedWords = resolve;
+      });
+      const payloads: Record<string, unknown> = {
+        "/api/health": health,
+        "/api/sessions": [],
+        "/api/materials": [],
+        "/api/words": dueWords(),
+        "/api/stats/activity": { days: [], streak_days: 0, sessions_this_week: 0, recent_scores: [] },
+        "/api/score": {
+          result: {
+            transcript: "oldest",
+            scores: { pronunciation: 90, accuracy: 88, fluency: 91, completeness: 100, prosody: 84 },
+            segments: [],
+            words: [
+              { word: "oldest", accuracy: 90, bucket: "good", error_type: "None", offset_ms: 0, duration_ms: 300, phonemes: [] }
+            ],
+            raw: {}
+          },
+          session: { id: "session-1" }
+        }
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          // /api/score resolves immediately; only the ancillary word-bank
+          // refresh that follows it is held back deliberately.
+          if (url === "/api/words/from-session/session-1") {
+            return addedWordsPromise;
+          }
+          const payload = url === "/api/materials" && payloads[url] === undefined ? [] : payloads[url];
+          if (payload === undefined) {
+            return { ok: false, json: async () => ({ detail: `No mock for ${url}` }) };
+          }
+          return { ok: true, json: async () => payload };
+        })
+      );
+
+      render(<App />);
+      await userEvent.click(await screen.findByRole("button", { name: /Word Bank/i }));
+      await userEvent.click(await screen.findByRole("button", { name: /Start review \(2\)/i }));
+
+      await screen.findByText("Review 1/2");
+      expect(screen.getByDisplayValue("oldest")).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: /^Record$/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /^Stop$/ }));
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Score$/ })).not.toBeDisabled());
+      await userEvent.click(screen.getByRole("button", { name: /^Score$/ }));
+
+      // /api/score already resolved, so the "practiced" latch and the button
+      // label flip immediately — even though the word-bank refresh below is
+      // still pending.
+      await screen.findByRole("button", { name: /^Next word$/i });
+
+      // Advance to word B while that refresh is still in flight.
+      await userEvent.click(screen.getByRole("button", { name: /^Next word$/i }));
+      await screen.findByText("Review 2/2");
+      expect(screen.getByDisplayValue("recent")).toBeInTheDocument();
+
+      const sessionFetchesBeforeResolve = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => String(call[0]) === "/api/sessions"
+      ).length;
+
+      // Now let the stale ancillary refresh resolve and settle.
+      await act(async () => {
+        resolveAddedWords({ ok: true, json: async () => [] });
+      });
+      await waitFor(() => {
+        const sessionFetchesAfterResolve = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+          (call: unknown[]) => String(call[0]) === "/api/sessions"
+        ).length;
+        expect(sessionFetchesAfterResolve).toBeGreaterThan(sessionFetchesBeforeResolve);
+      });
+
+      // Word B's view must be untouched: still "recent", no scored word
+      // token for "oldest" leaking in, no stray "Score complete" status, and
+      // the advance button still reads "Skip word" for the new, unscored word.
+      expect(screen.getByDisplayValue("recent")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /oldest\s*90/i })).not.toBeInTheDocument();
+      expect(screen.queryByText(/Score complete/i)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Skip word$/i })).toBeInTheDocument();
+    });
+
+    test("still counts a word as practiced if the user re-records without re-scoring before advancing", async () => {
+      installRecordingMocks();
+      mockApi({
+        "/api/health": health,
+        "/api/sessions": [],
+        "/api/materials": [],
+        "/api/words": dueWords(),
+        "/api/score": {
+          result: {
+            transcript: "oldest",
+            scores: { pronunciation: 90, accuracy: 88, fluency: 91, completeness: 100, prosody: 84 },
+            segments: [],
+            words: [
+              { word: "oldest", accuracy: 90, bucket: "good", error_type: "None", offset_ms: 0, duration_ms: 300, phonemes: [] }
+            ],
+            raw: {}
+          },
+          session: { id: "session-1" }
+        },
+        "/api/words/from-session/session-1": []
+      });
+
+      render(<App />);
+      await userEvent.click(await screen.findByRole("button", { name: /Word Bank/i }));
+      await userEvent.click(await screen.findByRole("button", { name: /Start review \(2\)/i }));
+      await screen.findByText("Review 1/2");
+
+      // Score the word once.
+      await userEvent.click(screen.getByRole("button", { name: /^Record$/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /^Stop$/ }));
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Score$/ })).not.toBeDisabled());
+      await userEvent.click(screen.getByRole("button", { name: /^Score$/ }));
+      await screen.findByRole("button", { name: /^Next word$/i });
+
+      // Re-record without scoring again. The button label reverts to "Skip
+      // word" (reviewJustScored is UX-only and resets on re-record)...
+      await userEvent.click(screen.getByRole("button", { name: /^Record$/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /^Stop$/ }));
+      expect(await screen.findByRole("button", { name: /^Skip word$/i })).toBeInTheDocument();
+
+      // ...but advancing still counts the word as practiced: the score was
+      // genuinely accepted once, and that latch is not cleared by a re-record.
+      await userEvent.click(screen.getByRole("button", { name: /^Skip word$/i }));
+      await screen.findByText("Review 2/2");
+      await userEvent.click(screen.getByRole("button", { name: /^Skip word$/i }));
+
+      expect(await screen.findByText("Review complete")).toBeInTheDocument();
+      expect(screen.getByText("1 practiced, 1 skipped")).toBeInTheDocument();
+    });
+
+    test("shows a completion summary after the last due word and closes the queue", async () => {
+      mockApi({
+        "/api/health": health,
+        "/api/sessions": [],
+        "/api/materials": [],
+        "/api/words": dueWords()
+      });
+
+      render(<App />);
+      await userEvent.click(await screen.findByRole("button", { name: /Word Bank/i }));
+      await userEvent.click(await screen.findByRole("button", { name: /Start review \(2\)/i }));
+
+      await screen.findByText("Review 1/2");
+      await userEvent.click(screen.getByRole("button", { name: /^Skip word$/i }));
+      await screen.findByText("Review 2/2");
+      await userEvent.click(screen.getByRole("button", { name: /^Skip word$/i }));
+
+      expect(await screen.findByText("Review complete")).toBeInTheDocument();
+      expect(screen.getByText("0 practiced, 2 skipped")).toBeInTheDocument();
+      expect(screen.queryByText(/^Review \d\/\d$/)).not.toBeInTheDocument();
+    });
+
+    test("auto-exits the review when a material is loaded instead", async () => {
+      mockApi({
+        "/api/health": health,
+        "/api/sessions": [],
+        "/api/words": dueWords(),
+        "/api/materials": [
+          {
+            id: "starter-clear-morning",
+            pack_id: "just-talk-starter",
+            pack_title: "Just Talk Starter",
+            title: "Clear Morning",
+            text: "A clear morning is a good time to practice careful speaking.",
+            book: "Starter",
+            lesson: "2",
+            tags: ["starter", "short"],
+            source: "built-in",
+            license: "Just Talk original",
+            created_at: "2026-05-25T00:00:00Z",
+            updated_at: "2026-05-25T00:00:00Z"
+          }
+        ]
+      });
+
+      render(<App />);
+      await userEvent.click(await screen.findByRole("button", { name: /Word Bank/i }));
+      await userEvent.click(await screen.findByRole("button", { name: /Start review \(2\)/i }));
+      await screen.findByText("Review 1/2");
+
+      await userEvent.click(screen.getByRole("button", { name: /Materials/i }));
+      await userEvent.click(await screen.findByRole("button", { name: /Clear Morning/i }));
+
+      await waitFor(() => {
+        expect(
+          screen.getByDisplayValue("A clear morning is a good time to practice careful speaking.")
+        ).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/^Review \d\/\d$/)).not.toBeInTheDocument();
+    });
+
+    test("clears a lingering completion summary when a material is loaded afterward", async () => {
+      mockApi({
+        "/api/health": health,
+        "/api/sessions": [],
+        "/api/words": dueWords(),
+        "/api/materials": [
+          {
+            id: "starter-clear-morning",
+            pack_id: "just-talk-starter",
+            pack_title: "Just Talk Starter",
+            title: "Clear Morning",
+            text: "A clear morning is a good time to practice careful speaking.",
+            book: "Starter",
+            lesson: "2",
+            tags: ["starter", "short"],
+            source: "built-in",
+            license: "Just Talk original",
+            created_at: "2026-05-25T00:00:00Z",
+            updated_at: "2026-05-25T00:00:00Z"
+          }
+        ]
+      });
+
+      render(<App />);
+      await userEvent.click(await screen.findByRole("button", { name: /Word Bank/i }));
+      await userEvent.click(await screen.findByRole("button", { name: /Start review \(2\)/i }));
+      await screen.findByText("Review 1/2");
+      await userEvent.click(screen.getByRole("button", { name: /^Skip word$/i }));
+      await screen.findByText("Review 2/2");
+      await userEvent.click(screen.getByRole("button", { name: /^Skip word$/i }));
+      await screen.findByText("Review complete");
+
+      await userEvent.click(screen.getByRole("button", { name: /Materials/i }));
+      await userEvent.click(await screen.findByRole("button", { name: /Clear Morning/i }));
+
+      await waitFor(() => {
+        expect(
+          screen.getByDisplayValue("A clear morning is a good time to practice careful speaking.")
+        ).toBeInTheDocument();
+      });
+      expect(screen.queryByText("Review complete")).not.toBeInTheDocument();
+    });
   });
 });

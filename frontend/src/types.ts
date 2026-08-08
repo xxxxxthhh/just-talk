@@ -25,6 +25,8 @@ export type PhonemeResult = {
   n_best: { phoneme: string; score: number | null }[];
 };
 
+export type ProsodyIssue = "unexpected_break" | "missing_break" | "monotone";
+
 export type WordResult = {
   word: string;
   accuracy: number | null;
@@ -33,10 +35,14 @@ export type WordResult = {
   offset_ms: number;
   duration_ms: number;
   phonemes: PhonemeResult[];
+  prosody_issues?: ProsodyIssue[];
 };
+
+export type RecognitionStatus = "success" | "no_match";
 
 export type ScoreResult = {
   transcript: string;
+  recognition_status?: RecognitionStatus;
   scores: ScoreMap;
   words: WordResult[];
   segments?: ScoreSegment[];
@@ -65,7 +71,8 @@ export type PracticeSession = {
 
 export type ScoreResponse = {
   result: ScoreResult;
-  session: PracticeSession;
+  // null when result.recognition_status === "no_match": nothing was persisted.
+  session: PracticeSession | null;
 };
 
 export type PassageIssue = {
@@ -121,6 +128,27 @@ export type PhonemeAttempt = {
   word: string;
   created_at: string;
   session_id: string;
+};
+
+export type ActivityDay = {
+  date: string;
+  sessions: number;
+};
+
+export type RecentScore = {
+  created_at: string;
+  pron_score: number | null;
+  accuracy_score: number | null;
+  fluency_score: number | null;
+  prosody_score: number | null;
+  mode: string;
+};
+
+export type ActivityStats = {
+  days: ActivityDay[];
+  streak_days: number;
+  sessions_this_week: number;
+  recent_scores: RecentScore[];
 };
 
 export type PhonemeStat = {

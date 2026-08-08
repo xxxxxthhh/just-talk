@@ -54,8 +54,13 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
         autoGainControl: true
       }
     });
+    // Chrome/Firefox support opus-in-webm; Safari does not, but does support
+    // mp4. Feature-detect both before falling back to the browser default so
+    // the recorded blob's type isn't mislabeled on Safari.
     const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
       ? "audio/webm;codecs=opus"
+      : MediaRecorder.isTypeSupported("audio/mp4")
+      ? "audio/mp4"
       : "";
     const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     chunksRef.current = [];
@@ -67,7 +72,9 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
     recorder.onstop = () => {
       stream.getTracks().forEach((track) => track.stop());
       const blob = new Blob(chunksRef.current, {
-        type: mimeType || "audio/webm"
+        // Reflect whatever the browser actually recorded with rather than
+        // hardcoding webm, which mislabels the blob on Safari.
+        type: mimeType || recorder.mimeType || "audio/webm"
       });
       if (audioUrl) {
         URL.revokeObjectURL(audioUrl);

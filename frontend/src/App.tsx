@@ -4,6 +4,7 @@ import {
   BookOpen,
   BookOpenCheck,
   Clock3,
+  Download,
   History,
   Loader2,
   Mic,
@@ -47,7 +48,13 @@ import { ResultsPanel } from "./components/ResultsPanel";
 import { ScoredPassage } from "./components/ScoredPassage";
 import { SidebarSection } from "./components/SidebarSection";
 import { StatusPill } from "./components/StatusPill";
-import { countDueWords, WordBankPanel, type WordBankTab } from "./components/WordBankPanel";
+import {
+  countDueWords,
+  getDueWordsForReview,
+  WordBankPanel,
+  type WordBankTab
+} from "./components/WordBankPanel";
+import { useActivityStats } from "./hooks/useActivityStats";
 import { usePhonemeInsights } from "./hooks/usePhonemeInsights";
 import { useRecorder } from "./hooks/useRecorder";
 import { useRecordingPlayback } from "./hooks/useRecordingPlayback";
@@ -70,6 +77,7 @@ const DEFAULT_PASSAGE =
   "The weather changed quickly, but we kept walking through the quiet streets and talked about the plans we wanted to finish this week.";
 
 const WORD_REPLAY_LEAD_IN_SECONDS = 0.15;
+const NO_MATCH_MESSAGE = "No speech detected — check your microphone and try again.";
 
 type PracticeMode = "short" | "long";
 type AppView = "practice" | "insights";
@@ -123,6 +131,7 @@ function App() {
   const [selectedWordIndex, setSelectedWordIndex] = useState(0);
   const [result, setResult] = useState<ScoreResult | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState("");
+  const [noMatchNotice, setNoMatchNotice] = useState("");
 
   const [appView, setAppView] = useState<AppView>("practice");
   const [expandedSidebarPanel, setExpandedSidebarPanel] = useState<SidebarPanel | null>("materials");
@@ -149,10 +158,12 @@ function App() {
   } = useServerState(setError);
 
   const insights = usePhonemeInsights(practiceGeneratedDrill);
+  const activity = useActivityStats();
 
   const {
     speakingText,
     speechStatus,
+    isSpeechBusy,
     speechCurrentTime,
     speechDuration,
     speechWordBoundaries,
@@ -278,6 +289,32 @@ function App() {
   const requiredSuccesses = health?.vocabulary_graduation_streak ?? 2;
   const dueWordCount = useMemo(() => countDueWords(vocabulary), [vocabulary]);
 
+  // Guided "Review due words" session: a frozen snapshot of due words taken
+  // when the review starts, walked one word at a time via the existing
+  // single-word practice flow. reviewIndex -1 means no review is active.
+  const [reviewQueue, setReviewQueue] = useState<VocabularyItem[]>([]);
+  const [reviewIndex, setReviewIndex] = useState(-1);
+  const [reviewJustScored, setReviewJustScored] = useState(false);
+  const [reviewSummaryCount, setReviewSummaryCount] = useState<number | null>(null);
+  const [reviewScoredCount, setReviewScoredCount] = useState(0);
+  const isReviewActive = reviewIndex >= 0 && reviewIndex < reviewQueue.length;
+  // "Practiced" latch for the word currently at reviewIndex: flips true the
+  // moment a score for it is accepted (passes the context-token check below),
+  // and stays true regardless of a later re-record or a failed ancillary
+  // refresh. showNextReviewWord consults this — not reviewJustScored, which
+  // is reset on re-record and exists only for the button label/highlight.
+  const reviewWordScoredRef = useRef(false);
+
+  // Bumped whenever the practice context changes (next/end review, loading a
+  // material or history session, or otherwise resetting practice). A scoring
+  // request captures the token when it starts; if the token has moved on by
+  // the time the response arrives, the response no longer matches what's on
+  // screen and is dropped rather than applied.
+  const practiceContextRef = useRef(0);
+  function bumpPracticeContext() {
+    practiceContextRef.current += 1;
+  }
+
   useEffect(() => {
     void refreshServerState();
   }, [refreshServerState]);
@@ -315,34 +352,79 @@ function App() {
     }
     setResult(null);
     setCurrentSessionId("");
+    setNoMatchNotice("");
     setSelectedWordIndex(0);
     setRecordedAmplitudes(null);
     setIsAudioPlaying(false);
     setAudioDuration(0);
+    if (isReviewActive) {
+      setReviewJustScored(false);
+    }
   }
 
   async function submitRecording() {
     if (!audioBlob) {
       return;
     }
+    const requestContext = practiceContextRef.current;
     setIsScoring(true);
     setError("");
     setStatus(isLongMode ? "Scoring long passage" : "Scoring pronunciation");
     try {
       const response = await scoreRecording(passage, audioBlob, practiceMode);
-      setResult(response.result);
-      setCurrentSessionId(response.session.id);
-      setSelectedWordIndex(0);
-      const addedWords = await addWordsFromSession(response.session.id);
+      if (practiceContextRef.current !== requestContext) {
+        // The user moved on (next/end review, loaded a material or history
+        // session, or reset practice) while this request was in flight. The
+        // response no longer matches what's on screen, so drop it silently.
+        return;
+      }
+      if (response.result.recognition_status === "no_match") {
+        setResult(null);
+        setCurrentSessionId("");
+        setNoMatchNotice(NO_MATCH_MESSAGE);
+        setStatus("");
+        return;
+      }
+      if (!response.session) {
+        throw new Error("Scoring succeeded but no session was returned.");
+      }
+
+      // The score was genuinely accepted for the word/passage on screen right
+      // now (the token check above just confirmed it). Latch "practiced" and
+      // flip the button label immediately so neither depends on the ancillary
+      // refreshes below succeeding, or survives them being abandoned.
+      if (isReviewActive) {
+        reviewWordScoredRef.current = true;
+        setReviewJustScored(true);
+      }
+
+      const sessionId = response.session.id;
+      const addedWords = await addWordsFromSession(sessionId);
       // Scoring only changes history and the word bank; skip refetching
       // materials and health.
       await Promise.all([refreshSessions(), refreshVocabulary()]);
+      void activity.loadActivityStats();
+
+      if (practiceContextRef.current !== requestContext) {
+        // The user moved on while these ancillary refreshes were in flight.
+        // The score was already latched above; none of this response's
+        // display state belongs to whatever is on screen now.
+        return;
+      }
+
+      setNoMatchNotice("");
+      setResult(response.result);
+      setCurrentSessionId(sessionId);
+      setSelectedWordIndex(0);
       setStatus(
         addedWords.length
           ? `Score complete · ${addedWords.length} weak words saved`
           : "Score complete"
       );
     } catch (err) {
+      if (practiceContextRef.current !== requestContext) {
+        return;
+      }
       setError(err instanceof Error ? err.message : "Scoring failed.");
       setStatus("");
     } finally {
@@ -363,13 +445,27 @@ function App() {
     }
   }
 
+  function exitReviewIfActive() {
+    if (reviewIndex < 0 && reviewQueue.length === 0 && reviewSummaryCount === null) return;
+    setReviewQueue([]);
+    setReviewIndex(-1);
+    setReviewJustScored(false);
+    setReviewSummaryCount(null);
+    setReviewScoredCount(0);
+    reviewWordScoredRef.current = false;
+  }
+
   async function loadSession(session: PracticeSession) {
+    exitReviewIfActive();
+    bumpPracticeContext();
     setError("");
     setStatus("Loading history");
     try {
       const loaded = await getSession(session.id);
       setActiveMaterial(null);
       setPassage(loaded.reference_text);
+      setNoMatchNotice("");
+      setIssues([]);
       setResult({
         transcript: loaded.reference_text,
         scores: loaded.scores,
@@ -453,17 +549,23 @@ function App() {
   }
 
   function resetPractice() {
+    bumpPracticeContext();
+    reviewWordScoredRef.current = false;
     stopCurrentSpeech();
     stopRecordingPlayback();
     resetRecording();
     setResult(null);
     setCurrentSessionId("");
+    setNoMatchNotice("");
     setSelectedWordIndex(0);
     setRecordedAmplitudes(null);
     setAudioDuration(0);
   }
 
-  function practiceVocabularyWord(item: VocabularyItem) {
+  function practiceVocabularyWord(item: VocabularyItem, options?: { fromReview?: boolean }) {
+    if (!options?.fromReview) {
+      exitReviewIfActive();
+    }
     resetPractice();
     setActiveMaterial(null);
     setPassage(item.word);
@@ -471,11 +573,52 @@ function App() {
   }
 
   function practiceMaterial(material: MaterialItem) {
+    exitReviewIfActive();
     resetPractice();
     setActiveMaterial(material);
     setPassage(material.text);
     setIssues([]);
     setStatus(`Material ready: ${material.title}`);
+  }
+
+  function startReview() {
+    const snapshot = getDueWordsForReview(vocabulary);
+    if (snapshot.length === 0) {
+      return;
+    }
+    setReviewQueue(snapshot);
+    setReviewIndex(0);
+    setReviewJustScored(false);
+    setReviewSummaryCount(null);
+    setReviewScoredCount(0);
+    practiceVocabularyWord(snapshot[0], { fromReview: true });
+  }
+
+  function showNextReviewWord() {
+    // reviewWordScoredRef — not reviewJustScored — is the source of truth for
+    // the tally: it latches true the instant a score is accepted and, unlike
+    // reviewJustScored, survives a re-record of the same word.
+    const scoredCountAfterThisWord = reviewScoredCount + (reviewWordScoredRef.current ? 1 : 0);
+    const nextIndex = reviewIndex + 1;
+    if (nextIndex >= reviewQueue.length) {
+      bumpPracticeContext();
+      reviewWordScoredRef.current = false;
+      setReviewSummaryCount(reviewQueue.length);
+      setReviewScoredCount(scoredCountAfterThisWord);
+      setReviewQueue([]);
+      setReviewIndex(-1);
+      setReviewJustScored(false);
+      return;
+    }
+    setReviewScoredCount(scoredCountAfterThisWord);
+    setReviewIndex(nextIndex);
+    setReviewJustScored(false);
+    practiceVocabularyWord(reviewQueue[nextIndex], { fromReview: true });
+  }
+
+  function endReview() {
+    exitReviewIfActive();
+    bumpPracticeContext();
   }
 
   async function importMaterialFile(event: ChangeEvent<HTMLInputElement>) {
@@ -531,6 +674,7 @@ function App() {
   }
 
   function startDrillFromInsights(word: string) {
+    exitReviewIfActive();
     resetPractice();
     setActiveMaterial(null);
     setPassage(word);
@@ -638,7 +782,7 @@ function App() {
       event.preventDefault();
       if (isAudioPlaying) {
         stopRecordingPlayback();
-      } else if (speakingText && !isPassageSpeechActive) {
+      } else if (isSpeechBusy && !isPassageSpeechActive) {
         stopCurrentSpeech();
       } else if (trimmedPassage) {
         togglePassageSpeech();
@@ -709,7 +853,7 @@ function App() {
             aria-pressed={appView === "insights"}
             disabled={recorderState === "recording"}
             title={recorderState === "recording" ? "Stop recording before switching views" : undefined}
-            onClick={() => { setAppView("insights"); void insights.loadStats(); }}
+            onClick={() => { setAppView("insights"); void insights.loadStats(); void activity.loadActivityStats(); }}
           >
             <Sparkles size={15} />
             <span>Phoneme Insights</span>
@@ -717,6 +861,9 @@ function App() {
         </nav>
         <div className="topbar-actions">
           <StatusPill health={health} />
+          <a className="icon-button" href="/api/export" download title="Download backup (JSON)">
+            <Download size={18} />
+          </a>
           <button
             className="icon-button"
             onClick={toggleTheme}
@@ -737,6 +884,13 @@ function App() {
         </div>
       ) : null}
 
+      {noMatchNotice ? (
+        <div className="banner" role="alert">
+          <AlertCircle size={18} />
+          <span>{noMatchNotice}</span>
+        </div>
+      ) : null}
+
       <section className="workspace">
         {appView === "insights" ? (
           <Suspense fallback={lazyPanelFallback}>
@@ -750,11 +904,14 @@ function App() {
               onPlayWord={playWord}
               speakingText={speakingText}
               speechStatus={speechStatus}
-              onRefresh={() => void insights.loadStats()}
+              onRefresh={() => { void insights.loadStats(); void activity.loadActivityStats(); }}
               drillsEnabled={Boolean(health?.passage_check_configured)}
               generatingPhoneme={insights.generatingPhoneme}
               drillError={insights.drillError}
               onGenerateDrill={(phoneme) => void insights.generateDrill(phoneme)}
+              activityStats={activity.activityStats}
+              activityLoading={activity.activityLoading}
+              activityError={activity.activityError}
             />
           </Suspense>
         ) : null}
@@ -809,11 +966,52 @@ function App() {
               onAddWord={addManualWord}
               onPracticeWord={practiceVocabularyWord}
               onDeleteWord={(wordId) => void removeVocabularyWord(wordId)}
+              onStartReview={startReview}
             />
           </SidebarSection>
         </aside>
 
         <section className="practice-panel" hidden={appView === "insights"}>
+          {isReviewActive ? (
+            <div className="review-banner" role="status">
+              <div className="review-banner-info">
+                <strong>Review {reviewIndex + 1}/{reviewQueue.length}</strong>
+                <span>{reviewQueue[reviewIndex]?.word}</span>
+              </div>
+              <div className="review-banner-actions">
+                <button
+                  type="button"
+                  className={`secondary-button compact ${reviewJustScored ? "review-next-highlight" : ""}`}
+                  onClick={showNextReviewWord}
+                  title={reviewJustScored ? "Advance to the next due word" : "Move on without scoring this word"}
+                >
+                  {reviewJustScored ? "Next word" : "Skip word"}
+                </button>
+                <button type="button" className="secondary-button compact" onClick={endReview}>
+                  End review
+                </button>
+              </div>
+            </div>
+          ) : reviewSummaryCount !== null ? (
+            <div className="review-banner review-summary" role="status">
+              <div className="review-banner-info">
+                <strong>Review complete</strong>
+                <span>
+                  {reviewScoredCount} practiced, {reviewSummaryCount - reviewScoredCount} skipped
+                </span>
+              </div>
+              <div className="review-banner-actions">
+                <button
+                  type="button"
+                  className="secondary-button compact"
+                  onClick={() => setReviewSummaryCount(null)}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           <div className="mode-switch" aria-label="Practice mode">
             <button
               type="button"
@@ -856,7 +1054,7 @@ function App() {
               <button
                 className="secondary-button"
                 onClick={togglePassageSpeech}
-                disabled={!trimmedPassage || (Boolean(speakingText) && !isPassageSpeechActive)}
+                disabled={!trimmedPassage || (isSpeechBusy && !isPassageSpeechActive)}
                 title={isPassageSpeechPlaying ? "Pause passage audio (Space)" : "Play passage audio (Space)"}
               >
                 {isPassageSpeechLoading ? (
@@ -1020,7 +1218,7 @@ function App() {
                 {isScoring ? <Loader2 className="spin" size={18} /> : <UploadCloud size={18} />}
                 Score
               </button>
-              {status ? <span className="inline-status">{status}</span> : null}
+              <span className="inline-status" aria-live="polite">{status}</span>
             </div>
 
             {audioUrl ? (
@@ -1034,6 +1232,12 @@ function App() {
                 onDurationChange={setAudioDuration}
               />
             ) : null}
+
+            <p className="shortcut-legend" aria-label="Keyboard shortcuts">
+              <span><kbd>Space</kbd> play/pause</span>
+              <span><kbd>Enter</kbd> record/score</span>
+              <span><kbd>Shift</kbd> + <kbd>Enter</kbd> re-record</span>
+            </p>
           </div>
         </section>
 
@@ -1044,6 +1248,8 @@ function App() {
           savedWords={savedWords}
           selectedWord={selectedWord}
           speakingText={speakingText}
+          isSpeechBusy={isSpeechBusy}
+          noMatchNotice={noMatchNotice}
           isSavingWords={isSavingWords}
           onSaveWeakWords={() => void saveWeakWords()}
           onSaveWeakWord={(word) => void saveWeakWord(word)}

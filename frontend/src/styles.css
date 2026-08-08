@@ -46,6 +46,9 @@
   --color-heatmap-empty: #ece3d3;
   --color-heatmap-empty-border: #ddd0ba;
 
+  /* Prosody issue indicator (distinct from the accuracy bucket colors) */
+  --color-prosody-flag: #6366f1;
+
   /* Shadow Design — slightly warm-tinted */
   --shadow-sm: 0 1px 2px 0 rgba(87, 60, 24, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(87, 60, 24, 0.05), 0 2px 4px -2px rgba(87, 60, 24, 0.05);
@@ -105,6 +108,9 @@ body[data-theme="dark"] {
   /* Heatmap empty grid system (Dark Theme) */
   --color-heatmap-empty: #2e261f;
   --color-heatmap-empty-border: #41372d;
+
+  /* Prosody issue indicator (distinct from the accuracy bucket colors) */
+  --color-prosody-flag: #818cf8;
 
   --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.35);
 }
@@ -549,6 +555,54 @@ p {
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 700;
+}
+
+.review-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-card-focus);
+  border-radius: var(--radius-md);
+  background: var(--accent-glow);
+  color: var(--text-main);
+}
+
+.review-banner-info {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.review-banner-info strong {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--accent-color);
+  white-space: nowrap;
+}
+
+.review-banner-info span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.review-banner-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.review-next-highlight {
+  border-color: var(--accent-color);
+  background: var(--accent-color);
+  color: var(--text-inverse);
 }
 
 .passage-audio-controls {
@@ -1428,6 +1482,13 @@ p {
   color: var(--text-inverse);
 }
 
+.start-review-button {
+  width: 100%;
+  margin-bottom: 12px;
+  border-color: var(--border-card-focus);
+  color: var(--accent-color);
+}
+
 /* Word Bank Lists */
 .word-bank-list {
   display: flex;
@@ -1689,6 +1750,7 @@ p {
 
 /* Scored word element tokens */
 .scored-word-token {
+  position: relative;
   display: inline-flex;
   align-items: center;
   margin: 2px 4px;
@@ -1700,6 +1762,28 @@ p {
   background: var(--color-neutral-bg);
   border-color: var(--color-neutral-border);
   font-weight: 500;
+}
+
+/* Prosody issue indicator: a small corner dot, kept subtle so it never
+   competes with the accuracy bucket color of the token itself. */
+.prosody-issue-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-prosody-flag);
+}
+
+.scored-word-token .prosody-issue-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+}
+
+.prosody-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .scored-word-token:hover {
@@ -1911,6 +1995,27 @@ p {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.shortcut-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.shortcut-legend kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border-card);
+  border-radius: 4px;
+  background: var(--bg-subtle);
+  color: var(--text-main);
+  font-family: var(--font-body);
+  font-size: 10.5px;
+  font-weight: 700;
 }
 
 .audio-player {
@@ -2721,6 +2826,91 @@ p {
 
 .insights-view-switch .view-tab {
   min-height: 32px;
+}
+
+/* ── Progress section (streak tile + score trend sparkline) ───────────── */
+.progress-section {
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.progress-section .empty-state.progress-empty {
+  min-height: auto;
+  padding: 14px;
+}
+
+.progress-tiles {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.progress-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-card);
+  color: var(--accent-color);
+  min-width: 120px;
+}
+
+.progress-tile strong {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 850;
+  color: var(--accent-color);
+}
+
+.progress-tile span {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.progress-sparkline-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress-sparkline {
+  width: 100%;
+  height: 56px;
+  display: block;
+}
+
+.progress-sparkline-line {
+  fill: none;
+  stroke: var(--accent-color);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.progress-sparkline-dot {
+  fill: var(--accent-color);
+}
+
+.progress-sparkline-meta {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.progress-sparkline-empty {
+  font-size: 12.5px;
 }
 
 .phoneme-map {

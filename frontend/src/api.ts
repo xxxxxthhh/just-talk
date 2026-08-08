@@ -1,4 +1,5 @@
 import type {
+  ActivityStats,
   Health,
   MaterialItem,
   MaterialPackImportPayload,
@@ -50,6 +51,10 @@ export async function scoreRecording(
       body
     })
   );
+}
+
+export async function fetchActivityStats(): Promise<ActivityStats> {
+  return parseResponse<ActivityStats>(await fetch("/api/stats/activity"));
 }
 
 export async function fetchPhonemeStats(minAttempts?: number): Promise<PhonemeStat[]> {

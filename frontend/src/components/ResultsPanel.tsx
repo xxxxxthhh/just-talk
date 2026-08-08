@@ -12,6 +12,8 @@ type ResultsPanelProps = {
   savedWords: Set<string>;
   selectedWord: WordResult | null;
   speakingText: string;
+  isSpeechBusy: boolean;
+  noMatchNotice: string;
   isSavingWords: boolean;
   onSaveWeakWords: () => void;
   onSaveWeakWord: (word: WordResult) => void;
@@ -27,6 +29,8 @@ export function ResultsPanel({
   savedWords,
   selectedWord,
   speakingText,
+  isSpeechBusy,
+  noMatchNotice,
   isSavingWords,
   onSaveWeakWords,
   onSaveWeakWord,
@@ -106,7 +110,7 @@ export function ResultsPanel({
                     className="icon-button small"
                     onClick={() => onPlayWord(word.word)}
                     title={`Play ${word.word}`}
-                    disabled={Boolean(speakingText)}
+                    disabled={isSpeechBusy}
                   >
                     <Volume2 size={15} />
                   </button>
@@ -126,24 +130,31 @@ export function ResultsPanel({
 
       {!result?.words.length ? (
         <div className="words">
-          <div className="empty-state">
-            <Play size={22} />
-            <p className="empty-state-title">Ready when you are</p>
-            <ol className="practice-steps">
-              <li>
-                <span className="step-dot">1</span>
-                Pick a passage, material, or word
-              </li>
-              <li>
-                <span className="step-dot">2</span>
-                Hit Record and read it aloud
-              </li>
-              <li>
-                <span className="step-dot">3</span>
-                Score it to see word and phoneme feedback
-              </li>
-            </ol>
-          </div>
+          {noMatchNotice ? (
+            <div className="empty-state" role="alert">
+              <AlertCircle size={22} />
+              <p className="empty-state-title">{noMatchNotice}</p>
+            </div>
+          ) : (
+            <div className="empty-state">
+              <Play size={22} />
+              <p className="empty-state-title">Ready when you are</p>
+              <ol className="practice-steps">
+                <li>
+                  <span className="step-dot">1</span>
+                  Pick a passage, material, or word
+                </li>
+                <li>
+                  <span className="step-dot">2</span>
+                  Hit Record and read it aloud
+                </li>
+                <li>
+                  <span className="step-dot">3</span>
+                  Score it to see word and phoneme feedback
+                </li>
+              </ol>
+            </div>
+          )}
         </div>
       ) : null}
 
@@ -151,7 +162,7 @@ export function ResultsPanel({
         <PhonemeInspector
           word={selectedWord}
           onPlay={() => onPlayWord(selectedWord.word)}
-          isSpeaking={speakingText === selectedWord.word}
+          isSpeaking={speakingText === selectedWord.word && isSpeechBusy}
           onSelectPhoneme={onSelectPhoneme}
         />
       ) : null}

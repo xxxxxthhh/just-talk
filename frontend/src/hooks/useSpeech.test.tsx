@@ -552,4 +552,63 @@ describe("useSpeech", () => {
     expect(audioInstances[0].currentTime).toBe(5);
     expect(controls.speechCurrentTime).toBe(5);
   });
+
+  test("replays from the start when played again after it naturally ended", async () => {
+    const audioInstances: {
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      currentTime: number;
+      duration: number;
+      onended?: () => void;
+    }[] = [];
+
+    mockSpeechApi();
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        const instance = {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          currentTime: 0,
+          duration: 12,
+        };
+        audioInstances.push(instance);
+        return instance;
+      })
+    );
+
+    let controls!: ReturnType<typeof useSpeech>;
+    function SpeechHarness() {
+      controls = useSpeech(vi.fn());
+      return null;
+    }
+
+    render(<SpeechHarness />);
+
+    await act(async () => {
+      await controls.playCorrect("quiet");
+    });
+
+    // The mock Audio element does not advance currentTime on its own, so simulate
+    // reaching the end manually before firing onended.
+    act(() => {
+      audioInstances[0].currentTime = 12;
+      audioInstances[0].onended?.();
+    });
+
+    expect(controls.speechStatus).toBe("paused");
+
+    await act(async () => {
+      await controls.playCorrect("quiet");
+    });
+
+    expect(audioInstances).toHaveLength(1);
+    expect(audioInstances[0].currentTime).toBe(0);
+    expect(audioInstances[0].play).toHaveBeenCalledTimes(2);
+    expect(controls.speechStatus).toBe("playing");
+  });
 });

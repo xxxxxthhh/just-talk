@@ -43,10 +43,10 @@ export function PhonemeCoachCard({
   const activeSpeechStatus = speechStatus ?? fallbackSpeech.speechStatus;
   const activePair = guide.minimalPairs[trainerPairIndex] ?? null;
   const trainerTarget = activePair ? activePair[trainerSide] : "";
-  const isAudioBusy = Boolean(activeSpeakingText);
+  const isAudioBusy = activeSpeechStatus === "playing" || activeSpeechStatus === "loading";
 
   const isPlayingWord = (word: string) =>
-    activeSpeakingText === word && activeSpeechStatus !== "idle";
+    activeSpeakingText === word && (activeSpeechStatus === "playing" || activeSpeechStatus === "loading");
 
   const handlePlayAudio = (text: string) => {
     if (!text.trim()) return;

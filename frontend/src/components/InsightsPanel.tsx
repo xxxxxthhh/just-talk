@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { AlertCircle, ChevronRight, History, Loader2, Mic, RefreshCw, Sparkles, Wand2 } from "lucide-react";
+import { AlertCircle, ChevronRight, Flame, History, Loader2, Mic, RefreshCw, Sparkles, Wand2 } from "lucide-react";
 import { scoreTone } from "../scoreUtils";
 import type { SpeechStatus } from "../hooks/useSpeech";
-import type { PhonemeStat } from "../types";
+import type { ActivityStats, PhonemeStat, RecentScore } from "../types";
 import { PhonemeCoachCard } from "./PhonemeCoachCard";
 
 type InsightsViewMode = "map" | "priority";
@@ -29,6 +29,9 @@ type InsightsPanelProps = {
   generatingPhoneme?: string | null;
   drillError?: string;
   onGenerateDrill?: (phoneme: string) => void;
+  activityStats?: ActivityStats | null;
+  activityLoading?: boolean;
+  activityError?: boolean;
 };
 
 const PHONEME_GUIDE_WORDS: Record<string, string> = {
@@ -525,6 +528,109 @@ function PhonemeMapGroupSection({
   );
 }
 
+const SPARKLINE_WIDTH = 280;
+const SPARKLINE_HEIGHT = 56;
+
+function ScoreTrendSparkline({ recentScores }: { recentScores: RecentScore[] }) {
+  const points = recentScores
+    .map((entry, index) => ({ index, value: entry.pron_score }))
+    .filter((point): point is { index: number; value: number } => point.value !== null);
+
+  if (points.length === 0) {
+    return (
+      <p className="progress-sparkline-empty muted">No pronunciation scores yet.</p>
+    );
+  }
+
+  const values = points.map((point) => point.value);
+  const minScore = Math.min(...values);
+  const maxScore = Math.max(...values);
+  const latestScore = values[values.length - 1];
+  const scoreRange = maxScore - minScore || 1;
+  const xStep = points.length > 1 ? SPARKLINE_WIDTH / (points.length - 1) : 0;
+  const coords = points.map((point, i) => ({
+    x: points.length > 1 ? i * xStep : SPARKLINE_WIDTH / 2,
+    y: SPARKLINE_HEIGHT - ((point.value - minScore) / scoreRange) * SPARKLINE_HEIGHT,
+  }));
+  const polylinePoints = coords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+  const last = coords[coords.length - 1];
+  const trendLabel = `Pronunciation score trend over the last ${points.length} session${points.length === 1 ? "" : "s"}: minimum ${Math.round(minScore)}, maximum ${Math.round(maxScore)}, latest ${Math.round(latestScore)}.`;
+
+  return (
+    <div className="progress-sparkline-block">
+      <svg
+        className="progress-sparkline"
+        viewBox={`0 0 ${SPARKLINE_WIDTH} ${SPARKLINE_HEIGHT}`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label={trendLabel}
+      >
+        <polyline points={polylinePoints} className="progress-sparkline-line" />
+        <circle cx={last.x} cy={last.y} r="3" className="progress-sparkline-dot" />
+      </svg>
+      <div className="progress-sparkline-meta">
+        <span>Min {Math.round(minScore)}</span>
+        <span>Max {Math.round(maxScore)}</span>
+        <span>Latest {Math.round(latestScore)}</span>
+      </div>
+    </div>
+  );
+}
+
+function ProgressSection({
+  activityStats,
+  activityLoading,
+  activityError,
+}: {
+  activityStats?: ActivityStats | null;
+  activityLoading?: boolean;
+  activityError?: boolean;
+}) {
+  const hasActivity = Boolean(activityStats && activityStats.recent_scores.length > 0);
+
+  return (
+    <section className="progress-section" aria-label="Progress">
+      <div className="phoneme-map-group-heading">
+        <div>
+          <h3>Progress</h3>
+          <p>Streak, weekly activity, and recent pronunciation trend</p>
+        </div>
+      </div>
+      {activityLoading ? (
+        <div className="empty-state progress-empty">
+          <Loader2 className="spin" size={20} />
+          <p>Loading progress…</p>
+        </div>
+      ) : activityError ? (
+        <div className="empty-state progress-empty" role="status">
+          <AlertCircle size={20} />
+          <p>Progress unavailable. Try refreshing.</p>
+        </div>
+      ) : hasActivity && activityStats ? (
+        <>
+          <div className="progress-tiles">
+            <div className="progress-tile">
+              <Flame size={16} />
+              <strong>{activityStats.streak_days}</strong>
+              <span>Day streak</span>
+            </div>
+            <div className="progress-tile">
+              <Sparkles size={16} />
+              <strong>{activityStats.sessions_this_week}</strong>
+              <span>Sessions this week</span>
+            </div>
+          </div>
+          <ScoreTrendSparkline recentScores={activityStats.recent_scores} />
+        </>
+      ) : (
+        <div className="empty-state progress-empty">
+          <p>Practice a session to start tracking your progress.</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function InsightsPanel({
   stats,
   loading,
@@ -540,6 +646,9 @@ export function InsightsPanel({
   generatingPhoneme,
   drillError,
   onGenerateDrill,
+  activityStats,
+  activityLoading,
+  activityError,
 }: InsightsPanelProps) {
   const [viewMode, setViewMode] = useState<InsightsViewMode>("map");
   const statsByPhoneme = useMemo(() => {
@@ -604,6 +713,12 @@ export function InsightsPanel({
           </button>
         </div>
       </div>
+
+      <ProgressSection
+        activityStats={activityStats}
+        activityLoading={activityLoading}
+        activityError={activityError}
+      />
 
       {error ? (
         <div className="banner" role="alert">

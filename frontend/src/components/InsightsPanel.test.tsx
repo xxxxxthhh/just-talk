@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
-import type { PhonemeStat } from "../types";
+import type { ActivityStats, PhonemeStat } from "../types";
 import { InsightsPanel } from "./InsightsPanel";
 
 const defaultDate = "2026-05-26T00:00:00.000Z";
@@ -146,5 +146,59 @@ describe("InsightsPanel", () => {
     expect(
       screen.getByText("Drill generation returned no passage.")
     ).toBeVisible();
+  });
+
+  test("renders the Progress section streak tile, weekly tile, and score trend sparkline", () => {
+    const activityStats: ActivityStats = {
+      days: [{ date: "2026-05-26", sessions: 1 }],
+      streak_days: 4,
+      sessions_this_week: 3,
+      recent_scores: [
+        { created_at: defaultDate, pron_score: 70, accuracy_score: 72, fluency_score: 68, prosody_score: 65, mode: "short" },
+        { created_at: defaultDate, pron_score: null, accuracy_score: null, fluency_score: null, prosody_score: null, mode: "short" },
+        { created_at: defaultDate, pron_score: 90, accuracy_score: 88, fluency_score: 91, prosody_score: 84, mode: "short" },
+      ],
+    };
+
+    renderPanel([], null, { activityStats });
+
+    const progressSection = screen.getByRole("region", { name: "Progress" });
+    expect(within(progressSection).getByText("4")).toBeVisible();
+    expect(within(progressSection).getByText("Day streak")).toBeVisible();
+    expect(within(progressSection).getByText("3")).toBeVisible();
+    expect(within(progressSection).getByText("Sessions this week")).toBeVisible();
+
+    const sparkline = within(progressSection).getByRole("img");
+    expect(sparkline.getAttribute("aria-label")).toMatch(/minimum 70, maximum 90, latest 90/i);
+    expect(within(progressSection).getByText("Min 70")).toBeVisible();
+    expect(within(progressSection).getByText("Max 90")).toBeVisible();
+    expect(within(progressSection).getByText("Latest 90")).toBeVisible();
+  });
+
+  test("shows an empty state in the Progress section when there is no activity yet", () => {
+    const activityStats: ActivityStats = {
+      days: [],
+      streak_days: 0,
+      sessions_this_week: 0,
+      recent_scores: [],
+    };
+
+    renderPanel([], null, { activityStats });
+
+    const progressSection = screen.getByRole("region", { name: "Progress" });
+    expect(
+      within(progressSection).getByText("Practice a session to start tracking your progress.")
+    ).toBeVisible();
+    expect(within(progressSection).queryByRole("img")).toBeNull();
+  });
+
+  test("shows a distinct unavailable note in the Progress section on a fetch error, not the empty state", () => {
+    renderPanel([], null, { activityStats: null, activityError: true });
+
+    const progressSection = screen.getByRole("region", { name: "Progress" });
+    expect(within(progressSection).getByText(/Progress unavailable/i)).toBeVisible();
+    expect(
+      within(progressSection).queryByText("Practice a session to start tracking your progress.")
+    ).toBeNull();
   });
 });

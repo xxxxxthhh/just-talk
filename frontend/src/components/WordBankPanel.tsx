@@ -20,6 +20,21 @@ export function countDueWords(vocabulary: VocabularyItem[]): number {
   ).length;
 }
 
+function dueSortValue(item: VocabularyItem): number {
+  if (!item.due_at) return -Infinity;
+  const dueMs = Date.parse(item.due_at);
+  return Number.isNaN(dueMs) ? -Infinity : dueMs;
+}
+
+// Snapshot of due words for a guided review session, ordered by due_at
+// ascending so the most overdue word comes first.
+export function getDueWordsForReview(vocabulary: VocabularyItem[]): VocabularyItem[] {
+  const nowMs = Date.now();
+  return vocabulary
+    .filter((item) => item.status !== "graduated" && isDueForReview(item, nowMs))
+    .sort((a, b) => dueSortValue(a) - dueSortValue(b));
+}
+
 function daysUntilDue(item: VocabularyItem, nowMs: number): number {
   if (!item.due_at) return 0;
   const dueMs = Date.parse(item.due_at);
@@ -36,6 +51,7 @@ type WordBankPanelProps = {
   onAddWord: (word: string) => Promise<void>;
   onPracticeWord: (item: VocabularyItem) => void;
   onDeleteWord: (wordId: string) => void;
+  onStartReview: () => void;
 };
 
 export function WordBankPanel({
@@ -46,7 +62,8 @@ export function WordBankPanel({
   isSaving,
   onAddWord,
   onPracticeWord,
-  onDeleteWord
+  onDeleteWord,
+  onStartReview
 }: WordBankPanelProps) {
   const [newWord, setNewWord] = useState("");
   const activeVocabulary = useMemo(
@@ -116,6 +133,15 @@ export function WordBankPanel({
           Graduated <span>{graduatedVocabulary.length}</span>
         </button>
       </div>
+      {tab === "active" && dueVocabulary.length > 0 ? (
+        <button
+          type="button"
+          className="secondary-button start-review-button"
+          onClick={onStartReview}
+        >
+          Start review ({dueVocabulary.length})
+        </button>
+      ) : null}
       <div className="word-bank-list">
         {vocabulary.length === 0 ? (
           <p className="muted">No saved words yet.</p>
