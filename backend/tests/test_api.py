@@ -33,7 +33,16 @@ class FakeScorer:
                         "ProsodyScore": 81,
                         "PronScore": 89,
                     },
-                    "Words": [],
+                    "Words": [
+                        {
+                            "Word": "Hello",
+                            "PronunciationAssessment": {
+                                "AccuracyScore": 90,
+                                "ErrorType": "None",
+                            },
+                            "Phonemes": [],
+                        }
+                    ],
                 }
             ],
         }
@@ -88,6 +97,11 @@ class FakeScorer:
                 ],
             },
         ], self.continuous_warnings
+
+
+class FakeNoMatchScorer:
+    def score(self, wav_path: Path, reference_text: str) -> dict:
+        return {"RecognitionStatus": "NoMatch"}
 
 
 class FakeSynthesizer:
@@ -168,6 +182,111 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(history.status_code, 200)
         self.assertEqual(history.json()[0]["scores"]["pronunciation"], 89.0)
         self.assertEqual(scorer.reference_text, "Hello.")
+
+    def test_score_endpoint_skips_persisting_no_match_result(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+            app = create_app(
+                settings=Settings(
+                    database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}",
+                    max_audio_seconds=30,
+                ),
+                store=store,
+                scorer=FakeNoMatchScorer(),
+            )
+            client = TestClient(app)
+            client.post("/api/words", json={"word": "quiet"})
+
+            response = client.post(
+                "/api/score",
+                data={"reference_text": "quiet"},
+                files={"audio": ("sample.wav", make_wav_bytes(), "audio/wav")},
+            )
+            history = client.get("/api/sessions")
+            words = client.get("/api/words")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["result"]["recognition_status"], "no_match")
+        self.assertIsNone(response.json()["session"])
+        self.assertEqual(history.json(), [])
+        self.assertEqual(words.json()[0]["practice_count"], 0)
+
+    def test_export_endpoint_returns_backup_json_with_download_headers(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+            store.initialize(seed_builtin_materials=False)
+            store.create_session(
+                reference_text="Hello world.",
+                audio_duration_ms=1200,
+                normalized_result={
+                    "scores": {"pronunciation": 86.0},
+                    "words": [{"word": "hello"}],
+                    "raw": {"ok": True},
+                },
+            )
+            app = create_app(
+                settings=Settings(database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}"),
+                store=store,
+            )
+            client = TestClient(app)
+
+            response = client.get("/api/export")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers["content-disposition"],
+            'attachment; filename="just-talk-export.json"',
+        )
+        body = response.json()
+        self.assertEqual(body["schema_version"], 1)
+        self.assertEqual(body["sessions"][0]["reference_text"], "Hello world.")
+
+    def test_activity_stats_endpoint_returns_streak_and_recent_scores(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+            store.initialize(seed_builtin_materials=False)
+            store.create_session(
+                reference_text="Hello world.",
+                audio_duration_ms=1200,
+                normalized_result={
+                    "scores": {"pronunciation": 86.0, "accuracy": 88.0},
+                    "words": [],
+                    "raw": {"ok": True},
+                },
+            )
+            app = create_app(
+                settings=Settings(database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}"),
+                store=store,
+            )
+            client = TestClient(app)
+
+            response = client.get("/api/stats/activity")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["streak_days"], 1)
+        self.assertEqual(body["sessions_this_week"], 1)
+        self.assertEqual(len(body["days"]), 1)
+        self.assertEqual(body["recent_scores"][0]["pron_score"], 86.0)
+        self.assertEqual(body["recent_scores"][0]["mode"], "short")
 
     def test_health_reports_missing_azure_config(self):
         from fastapi.testclient import TestClient
@@ -450,6 +569,7 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["result"]["transcript"], "Quiet streets. We kept walking.")
+        self.assertEqual(response.json()["result"]["recognition_status"], "success")
         self.assertEqual(response.json()["result"]["scores"]["pronunciation"], 84.0)
         self.assertEqual(response.json()["result"]["segments"][0]["transcript"], "Quiet streets.")
         self.assertEqual(response.json()["result"]["words"][0]["word"], "quiet")
@@ -457,6 +577,48 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.json()["session"]["segments"][0]["transcript"], "Quiet streets.")
         self.assertEqual(history.json()[0]["scores"]["pronunciation"], 84.0)
         self.assertEqual(scorer.continuous_reference_text, "Quiet streets. We kept walking.")
+
+    def test_score_endpoint_long_mode_skips_persisting_no_match_result(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        class FakeSilentContinuousScorer:
+            def score_continuous(self, wav_path: Path, reference_text: str):
+                return [
+                    {"RecognitionStatus": "NoMatch", "DisplayText": ""},
+                    {"RecognitionStatus": "InitialSilenceTimeout", "DisplayText": ""},
+                ], []
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+            app = create_app(
+                settings=Settings(
+                    database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}",
+                    max_audio_seconds=30,
+                    max_long_audio_seconds=180,
+                ),
+                store=store,
+                scorer=FakeSilentContinuousScorer(),
+            )
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/score",
+                data={
+                    "reference_text": "Quiet streets. We kept walking.",
+                    "mode": "long",
+                },
+                files={"audio": ("sample.wav", make_wav_bytes(), "audio/wav")},
+            )
+            history = client.get("/api/sessions")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["result"]["recognition_status"], "no_match")
+        self.assertIsNone(response.json()["session"])
+        self.assertEqual(history.json(), [])
 
     def test_score_endpoint_long_mode_surfaces_scoring_warnings(self):
         from fastapi.testclient import TestClient

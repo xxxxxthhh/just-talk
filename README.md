@@ -142,3 +142,4 @@ docs/development/    Implementation planning notes
 - Keep recordings at or under `MAX_AUDIO_SECONDS` because v1 uses Azure's single-shot scripted assessment path with miscue enabled.
 - Do not put the Azure key in frontend code. The browser only talks to the local FastAPI backend.
 - `.env`, local SQLite data, virtual environments, dependencies, and build outputs are intentionally ignored by git.
+- Do not expose the backend on `0.0.0.0` or any non-localhost address: it has no authentication, and CORS is hard-coded to assume the frontend runs on `localhost:5173`.

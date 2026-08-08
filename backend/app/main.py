@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -164,6 +164,11 @@ def create_app(
                 raw_result = active_scorer.score(wav_path, cleaned_reference)
                 normalized = normalize_azure_result(raw_result)
 
+        if normalized.get("recognition_status") == "no_match":
+            # Azure recognized no speech at all; skip persisting a session and
+            # word-bank practice update so empty results don't pollute history/stats.
+            return {"result": normalized, "session": None}
+
         session = active_store.create_session(
             reference_text=cleaned_reference,
             audio_duration_ms=round(duration_seconds * 1000),
@@ -194,6 +199,13 @@ def create_app(
     def list_sessions() -> list[dict[str, Any]]:
         return active_store.list_sessions()
 
+    @app.get("/api/export")
+    def export_data(response: Response) -> dict[str, Any]:
+        response.headers["Content-Disposition"] = (
+            'attachment; filename="just-talk-export.json"'
+        )
+        return active_store.export_data()
+
     @app.get("/api/sessions/{session_id}")
     def get_session(session_id: str) -> dict[str, Any]:
         try:
@@ -207,6 +219,10 @@ def create_app(
             return active_store.list_words(status=status)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/stats/activity")
+    def get_activity_stats() -> dict[str, Any]:
+        return active_store.get_activity_stats()
 
     @app.get("/api/phoneme-stats")
     def list_phoneme_stats(min_attempts: int | None = None) -> list[dict[str, Any]]:

@@ -17,6 +17,7 @@ DRILL_PACK_ID = "phoneme-drills"
 DRILL_PACK_TITLE = "Phoneme Drills"
 MATERIAL_SCHEMA_VERSION = 1
 MAX_REVIEW_INTERVAL_DAYS = 60
+MAX_SPEECH_CACHE_ENTRIES = 200
 
 BUILTIN_MATERIAL_PACK: dict[str, Any] = {
     "schema_version": MATERIAL_SCHEMA_VERSION,
@@ -238,6 +239,51 @@ def _migration_index_sessions_by_created_at(connection: sqlite3.Connection) -> N
     )
 
 
+def _migration_speech_cache_voice_identity(connection: sqlite3.Connection) -> None:
+    """Make (cache_key, voice) the speech_cache identity.
+
+    Previously cache_key alone was the primary key, so switching
+    AZURE_TTS_VOICE silently overwrote the other voice's cached audio for the
+    same text/material. SQLite can't ALTER a primary key in place, so rebuild
+    the table and copy existing rows across. delete_material_group's
+    cache_key-only DELETE keeps working unchanged: it still matches every
+    voice's row for a given cache_key.
+    """
+    connection.execute(
+        """
+        CREATE TABLE speech_cache_new (
+            cache_key TEXT NOT NULL,
+            text_hash TEXT NOT NULL,
+            voice TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            audio_bytes BLOB NOT NULL,
+            word_boundaries_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (cache_key, voice)
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO speech_cache_new (
+            cache_key, text_hash, voice, content_type, audio_bytes,
+            word_boundaries_json, created_at, updated_at
+        )
+        SELECT cache_key, text_hash, voice, content_type, audio_bytes,
+               word_boundaries_json, created_at, updated_at
+        FROM speech_cache
+        """
+    )
+    connection.execute("DROP TABLE speech_cache")
+    connection.execute("ALTER TABLE speech_cache_new RENAME TO speech_cache")
+
+
+def _migration_drop_dead_speech_cache_index(connection: sqlite3.Connection) -> None:
+    """idx_speech_cache_text_voice is never used by a query; reclaim it."""
+    connection.execute("DROP INDEX IF EXISTS idx_speech_cache_text_voice")
+
+
 def _migration_clear_stored_raw_azure(connection: sqlite3.Connection) -> None:
     """Reclaim historical raw Azure payloads.
 
@@ -259,6 +305,8 @@ MIGRATIONS: list = [
     _migration_add_vocabulary_schedule,
     _migration_index_sessions_by_created_at,
     _migration_clear_stored_raw_azure,
+    _migration_speech_cache_voice_identity,
+    _migration_drop_dead_speech_cache_index,
 ]
 
 
@@ -298,6 +346,18 @@ class SessionStore:
                 """,
                 (cache_key, text_hash, voice),
             ).fetchone()
+            if row is not None:
+                # Bump recency on read too, so eviction is LRU rather than
+                # FIFO-by-write-time and doesn't evict frequently played audio.
+                connection.execute(
+                    """
+                    UPDATE speech_cache
+                    SET updated_at = ?
+                    WHERE cache_key = ?
+                      AND voice = ?
+                    """,
+                    (datetime.now(UTC).isoformat(), cache_key, voice),
+                )
         if row is None:
             return None
         return {
@@ -331,9 +391,8 @@ class SessionStore:
                     updated_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(cache_key) DO UPDATE SET
+                ON CONFLICT(cache_key, voice) DO UPDATE SET
                     text_hash = excluded.text_hash,
-                    voice = excluded.voice,
                     content_type = excluded.content_type,
                     audio_bytes = excluded.audio_bytes,
                     word_boundaries_json = excluded.word_boundaries_json,
@@ -349,6 +408,19 @@ class SessionStore:
                     now,
                     now,
                 ),
+            )
+            # Cap the cache so switching voices/materials over time doesn't
+            # grow speech_cache without bound; keep the most recently used.
+            connection.execute(
+                """
+                DELETE FROM speech_cache
+                WHERE rowid NOT IN (
+                    SELECT rowid FROM speech_cache
+                    ORDER BY updated_at DESC, rowid DESC
+                    LIMIT ?
+                )
+                """,
+                (MAX_SPEECH_CACHE_ENTRIES,),
             )
 
     def create_session(
@@ -433,16 +505,7 @@ class SessionStore:
             ).fetchone()
         if row is None:
             raise KeyError(session_id)
-        return {
-            "id": row["id"],
-            "created_at": row["created_at"],
-            "reference_text": row["reference_text"],
-            "audio_duration_ms": row["audio_duration_ms"],
-            "scores": json.loads(row["overall_scores_json"]),
-            "segments": json.loads(row["segments_json"]),
-            "words": json.loads(row["words_json"]),
-            "warnings": json.loads(row["warnings_json"]),
-        }
+        return self._row_to_session(row)
 
     def list_materials(self) -> list[dict[str, Any]]:
         with self._connection() as connection:
@@ -740,13 +803,9 @@ class SessionStore:
         notes: str = "",
     ) -> dict[str, Any]:
         display_word, normalized_word = self._normalize_word(word)
+        now = datetime.now(UTC).isoformat()
+        word_id = str(uuid.uuid4())
         with self._connection() as connection:
-            existing = self._find_word(connection, normalized_word)
-            if existing is not None:
-                return self._row_to_word(existing)
-
-            now = datetime.now(UTC).isoformat()
-            word_id = str(uuid.uuid4())
             connection.execute(
                 """
                 INSERT INTO vocabulary_items (
@@ -765,6 +824,7 @@ class SessionStore:
                     updated_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(normalized_word) DO NOTHING
                 """,
                 (
                     word_id,
@@ -834,15 +894,49 @@ class SessionStore:
         graduation_streak: int = 2,
     ) -> dict[str, Any]:
         display_word, normalized_word = self._normalize_word(word)
+        now = datetime.now(UTC).isoformat()
+        word_id = str(uuid.uuid4())
         with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO vocabulary_items (
+                    id,
+                    word,
+                    normalized_word,
+                    source,
+                    notes,
+                    latest_score,
+                    practice_count,
+                    last_practiced_at,
+                    status,
+                    consecutive_successes,
+                    graduated_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(normalized_word) DO NOTHING
+                """,
+                (
+                    word_id,
+                    display_word,
+                    normalized_word,
+                    "practice",
+                    "",
+                    None,
+                    0,
+                    None,
+                    "active",
+                    0,
+                    None,
+                    now,
+                    now,
+                ),
+            )
             existing = self._find_word(connection, normalized_word)
-            if existing is None:
-                self.create_word(display_word, source="practice")
-                existing = self._find_word(connection, normalized_word)
             if existing is None:
                 raise KeyError(display_word)
 
-            now = datetime.now(UTC).isoformat()
             next_count = int(existing["practice_count"]) + (1 if increment else 0)
             next_status = existing["status"]
             next_streak = int(existing["consecutive_successes"])
@@ -1033,6 +1127,136 @@ class SessionStore:
         results.sort(key=lambda x: (x["average_accuracy"], x["phoneme"]))
         return results
 
+    def export_data(self) -> dict[str, Any]:
+        """Full local data dump for backup, excluding binary blobs (no speech cache audio)."""
+        with self._connection() as connection:
+            session_rows = connection.execute(
+                """
+                SELECT
+                    id,
+                    created_at,
+                    reference_text,
+                    audio_duration_ms,
+                    overall_scores_json,
+                    segments_json,
+                    words_json,
+                    warnings_json
+                FROM practice_sessions
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
+            vocabulary_rows = connection.execute(
+                """
+                SELECT *
+                FROM vocabulary_items
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
+            material_rows = connection.execute(
+                """
+                SELECT
+                    materials.*,
+                    material_packs.title AS pack_title,
+                    material_packs.source AS source,
+                    material_packs.license AS license
+                FROM materials
+                JOIN material_packs ON material_packs.id = materials.pack_id
+                ORDER BY material_packs.title COLLATE NOCASE ASC,
+                         materials.position ASC,
+                         materials.title COLLATE NOCASE ASC
+                """
+            ).fetchall()
+        return {
+            "schema_version": 1,
+            "exported_at": datetime.now(UTC).isoformat(),
+            "sessions": [self._row_to_session(row) for row in session_rows],
+            "vocabulary": [self._row_to_word(row) for row in vocabulary_rows],
+            "materials": [self._row_to_material(row) for row in material_rows],
+        }
+
+    def get_activity_stats(self) -> dict[str, Any]:
+        # created_at is stored as UTC ISO8601, but this is a local-first,
+        # single-user app: bucket activity by the server's local calendar
+        # day, not the UTC day.
+        local_now = datetime.now(UTC).astimezone()
+        today = local_now.date()
+        window_start_date = today - timedelta(days=29)
+        week_start_date = today - timedelta(days=6)
+        # A local day can fall up to ~1 day away from its UTC timestamp
+        # depending on the server's timezone, so fetch a generous UTC-side
+        # window and do exact local-day bucketing/filtering below.
+        fetch_since = (datetime.now(UTC) - timedelta(days=31)).isoformat()
+
+        with self._connection() as connection:
+            window_rows = connection.execute(
+                """
+                SELECT created_at
+                FROM practice_sessions
+                WHERE created_at >= ?
+                ORDER BY created_at ASC
+                """,
+                (fetch_since,),
+            ).fetchall()
+            recent_rows = connection.execute(
+                """
+                SELECT created_at, overall_scores_json, segments_json
+                FROM practice_sessions
+                ORDER BY created_at DESC
+                LIMIT 30
+                """
+            ).fetchall()
+
+        day_counts: dict[str, int] = {}
+        for row in window_rows:
+            local_date = datetime.fromisoformat(row["created_at"]).astimezone().date()
+            if local_date < window_start_date or local_date > today:
+                continue
+            key = local_date.isoformat()
+            day_counts[key] = day_counts.get(key, 0) + 1
+        days = [
+            {"date": day, "sessions": count}
+            for day, count in sorted(day_counts.items())
+        ]
+
+        # A streak is consecutive local days with at least one session,
+        # ending today or yesterday (today can still be empty without
+        # breaking it; an active today extends it).
+        streak_days = 0
+        cursor_day = today
+        if day_counts.get(today.isoformat(), 0) == 0:
+            cursor_day = today - timedelta(days=1)
+        while day_counts.get(cursor_day.isoformat(), 0) > 0:
+            streak_days += 1
+            cursor_day -= timedelta(days=1)
+
+        sessions_this_week = sum(
+            count
+            for day, count in day_counts.items()
+            if week_start_date.isoformat() <= day <= today.isoformat()
+        )
+
+        recent_scores = []
+        for row in reversed(recent_rows):
+            scores = json.loads(row["overall_scores_json"])
+            segments = json.loads(row["segments_json"])
+            recent_scores.append({
+                "created_at": row["created_at"],
+                "pron_score": scores.get("pronunciation"),
+                "accuracy_score": scores.get("accuracy"),
+                "fluency_score": scores.get("fluency"),
+                "prosody_score": scores.get("prosody"),
+                # No explicit mode column is stored; a long-passage session
+                # always has at least one segment, a short drill never does.
+                "mode": "long" if segments else "short",
+            })
+
+        return {
+            "days": days,
+            "streak_days": streak_days,
+            "sessions_this_week": sessions_this_week,
+            "recent_scores": recent_scores,
+        }
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path)
         connection.row_factory = sqlite3.Row
@@ -1072,6 +1296,18 @@ class SessionStore:
         if not display_word:
             raise ValueError("word is required.")
         return display_word, display_word.casefold()
+
+    def _row_to_session(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "reference_text": row["reference_text"],
+            "audio_duration_ms": row["audio_duration_ms"],
+            "scores": json.loads(row["overall_scores_json"]),
+            "segments": json.loads(row["segments_json"]),
+            "words": json.loads(row["words_json"]),
+            "warnings": json.loads(row["warnings_json"]),
+        }
 
     def _row_to_word(self, row: sqlite3.Row) -> dict[str, Any]:
         return {
