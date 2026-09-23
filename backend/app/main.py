@@ -92,6 +92,8 @@ class Actor:
 
     visitor_id: str | None
     store: SessionStore
+    # Held around capacity check + write in public mode; a no-op locally.
+    write_lock: contextlib.AbstractContextManager[Any] = contextlib.nullcontext()
 
 
 RESERVED_PACK_IDS = frozenset({BUILTIN_MATERIAL_PACK["pack"]["id"], DRILL_PACK_ID})
@@ -236,7 +238,11 @@ def create_app(
                 401, "visitor_required", "Start a practice session to continue."
             ) from exc
         try:
-            yield Actor(visitor_id=visitor_id, store=visitor_store)
+            yield Actor(
+                visitor_id=visitor_id,
+                store=visitor_store,
+                write_lock=registry.write_lock(visitor_id),
+            )
         finally:
             usage.__exit__(None, None, None)
 
@@ -456,17 +462,18 @@ def create_app(
             normalized_result=normalized,
         )
         single_word = _single_word_reference(cleaned_reference) if score_mode == "short" else ""
-        if single_word and _word_slots_left(actor) == 0:
-            known = {item["word"].casefold() for item in actor.store.list_words()}
-            if single_word.casefold() not in known:
-                single_word = ""
-        if single_word:
-            actor.store.record_word_practice(
-                single_word,
-                latest_score=normalized.get("scores", {}).get("accuracy"),
-                graduation_score=active_settings.vocabulary_graduation_score,
-                graduation_streak=active_settings.vocabulary_graduation_streak,
-            )
+        with actor.write_lock:
+            if single_word and _word_slots_left(actor) == 0:
+                known = {item["word"].casefold() for item in actor.store.list_words()}
+                if single_word.casefold() not in known:
+                    single_word = ""
+            if single_word:
+                actor.store.record_word_practice(
+                    single_word,
+                    latest_score=normalized.get("scores", {}).get("accuracy"),
+                    graduation_score=active_settings.vocabulary_graduation_score,
+                    graduation_streak=active_settings.vocabulary_graduation_streak,
+                )
         return {"result": normalized, "session": session}
 
     def _word_slots_left(actor: Actor) -> int | None:
@@ -604,12 +611,13 @@ def create_app(
         request: MaterialPackImportRequest, actor: Actor = Depends(get_actor)
     ) -> dict[str, Any]:
         payload = request.model_dump()
-        if public.enabled:
-            _validate_public_import(payload, actor)
-        try:
-            return actor.store.import_material_pack(payload)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        with actor.write_lock:
+            if public.enabled:
+                _validate_public_import(payload, actor)
+            try:
+                return actor.store.import_material_pack(payload)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.delete("/api/material-groups")
     def delete_material_group(
@@ -635,16 +643,17 @@ def create_app(
                     status_code=400,
                     detail=f"Notes must be at most {public.max_notes_chars} characters.",
                 )
-            if _word_slots_left(actor) == 0:
+        with actor.write_lock:
+            if public.enabled and _word_slots_left(actor) == 0:
                 raise _word_bank_full_error()
-        try:
-            return actor.store.create_word(
-                request.word,
-                source="manual",
-                notes=request.notes,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            try:
+                return actor.store.create_word(
+                    request.word,
+                    source="manual",
+                    notes=request.notes,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.delete("/api/words/{word_id}")
     def delete_word(word_id: str, actor: Actor = Depends(get_actor)) -> dict[str, bool]:
@@ -656,20 +665,21 @@ def create_app(
         max_score: float | None = None,
         actor: Actor = Depends(get_actor),
     ) -> list[dict[str, Any]]:
-        slots = _word_slots_left(actor)
-        if slots == 0:
-            raise _word_bank_full_error()
-        try:
-            cutoff = (
-                active_settings.vocabulary_graduation_score
-                if max_score is None
-                else max_score
-            )
-            return actor.store.create_words_from_session(
-                session_id, max_score=cutoff, max_new_words=slots
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="Session not found.") from exc
+        cutoff = (
+            active_settings.vocabulary_graduation_score
+            if max_score is None
+            else max_score
+        )
+        with actor.write_lock:
+            slots = _word_slots_left(actor)
+            if slots == 0:
+                raise _word_bank_full_error()
+            try:
+                return actor.store.create_words_from_session(
+                    session_id, max_score=cutoff, max_new_words=slots
+                )
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="Session not found.") from exc
 
     @app.post("/api/speak")
     def speak(request: SpeakRequest, actor: Actor = Depends(get_actor)) -> dict[str, Any]:

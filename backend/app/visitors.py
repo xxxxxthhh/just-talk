@@ -83,6 +83,7 @@ class VisitorRegistry:
         self._lock = threading.RLock()
         self._idle = threading.Condition(self._lock)
         self._stores: dict[str, VisitorStore] = {}
+        self._write_locks: dict[str, threading.Lock] = {}
         self._in_flight: dict[str, int] = defaultdict(int)
         self._client_issuances: dict[str, deque[float]] = {}
         self._last_cleanup: datetime | None = None
@@ -182,6 +183,12 @@ class VisitorRegistry:
                     del self._in_flight[visitor_id]
                     self._idle.notify_all()
 
+    def write_lock(self, visitor_id: str) -> threading.Lock:
+        """Per-visitor lock so capacity checks and the writes they guard are
+        atomic for that visitor without blocking anyone else."""
+        with self._lock:
+            return self._write_locks.setdefault(visitor_id, threading.Lock())
+
     def delete(self, visitor_id: str) -> None:
         with self._lock:
             with self._db() as connection:
@@ -196,6 +203,7 @@ class VisitorRegistry:
                     break
                 self._idle.wait(remaining)
             self._stores.pop(visitor_id, None)
+            self._write_locks.pop(visitor_id, None)
             self._remove_files(visitor_id)
         if self._on_delete is not None:
             self._on_delete(visitor_id)
