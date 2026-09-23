@@ -7,10 +7,23 @@ import type {
   PassageIssue,
   PhonemeStat,
   PracticeSession,
+  QuotaStatus,
   ScoreResponse,
   SpeechResponse,
   VocabularyItem
 } from "./types";
+import { PUBLIC_MODE, USAGE_CHANGED_EVENT, VISITOR_REQUIRED_EVENT } from "./publicMode";
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
 
 export function apiUrl(path: string): string {
   const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -34,9 +47,37 @@ async function parseResponse<T>(response: Response): Promise<T> {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = typeof payload.detail === "string" ? payload.detail : "Request failed.";
-    throw new Error(detail);
+    const code = typeof payload.code === "string" ? payload.code : undefined;
+    if (PUBLIC_MODE && code === "visitor_required") {
+      window.dispatchEvent(new Event(VISITOR_REQUIRED_EVENT));
+    }
+    throw new ApiError(detail, response.status, code);
   }
   return payload as T;
+}
+
+function notifyUsageChanged() {
+  if (PUBLIC_MODE) {
+    window.dispatchEvent(new Event(USAGE_CHANGED_EVENT));
+  }
+}
+
+export async function createVisitor(turnstileToken = ""): Promise<{ created: boolean }> {
+  return parseResponse<{ created: boolean }>(
+    await apiFetch("/api/visitor", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ turnstile_token: turnstileToken })
+    })
+  );
+}
+
+export async function fetchQuota(): Promise<QuotaStatus> {
+  return parseResponse<QuotaStatus>(await apiFetch("/api/me/quota"));
+}
+
+export async function deleteMyData(): Promise<{ deleted: boolean }> {
+  return parseResponse<{ deleted: boolean }>(await apiFetch("/api/me", { method: "DELETE" }));
 }
 
 export async function checkHealth(): Promise<Health> {
@@ -62,12 +103,16 @@ export async function scoreRecording(
   body.append("reference_text", referenceText);
   body.append("mode", mode);
   body.append("audio", audioBlob, "recording.webm");
-  return parseResponse<ScoreResponse>(
-    await apiFetch("/api/score", {
-      method: "POST",
-      body
-    })
-  );
+  try {
+    return await parseResponse<ScoreResponse>(
+      await apiFetch("/api/score", {
+        method: "POST",
+        body
+      })
+    );
+  } finally {
+    notifyUsageChanged();
+  }
 }
 
 export async function fetchActivityStats(): Promise<ActivityStats> {
@@ -161,13 +206,17 @@ export async function speakText(
   if (options.cacheKey) {
     body.cache_key = options.cacheKey;
   }
-  return parseResponse<SpeechResponse>(
-    await apiFetch("/api/speak", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    })
-  );
+  try {
+    return await parseResponse<SpeechResponse>(
+      await apiFetch("/api/speak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      })
+    );
+  } finally {
+    notifyUsageChanged();
+  }
 }
 
 export async function checkPassage(text: string): Promise<{ issues: PassageIssue[] }> {

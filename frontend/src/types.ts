@@ -6,7 +6,28 @@ export type Health = {
   max_long_audio_seconds: number;
   vocabulary_graduation_score: number;
   vocabulary_graduation_streak: number;
+  public?: PublicTrialInfo;
 };
+
+export type PublicTrialInfo = {
+  scoring_enabled: boolean;
+  turnstile_site_key: string;
+  max_tts_chars_per_request: number;
+  max_reference_chars: number;
+  visitor_ttl_days: number;
+};
+
+export type QuotaWindow = {
+  used: number;
+  limit: number;
+  attempts_used: number;
+  attempts_limit: number;
+  resets_at: string;
+};
+
+export type QuotaScope = "visitor_day" | "global_day" | "global_month";
+
+export type QuotaStatus = Record<"score" | "tts", Record<QuotaScope, QuotaWindow>>;
 
 export type ScoreMap = {
   accuracy: number | null;

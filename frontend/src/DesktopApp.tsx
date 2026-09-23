@@ -179,7 +179,7 @@ export default function DesktopApp() {
             <BrandMark />
           </div>
           <div className="brand-copy">
-            <h1 className="brand-name">Mimic</h1>
+            <h1 className="brand-name">Just Talk</h1>
             <p>AI speech coach for clearer English</p>
           </div>
         </div>
