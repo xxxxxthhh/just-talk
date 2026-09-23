@@ -187,10 +187,28 @@ function Welcome({ health, onReady }: { health: Health | null; onReady: () => vo
   );
 }
 
+function isExhausted(window: QuotaWindow): boolean {
+  return window.used >= window.limit || window.attempts_used >= window.attempts_limit;
+}
+
+// What this visitor can still use: the smallest amount left across their own
+// and the shared windows, and nothing once any window runs out of requests.
 function remaining(windows: QuotaWindow[]): { left: number; limit: number } {
   const personal = windows[0];
-  const left = Math.min(...windows.map((window) => Math.max(window.limit - window.used, 0)));
+  const left = windows.some(isExhausted)
+    ? 0
+    : Math.min(...windows.map((window) => Math.max(window.limit - window.used, 0)));
   return { left, limit: personal.limit };
+}
+
+function formatReset(resetsAt: string): string {
+  const date = new Date(resetsAt);
+  if (Number.isNaN(date.getTime())) return resetsAt;
+  return `${date.toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC"
+  })} UTC`;
 }
 
 function formatSeconds(total: number): string {
@@ -233,13 +251,16 @@ function PublicBar({ health }: { health: Health | null }) {
   const tts = quota
     ? remaining([quota.tts.visitor_day, quota.tts.global_day, quota.tts.global_month])
     : null;
-  const sharedExhausted =
-    quota !== null &&
-    (["global_day", "global_month"] as const).some(
-      (scope) =>
-        quota.score[scope].used >= quota.score[scope].limit ||
-        quota.score[scope].attempts_used >= quota.score[scope].attempts_limit
-    );
+  // When shared allowances run out, report the latest reset among them (a
+  // used-up month outlasts the daily reset).
+  const sharedResetsAt = quota
+    ? (["score", "tts"] as const)
+        .flatMap((kind) => (["global_day", "global_month"] as const).map((scope) => quota[kind][scope]))
+        .filter(isExhausted)
+        .map((window) => window.resets_at)
+        .sort()
+        .pop()
+    : undefined;
 
   return (
     <div className="pg-bar" role="region" aria-label="Public trial">
@@ -251,8 +272,10 @@ function PublicBar({ health }: { health: Health | null }) {
           Recording left today {formatSeconds(score.left)} / {formatSeconds(score.limit)}
           <span aria-hidden="true"> · </span>
           Listening {tts.left} / {tts.limit} chars
-          {sharedExhausted ? (
-            <span className="pg-bar-warning"> · Shared allowance used up; resets 00:00 UTC</span>
+          {sharedResetsAt ? (
+            <span className="pg-bar-warning">
+              {" "}· Shared free allowance used up until {formatReset(sharedResetsAt)}
+            </span>
           ) : null}
         </span>
       ) : null}
