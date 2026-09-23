@@ -34,7 +34,7 @@ It runs in three ways:
 1. Install prerequisites:
 
 - Python 3.11
-- Node.js
+- Node.js 22.12 or newer (the public image uses Node 22)
 - ffmpeg
 
 2. Create a local environment file:

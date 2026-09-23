@@ -6,7 +6,7 @@ been independently verified instead of claiming more than is known.
 
 | Content | Location | Provenance | Status |
 | --- | --- | --- | --- |
-| Three starter passages ("Quiet Streets", "Clear Morning", "Small Project") | `backend/app/storage.py` (`BUILTIN_MATERIAL_PACK`) | Added by the project author, labeled "Just Talk original" in the data | Authorship not independently verified |
+| Three starter passages ("Quiet Streets", "Clear Morning", "Small Project") | `backend/app/storage.py` (`BUILTIN_MATERIAL_PACK`) | Bundled in this repository, labeled "Just Talk original" in the data | Authorship not independently verified |
 | Phoneme guide descriptions and coaching tips | `frontend/src/components/PhonemeGuideData.ts` | Added in this repository | Authorship and third-party overlap not verified |
 | Example import pack | `docs/materials/custom-pack.example.json` | Project example | Same as the starter passages |
 | Favicon | `frontend/public/favicon.svg` | Project asset | Origin not recorded |

@@ -51,12 +51,13 @@ On the host, place the files where the compose file mounts them read-only:
 ```bash
 cp deploy/public/cloudflared/config.example.yml deploy/public/cloudflared/config.yml
 # edit config.yml: tunnel: <TUNNEL_ID>, hostname: justtalk.example.com
-install -m 400 -o 65532 -g 65532 <TUNNEL_ID>.json deploy/public/cloudflared/credentials.json
+sudo install -m 400 -o 65532 -g 65532 <TUNNEL_ID>.json deploy/public/cloudflared/credentials.json
 ```
 
 `config.yml` and `*.json` in that folder are git-ignored. To keep them
 somewhere else, use a private `docker-compose.override.yml` that changes the
-two volume sources. Don't edit the tracked compose file.
+two volume sources. Pass both files explicitly, for example
+`docker compose -f deploy/public/docker-compose.yml -f /path/to/private-override.yml up -d`.
 
 ## 3. Start
 
@@ -115,7 +116,8 @@ times out. It is never refunded or retried automatically. Deleting data,
 clearing cookies, or restarting does not reset site-wide usage.
 
 **Estimate only.** These are Azure Retail Prices API list prices (eastus,
-checked 2026-09-24):
+checked 2026-09-24). See the [Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices)
+and [pronunciation assessment pricing explanation](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/pronunciation-assessment-tool#pricing):
 
 - Speech to Text: $1.00/audio hour;
 - "Speech to Text Enhanced Feature Audio": $0.30/h, assumed to be the prosody add-on, since prosody is billed on top of the baseline;
