@@ -12,6 +12,23 @@ import type {
   VocabularyItem
 } from "./types";
 
+export function apiUrl(path: string): string {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
+  return baseUrl ? `${baseUrl.replace(/\/+$/, "")}${path}` : path;
+}
+
+export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const token = import.meta.env.VITE_API_TOKEN ?? "";
+  if (!token) {
+    return init === undefined ? fetch(apiUrl(path)) : fetch(apiUrl(path), init);
+  }
+
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  return fetch(apiUrl(path), { ...init, headers });
+}
 
 async function parseResponse<T>(response: Response): Promise<T> {
   const payload = await response.json().catch(() => ({}));
@@ -23,16 +40,16 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 export async function checkHealth(): Promise<Health> {
-  return parseResponse<Health>(await fetch("/api/health"));
+  return parseResponse<Health>(await apiFetch("/api/health"));
 }
 
 export async function listSessions(): Promise<PracticeSession[]> {
-  return parseResponse<PracticeSession[]>(await fetch("/api/sessions"));
+  return parseResponse<PracticeSession[]>(await apiFetch("/api/sessions"));
 }
 
 export async function getSession(sessionId: string): Promise<PracticeSession> {
   return parseResponse<PracticeSession>(
-    await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`)
+    await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`)
   );
 }
 
@@ -46,7 +63,7 @@ export async function scoreRecording(
   body.append("mode", mode);
   body.append("audio", audioBlob, "recording.webm");
   return parseResponse<ScoreResponse>(
-    await fetch("/api/score", {
+    await apiFetch("/api/score", {
       method: "POST",
       body
     })
@@ -54,25 +71,25 @@ export async function scoreRecording(
 }
 
 export async function fetchActivityStats(): Promise<ActivityStats> {
-  return parseResponse<ActivityStats>(await fetch("/api/stats/activity"));
+  return parseResponse<ActivityStats>(await apiFetch("/api/stats/activity"));
 }
 
 export async function fetchPhonemeStats(minAttempts?: number): Promise<PhonemeStat[]> {
   const url = minAttempts !== undefined
     ? `/api/phoneme-stats?min_attempts=${minAttempts}`
     : "/api/phoneme-stats";
-  return parseResponse<PhonemeStat[]>(await fetch(url));
+  return parseResponse<PhonemeStat[]>(await apiFetch(url));
 }
 
 export async function listMaterials(): Promise<MaterialItem[]> {
-  return parseResponse<MaterialItem[]>(await fetch("/api/materials"));
+  return parseResponse<MaterialItem[]>(await apiFetch("/api/materials"));
 }
 
 export async function importMaterialPack(
   payload: MaterialPackImportPayload
 ): Promise<MaterialPackImportResponse> {
   return parseResponse<MaterialPackImportResponse>(
-    await fetch("/api/material-packs/import", {
+    await apiFetch("/api/material-packs/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -82,7 +99,7 @@ export async function importMaterialPack(
 
 export async function generateDrill(phoneme: string): Promise<MaterialItem> {
   return parseResponse<MaterialItem>(
-    await fetch("/api/drills/generate", {
+    await apiFetch("/api/drills/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ phoneme })
@@ -96,19 +113,19 @@ export async function deleteMaterialGroup(
 ): Promise<{ deleted: number }> {
   const params = new URLSearchParams({ pack_id: packId, book });
   return parseResponse<{ deleted: number }>(
-    await fetch(`/api/material-groups?${params.toString()}`, {
+    await apiFetch(`/api/material-groups?${params.toString()}`, {
       method: "DELETE"
     })
   );
 }
 
 export async function listWords(): Promise<VocabularyItem[]> {
-  return parseResponse<VocabularyItem[]>(await fetch("/api/words"));
+  return parseResponse<VocabularyItem[]>(await apiFetch("/api/words"));
 }
 
 export async function createWord(word: string): Promise<VocabularyItem> {
   return parseResponse<VocabularyItem>(
-    await fetch("/api/words", {
+    await apiFetch("/api/words", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ word })
@@ -118,7 +135,7 @@ export async function createWord(word: string): Promise<VocabularyItem> {
 
 export async function addWordsFromSession(sessionId: string): Promise<VocabularyItem[]> {
   return parseResponse<VocabularyItem[]>(
-    await fetch(`/api/words/from-session/${encodeURIComponent(sessionId)}`, {
+    await apiFetch(`/api/words/from-session/${encodeURIComponent(sessionId)}`, {
       method: "POST"
     })
   );
@@ -126,7 +143,7 @@ export async function addWordsFromSession(sessionId: string): Promise<Vocabulary
 
 export async function deleteWord(wordId: string): Promise<{ deleted: boolean }> {
   return parseResponse<{ deleted: boolean }>(
-    await fetch(`/api/words/${encodeURIComponent(wordId)}`, {
+    await apiFetch(`/api/words/${encodeURIComponent(wordId)}`, {
       method: "DELETE"
     })
   );
@@ -145,7 +162,7 @@ export async function speakText(
     body.cache_key = options.cacheKey;
   }
   return parseResponse<SpeechResponse>(
-    await fetch("/api/speak", {
+    await apiFetch("/api/speak", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
@@ -157,7 +174,7 @@ export async function checkPassage(text: string): Promise<{ issues: PassageIssue
   const body = new FormData();
   body.append("text", text);
   return parseResponse<{ issues: PassageIssue[] }>(
-    await fetch("/api/passage-check", {
+    await apiFetch("/api/passage-check", {
       method: "POST",
       body
     })

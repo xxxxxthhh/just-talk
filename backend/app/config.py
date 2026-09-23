@@ -2,6 +2,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+_DEFAULT_CORS_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "capacitor://localhost",
+)
+
 
 def _read_dotenv(path: Path) -> dict[str, str]:
     if not path.exists():
@@ -40,6 +46,11 @@ def _float_env(env: dict[str, str], key: str, default: str) -> float:
         raise ValueError(f"{key} must be a number, got {raw!r}.") from exc
 
 
+def _cors_origins_env(env: dict[str, str]) -> tuple[str, ...]:
+    raw = env.get("CORS_ORIGINS", ",".join(_DEFAULT_CORS_ORIGINS))
+    return tuple(origin.strip() for origin in raw.split(",") if origin.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     azure_speech_key: str = ""
@@ -53,6 +64,7 @@ class Settings:
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
+    cors_origins: tuple[str, ...] = _DEFAULT_CORS_ORIGINS
 
     @property
     def azure_configured(self) -> bool:
@@ -77,4 +89,5 @@ class Settings:
             llm_base_url=env.get("LLM_BASE_URL", ""),
             llm_api_key=env.get("LLM_API_KEY", ""),
             llm_model=env.get("LLM_MODEL", "gpt-4o-mini"),
+            cors_origins=_cors_origins_env(env),
         )

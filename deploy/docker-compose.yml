@@ -1,0 +1,35 @@
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    ports:
+      # 阶段 1 只绑定宿主机回环地址，由 Tailscale Serve 提供 HTTPS；不要改成 0.0.0.0。
+      # 阶段 2 启用下面的 Caddy 服务后，删除整个 ports 配置，Caddy 会通过内部网络访问 backend:8000。
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # 首次启动前按部署文档创建并 chown deploy/data；容器固定以 10001:10001 写入。
+      # SQLite 位于宿主机 deploy/data/just_talk.db；升级或迁移前务必备份。
+      - ./data:/app/data
+    restart: unless-stopped
+
+  # 阶段 2（公网 HTTPS）才启用 Caddy；阶段 1 保持整个服务片段为注释，避免误暴露公网端口。
+  # caddy:
+  #   image: caddy:2-alpine
+  #   depends_on:
+  #     - backend
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   restart: unless-stopped
+
+# 阶段 2 启用 Caddy 时，同时取消下面三行注释。
+# volumes:
+#   caddy_data:
+#   caddy_config:

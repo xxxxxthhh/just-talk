@@ -17,3 +17,8 @@ frontend/vite.config.js
 *.pyc
 .DS_Store
 .omo/
+frontend/.env*.local
+frontend/ios/App/Pods/
+frontend/ios/App/build/
+frontend/ios/App/App/public/
+frontend/ios/DerivedData/

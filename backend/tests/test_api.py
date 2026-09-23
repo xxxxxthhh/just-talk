@@ -991,5 +991,35 @@ class PhonemeStatsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
 
 
+class CorsConfigurationTests(unittest.TestCase):
+    def test_create_app_uses_configured_cors_origins(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = create_app(
+                settings=Settings(
+                    database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}",
+                    cors_origins=("capacitor://configured",),
+                )
+            )
+            client = TestClient(app)
+            response = client.options(
+                "/api/health",
+                headers={
+                    "Origin": "capacitor://configured",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers["access-control-allow-origin"],
+            "capacitor://configured",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

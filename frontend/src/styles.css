@@ -243,6 +243,8 @@ p {
   max-width: 1440px;
   margin: 0 auto;
   padding: 24px;
+  padding-top: calc(24px + env(safe-area-inset-top));
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -2546,9 +2548,12 @@ p {
   .workspace {
     grid-template-columns: 1fr;
   }
+  .practice-panel { order: 1; }
+  .results-panel { order: 2; }
   
   .history-panel {
     grid-column: auto;
+    order: 3;
   }
 
   .history-list {
@@ -2600,16 +2605,53 @@ p {
 @media (max-width: 600px) {
   .app-shell {
     padding: 16px;
+    padding-top: calc(16px + env(safe-area-inset-top));
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
   }
   
   .topbar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .brand {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .brand-mark {
+    width: 32px;
+    height: 32px;
+  }
+
+  .brand-mark-glyph {
+    width: 24px;
+    height: 24px;
+  }
+
+  .brand-name {
+    font-size: 20px;
+  }
+
+  .brand p {
+    display: none;
   }
 
   .topbar-actions {
-    justify-content: space-between;
+    grid-column: 2;
+    grid-row: 1;
+    justify-content: flex-end;
+  }
+
+  .status-pill.good {
+    display: none;
+  }
+
+  .view-switch {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 
   .score-grid {

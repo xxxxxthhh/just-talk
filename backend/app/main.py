@@ -81,7 +81,7 @@ def create_app(
     app = FastAPI(title="Just Talk API")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=list(active_settings.cors_origins),
         allow_methods=["*"],
         allow_headers=["*"],
     )

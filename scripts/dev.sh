@@ -17,7 +17,7 @@ fi
 
 export PYTHONPATH="$ROOT_DIR/backend"
 
-.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload &
+.venv/bin/uvicorn app.main:app --host "${BACKEND_HOST:-127.0.0.1}" --port 8000 --reload &
 BACKEND_PID=$!
 
 cleanup() {

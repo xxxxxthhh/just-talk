@@ -29,3 +29,52 @@ class SettingsFromEnvTests(unittest.TestCase):
 
         self.assertEqual(settings.max_audio_seconds, 45)
         self.assertEqual(settings.vocabulary_graduation_score, 90.5)
+
+    def test_cors_origins_default(self):
+        with mock.patch("app.config._env_with_dotenv", return_value={}):
+            settings = Settings.from_env()
+
+        self.assertEqual(
+            settings.cors_origins,
+            (
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+                "capacitor://localhost",
+            ),
+        )
+
+    def test_cors_origins_parse_comma_separated_values(self):
+        with mock.patch(
+            "app.config._env_with_dotenv",
+            return_value={"CORS_ORIGINS": "https://one.example,https://two.example"},
+        ):
+            settings = Settings.from_env()
+
+        self.assertEqual(
+            settings.cors_origins,
+            ("https://one.example", "https://two.example"),
+        )
+
+    def test_cors_origins_strip_whitespace(self):
+        with mock.patch(
+            "app.config._env_with_dotenv",
+            return_value={"CORS_ORIGINS": "  https://one.example , https://two.example  "},
+        ):
+            settings = Settings.from_env()
+
+        self.assertEqual(
+            settings.cors_origins,
+            ("https://one.example", "https://two.example"),
+        )
+
+    def test_cors_origins_ignore_empty_items(self):
+        with mock.patch(
+            "app.config._env_with_dotenv",
+            return_value={"CORS_ORIGINS": ",https://one.example,, ,https://two.example,"},
+        ):
+            settings = Settings.from_env()
+
+        self.assertEqual(
+            settings.cors_origins,
+            ("https://one.example", "https://two.example"),
+        )

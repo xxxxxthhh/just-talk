@@ -58,6 +58,26 @@ The app records in the browser, sends the audio to FastAPI, converts it to 16 kH
 
 Short Drill is limited by `MAX_AUDIO_SECONDS` and uses Azure single-shot pronunciation assessment. Long Passage is limited by `MAX_LONG_AUDIO_SECONDS` and uses Azure continuous pronunciation assessment for longer readings. History rows restore full word and phoneme feedback. Low-scoring words can be saved into the local word bank, then clicked to practice one word at a time. Word drills graduate automatically after repeated scores above the configured threshold, and later low-scoring passage results move them back into the in-progress list.
 
+## iOS
+
+The same frontend is packaged as an iPhone app with Capacitor, using `VITE_API_BASE_URL` and `VITE_API_TOKEN` as build-time backend configuration.
+
+For the shortest local path, the Simulator can keep the backend on `127.0.0.1`; a physical iPhone needs the backend on `0.0.0.0` and `VITE_API_BASE_URL` set to the Mac's LAN IP:
+
+```bash
+# Terminal 1; use ./scripts/dev.sh without BACKEND_HOST for the Simulator.
+BACKEND_HOST=0.0.0.0 ./scripts/dev.sh
+
+# Terminal 2
+cd frontend
+npm run build:ios      # Simulator: build the bundle, then run from Xcode
+npm run ios:device     # Physical iPhone: build, sign, and install in one step
+```
+
+`ios:device` reads your iPhone UDID and Apple signing team ID from the environment: `IOS_DEVICE_ID=<udid> IOS_DEVELOPMENT_TEAM=<team-id> npm run ios:device`. When running from Xcode instead, pick your team under Signing & Capabilities. Free Apple ID signing expires after 7 days, so rerun that one command to reinstall.
+
+Alternatively, open `frontend/ios/App/App.xcworkspace` in Xcode and run the App target. `frontend/.env.ios.local` is git-ignored build-time configuration; copy its shape from `frontend/.env.example`. See the [iOS deployment guide](docs/development/ios-deploy.md) for VPS, Tailscale, signing, and reinstall instructions.
+
 ## Material Import
 
 The Materials panel includes a few original built-in passages and accepts local JSON imports. Imported materials stay in the local SQLite database and can be selected as the current passage.
@@ -142,4 +162,4 @@ docs/development/    Implementation planning notes
 - Keep recordings at or under `MAX_AUDIO_SECONDS` because v1 uses Azure's single-shot scripted assessment path with miscue enabled.
 - Do not put the Azure key in frontend code. The browser only talks to the local FastAPI backend.
 - `.env`, local SQLite data, virtual environments, dependencies, and build outputs are intentionally ignored by git.
-- Do not expose the backend on `0.0.0.0` or any non-localhost address: it has no authentication, and CORS is hard-coded to assume the frontend runs on `localhost:5173`.
+- The backend has no authentication in stages 0–1. Bind it to `0.0.0.0` only temporarily on a trusted LAN for physical-device testing; use the protected deployment path in the iOS guide for remote access.

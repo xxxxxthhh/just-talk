@@ -1,0 +1,7 @@
+# 阶段 2 才启用，阶段 1 不需要本文件。
+# 启用前把 YOUR_DOMAIN.example.com 替换为已经解析到 VPS 公网 IP 的真实域名。
+# 域名有效且公网 80/443 可达时，Caddy 会自动申请并续期 Let's Encrypt 证书。
+
+YOUR_DOMAIN.example.com {
+    reverse_proxy backend:8000
+}

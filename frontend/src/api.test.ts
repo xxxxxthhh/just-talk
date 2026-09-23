@@ -257,3 +257,59 @@ describe("api client", () => {
     );
   });
 });
+
+describe("api environment configuration", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("preserves relative URLs without an API base URL or token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, azure_configured: false })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await checkHealth();
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/health");
+    const init = fetchMock.mock.calls[0][1] as RequestInit | undefined;
+    expect(new Headers(init?.headers).has("Authorization")).toBe(false);
+  });
+
+  test.each([
+    ["https://api.example.com", "https://api.example.com/api/health"],
+    ["https://api.example.com/", "https://api.example.com/api/health"]
+  ])("prefixes requests with API base URL %s", async (baseUrl, expectedUrl) => {
+    vi.stubEnv("VITE_API_BASE_URL", baseUrl);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, azure_configured: false })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await checkHealth();
+
+    expect(fetchMock).toHaveBeenCalledWith(expectedUrl);
+  });
+
+  test("adds the API token without replacing caller headers", async () => {
+    vi.stubEnv("VITE_API_TOKEN", "secret-token");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "word-1", word: "quiet" })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createWord("quiet");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/words",
+      expect.objectContaining({ method: "POST" })
+    );
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = new Headers(init.headers);
+    expect(headers.get("Authorization")).toBe("Bearer secret-token");
+    expect(headers.get("Content-Type")).toBe("application/json");
+  });
+});

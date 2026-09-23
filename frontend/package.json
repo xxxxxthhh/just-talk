@@ -2,18 +2,23 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
+    "build:ios": "vite build --mode ios && cap sync ios",
+    "ios:device": "npm run build:ios && xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Debug -destination id=${IOS_DEVICE_ID:?Set IOS_DEVICE_ID to your iPhone UDID} -derivedDataPath ios/DerivedData -allowProvisioningUpdates DEVELOPMENT_TEAM=${IOS_DEVELOPMENT_TEAM:?Set IOS_DEVELOPMENT_TEAM to your Apple signing team ID} build && xcrun devicectl device install app --device ${IOS_DEVICE_ID} ios/DerivedData/Build/Products/Debug-iphoneos/App.app",
     "lint": "eslint src",
     "test": "vitest run"
   },
   "dependencies": {
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/ios": "^8.5.0",
     "@vitejs/plugin-react": "6.0.2",
     "lucide-react": "1.16.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "typescript": "6.0.3",
-    "vite": "8.0.14"
+    "vite": "8.3.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
     "@eslint/js": "^10.0.1",
     "@testing-library/jest-dom": "6.9.1",
     "@testing-library/react": "16.3.2",
@@ -25,6 +30,6 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "jsdom": "29.1.1",
     "typescript-eslint": "^8.61.0",
-    "vitest": "4.1.7"
+    "vitest": "4.1.11"
   }
 }

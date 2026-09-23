@@ -31,7 +31,41 @@ def probe_audio_duration_seconds(audio_path: Path) -> float:
         text=True,
     )
     payload = json.loads(result.stdout)
-    return float(payload["format"]["duration"])
+    duration = payload["format"].get("duration")
+    if duration is not None:
+        return float(duration)
+
+    packet_result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_packets",
+            "-of",
+            "csv=p=0",
+            "-show_entries",
+            "packet=pts_time,duration_time",
+            str(audio_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    packet_end_times = []
+    for line in packet_result.stdout.splitlines():
+        fields = line.split(",", 2)
+        if len(fields) < 2 or not fields[0] or not fields[1]:
+            continue
+        try:
+            packet_end_times.append(float(fields[0]) + float(fields[1]))
+        except ValueError:
+            continue
+
+    if not packet_end_times:
+        raise ValueError("Could not determine audio duration from packets.")
+    return max(packet_end_times)
 
 
 def convert_to_wav_16k_mono(input_path: Path, output_path: Path) -> None:
