@@ -4,6 +4,8 @@ Just Talk is a pronunciation coaching app for English learners. It records speec
 
 Practice loop: read a passage, inspect weak words, save them to the word bank, then drill one word at a time.
 
+**[Try Just Talk in your browser](https://justtalk.randomnessk.com)** — no account or API key needed. The shared free trial has daily limits; see [Privacy](PRIVACY.md).
+
 It runs in three ways:
 
 - **Personal / local** (default): one user, your own Azure key, data in a local SQLite file. See [Run](#run).
@@ -86,7 +88,7 @@ Alternatively, open `frontend/ios/App/App.xcworkspace` in Xcode and run the App 
 
 ## Public Trial
 
-Hosted trial: https://justtalk.randomnessk.com. This address works only once the maintainer confirms the launch; until then it may be unreachable.
+Hosted trial: **https://justtalk.randomnessk.com** (launched September 24, 2026).
 
 Public mode lets people try Just Talk without setting anything up, while keeping Azure usage bounded:
 
