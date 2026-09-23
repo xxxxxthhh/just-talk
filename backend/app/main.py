@@ -1,28 +1,48 @@
 import base64
+import contextlib
 import hashlib
 import shutil
 import subprocess
 import tempfile
+import threading
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .audio import (
     AudioTooLongError,
-    convert_to_wav_16k_mono,
+    AudioTooShortError,
+    decode_to_wav_16k_mono,
     ensure_audio_duration_allowed,
-    probe_audio_duration_seconds,
 )
 from .azure_client import AzurePronunciationScorer
 from .config import Settings
 from .drills import generate_drill
 from .passage import check_passage
+from .public import (
+    PublicApiError,
+    PublicGuardMiddleware,
+    client_address,
+    mount_static,
+    verify_turnstile,
+)
+from .quota import (
+    QuotaExceededError,
+    QuotaLedger,
+    billable_audio_seconds,
+    billable_tts_characters,
+)
 from .scoring import normalize_azure_result, normalize_continuous_azure_results
 from .storage import SessionStore
 from .tts import AzureTextToSpeechSynthesizer
+from .visitors import VISITOR_COOKIE, VisitorLimitError, VisitorRegistry
 
 
 class WordCreateRequest(BaseModel):
@@ -61,22 +81,71 @@ class DrillGenerateRequest(BaseModel):
     phoneme: str
 
 
+class VisitorCreateRequest(BaseModel):
+    turnstile_token: str = Field(default="", max_length=2048)
+
+
+@dataclass(frozen=True)
+class Actor:
+    """Who a request acts for: the single local user, or a public visitor."""
+
+    visitor_id: str | None
+    store: SessionStore
+
+
+_VISITOR_LIMIT_MESSAGES = {
+    "active_limit": "The public trial is full right now. Please try again later.",
+    "issuance_rate": "Too many new visitors right now. Please try again in a while.",
+    "client_rate": "Too many new sessions from this network. Please try again later.",
+}
+_QUOTA_MESSAGES = {
+    "visitor_day": "You've used today's free {what}. It resets at 00:00 UTC.",
+    "global_day": "Today's shared free {what} for all visitors is used up. It resets at 00:00 UTC.",
+    "global_month": "This month's shared free {what} is used up. It resets on the 1st (UTC).",
+}
+
+
 def create_app(
     *,
     settings: Settings | None = None,
     store: SessionStore | None = None,
     scorer: Any | None = None,
     synthesizer: Any | None = None,
+    clock: Callable[[], datetime] | None = None,
+    turnstile_verifier: Callable[[str, str, str | None], bool] | None = None,
 ) -> FastAPI:
     active_settings = settings or Settings.from_env()
-    active_store = store or SessionStore(active_settings.database_url)
-    active_store.initialize()
+    public = active_settings.public
     active_scorer = scorer
     if active_scorer is None and active_settings.azure_configured:
         active_scorer = AzurePronunciationScorer(active_settings)
     active_synthesizer = synthesizer
     if active_synthesizer is None and active_settings.azure_configured:
         active_synthesizer = AzureTextToSpeechSynthesizer(active_settings)
+    verify_turnstile_token = turnstile_verifier or verify_turnstile
+
+    personal_store: SessionStore | None = None
+    ledger: QuotaLedger | None = None
+    registry: VisitorRegistry | None = None
+    shared_speech_cache: SessionStore | None = None
+    azure_slots: threading.BoundedSemaphore | None = None
+    if public.enabled:
+        data_dir = Path(public.data_dir)
+        ledger = QuotaLedger(data_dir / "usage.db", public, clock=clock)
+        ledger.initialize()
+        ledger.prune()
+        registry = VisitorRegistry(
+            data_dir, public, clock=clock, on_delete=ledger.anonymize_visitor
+        )
+        registry.initialize()
+        # Keyed only by full text + voice, so a visitor can get cached audio
+        # only for text they already sent.
+        shared_speech_cache = SessionStore(f"sqlite:///{data_dir / 'speech_cache.db'}")
+        shared_speech_cache.initialize(seed_builtin_materials=False)
+        azure_slots = threading.BoundedSemaphore(public.max_concurrent_azure)
+    else:
+        personal_store = store or SessionStore(active_settings.database_url)
+        personal_store.initialize()
 
     app = FastAPI(title="Just Talk API")
     app.add_middleware(
@@ -85,10 +154,111 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    if public.enabled:
+        app.add_middleware(
+            PublicGuardMiddleware,
+            allowed_origins=public.allowed_origins,
+            upload_paths=("/api/score",),
+            max_upload_bytes=public.max_upload_bytes,
+            max_body_bytes=public.max_json_bytes,
+        )
+
+    @app.exception_handler(PublicApiError)
+    def handle_public_api_error(request: Request, exc: PublicApiError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content=exc.payload())
+
+    @app.exception_handler(QuotaExceededError)
+    def handle_quota_exceeded(request: Request, exc: QuotaExceededError) -> JSONResponse:
+        what = "recording time" if exc.kind == "score" else "listening allowance"
+        if exc.metric == "attempts":
+            what = "scoring attempts" if exc.kind == "score" else "listening requests"
+        return JSONResponse(
+            status_code=429,
+            content={
+                "detail": _QUOTA_MESSAGES[exc.scope].format(what=what),
+                "code": "quota_exhausted",
+                "kind": exc.kind,
+                "scope": exc.scope,
+                "metric": exc.metric,
+                "resets_at": exc.resets_at,
+            },
+        )
+
+    def _require_visitor_id(request: Request) -> str:
+        assert registry is not None
+        visitor_id = registry.resolve(request.cookies.get(VISITOR_COOKIE))
+        if visitor_id is None:
+            raise PublicApiError(
+                401, "visitor_required", "Start a practice session to continue."
+            )
+        return visitor_id
+
+    def get_actor(request: Request) -> Iterator[Actor]:
+        if not public.enabled:
+            assert personal_store is not None
+            yield Actor(visitor_id=None, store=personal_store)
+            return
+        assert registry is not None
+        visitor_id = _require_visitor_id(request)
+        usage = registry.use(visitor_id)
+        try:
+            visitor_store = usage.__enter__()
+        except KeyError as exc:
+            raise PublicApiError(
+                401, "visitor_required", "Start a practice session to continue."
+            ) from exc
+        try:
+            yield Actor(visitor_id=visitor_id, store=visitor_store)
+        finally:
+            usage.__exit__(None, None, None)
+
+    def _azure_slot() -> contextlib.AbstractContextManager[None]:
+        if azure_slots is None:
+            return contextlib.nullcontext()
+
+        @contextlib.contextmanager
+        def slot() -> Iterator[None]:
+            if not azure_slots.acquire(timeout=public.azure_queue_wait_seconds):
+                raise PublicApiError(
+                    503, "busy", "The scoring service is busy. Please try again in a moment."
+                )
+            try:
+                yield
+            finally:
+                azure_slots.release()
+
+        return slot()
+
+    def _ensure_public_scoring_enabled() -> None:
+        if public.enabled and not public.scoring_enabled:
+            raise PublicApiError(
+                503,
+                "scoring_paused",
+                "Scoring and playback are paused on this public trial right now.",
+            )
+
+    @contextlib.contextmanager
+    def _billable_call(actor: Actor, kind: str, units: int) -> Iterator[None]:
+        """Reserve usage, mark it sent, and never refund once Azure is called."""
+        if ledger is None or actor.visitor_id is None:
+            yield
+            return
+        attempt_id = ledger.reserve(visitor_id=actor.visitor_id, kind=kind, units=units)
+        try:
+            ledger.mark_sent(attempt_id)
+        except BaseException:
+            ledger.release(attempt_id)
+            raise
+        succeeded = False
+        try:
+            yield
+            succeeded = True
+        finally:
+            ledger.complete(attempt_id, succeeded=succeeded)
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "ok": True,
             "azure_configured": active_settings.azure_configured,
             "passage_check_configured": active_settings.passage_check_configured,
@@ -97,9 +267,74 @@ def create_app(
             "vocabulary_graduation_score": active_settings.vocabulary_graduation_score,
             "vocabulary_graduation_streak": active_settings.vocabulary_graduation_streak,
         }
+        if public.enabled:
+            payload["public"] = {
+                "scoring_enabled": public.scoring_enabled,
+                "turnstile_site_key": public.turnstile_site_key if public.turnstile_enabled else "",
+                "max_tts_chars_per_request": public.max_tts_chars_per_request,
+                "max_reference_chars": public.max_reference_chars,
+                "visitor_ttl_days": public.visitor_ttl_days,
+            }
+        return payload
+
+    if public.enabled:
+
+        @app.post("/api/visitor")
+        def create_visitor(
+            request: Request,
+            response: Response,
+            body: VisitorCreateRequest | None = None,
+        ) -> dict[str, Any]:
+            assert registry is not None
+            if registry.resolve(request.cookies.get(VISITOR_COOKIE)) is not None:
+                return {"created": False}
+            remote = client_address(request, public.client_ip_header)
+            if public.turnstile_enabled:
+                token = body.turnstile_token if body else ""
+                if not verify_turnstile_token(public.turnstile_secret_key, token, remote):
+                    raise PublicApiError(
+                        403, "challenge_failed", "Please complete the verification and try again."
+                    )
+            try:
+                _, token = registry.issue(client_key=remote)
+            except VisitorLimitError as exc:
+                raise PublicApiError(
+                    429, "visitor_limit", _VISITOR_LIMIT_MESSAGES[exc.reason]
+                ) from exc
+            response.set_cookie(
+                VISITOR_COOKIE,
+                token,
+                max_age=public.visitor_ttl_days * 86400,
+                path="/api",
+                secure=public.cookie_secure,
+                httponly=True,
+                samesite="lax",
+            )
+            response.status_code = 201
+            return {"created": True}
+
+        @app.get("/api/me/quota")
+        def my_quota(actor: Actor = Depends(get_actor)) -> dict[str, Any]:
+            assert ledger is not None and actor.visitor_id is not None
+            return ledger.status(visitor_id=actor.visitor_id)
+
+        @app.delete("/api/me")
+        def delete_me(request: Request, response: Response) -> dict[str, bool]:
+            assert registry is not None
+            visitor_id = _require_visitor_id(request)
+            registry.delete(visitor_id)
+            response.delete_cookie(
+                VISITOR_COOKIE,
+                path="/api",
+                secure=public.cookie_secure,
+                httponly=True,
+                samesite="lax",
+            )
+            return {"deleted": True}
 
     def _score_uploaded_recording(
         *,
+        actor: Actor,
         reference_text: str,
         audio: UploadFile,
         mode: str,
@@ -107,6 +342,11 @@ def create_app(
         cleaned_reference = reference_text.strip()
         if not cleaned_reference:
             raise HTTPException(status_code=400, detail="reference_text is required.")
+        if public.enabled and len(cleaned_reference) > public.max_reference_chars:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Text is too long; keep it under {public.max_reference_chars} characters.",
+            )
         score_mode = mode.strip().lower()
         if score_mode not in {"short", "long"}:
             raise HTTPException(status_code=400, detail='mode must be "short" or "long".')
@@ -123,59 +363,72 @@ def create_app(
                     status_code=503,
                     detail="Long Passage scoring is not available for this scorer.",
                 )
+        max_seconds = (
+            active_settings.max_long_audio_seconds
+            if score_mode == "long"
+            else active_settings.max_audio_seconds
+        )
+        _ensure_public_scoring_enabled()
+        if ledger is not None and actor.visitor_id is not None:
+            ledger.precheck(visitor_id=actor.visitor_id, kind="score")
 
-        suffix = Path(audio.filename or "recording.webm").suffix or ".webm"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            input_path = Path(temp_dir) / f"upload{suffix}"
-            wav_path = Path(temp_dir) / "recording.wav"
-            with input_path.open("wb") as destination:
-                shutil.copyfileobj(audio.file, destination)
+        with _azure_slot():
+            suffix = Path(audio.filename or "recording.webm").suffix[:10] or ".webm"
+            with tempfile.TemporaryDirectory() as temp_dir:
+                input_path = Path(temp_dir) / f"upload{suffix}"
+                wav_path = Path(temp_dir) / "recording.wav"
+                with input_path.open("wb") as destination:
+                    shutil.copyfileobj(audio.file, destination)
 
-            try:
-                duration_seconds = probe_audio_duration_seconds(input_path)
-                ensure_audio_duration_allowed(
-                    duration_seconds=duration_seconds,
-                    max_seconds=(
-                        active_settings.max_long_audio_seconds
-                        if score_mode == "long"
-                        else active_settings.max_audio_seconds
-                    ),
-                )
-                convert_to_wav_16k_mono(input_path, wav_path)
-            except AudioTooLongError as exc:
-                raise HTTPException(status_code=413, detail=str(exc)) from exc
-            except (subprocess.CalledProcessError, KeyError, ValueError) as exc:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Could not read the uploaded audio. Please record again.",
-                ) from exc
-
-            if score_mode == "long":
                 try:
-                    raw_results, scoring_warnings = continuous_score(
-                        wav_path, cleaned_reference
+                    duration_seconds = decode_to_wav_16k_mono(
+                        input_path, wav_path, max_seconds=max_seconds
                     )
-                except RuntimeError as exc:
-                    raise HTTPException(status_code=502, detail=str(exc)) from exc
-                normalized = normalize_continuous_azure_results(raw_results)
-                if scoring_warnings:
-                    normalized["warnings"] = scoring_warnings
-            else:
-                raw_result = active_scorer.score(wav_path, cleaned_reference)
-                normalized = normalize_azure_result(raw_result)
+                    ensure_audio_duration_allowed(
+                        duration_seconds=duration_seconds, max_seconds=max_seconds
+                    )
+                    if public.enabled and duration_seconds < public.min_audio_seconds:
+                        raise AudioTooShortError("Recording is too short.")
+                except AudioTooLongError as exc:
+                    raise HTTPException(status_code=413, detail=str(exc)) from exc
+                except AudioTooShortError as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="The recording is too short. Please record again.",
+                    ) from exc
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError) as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Could not read the uploaded audio. Please record again.",
+                    ) from exc
+
+                with _billable_call(actor, "score", billable_audio_seconds(duration_seconds)):
+                    if score_mode == "long":
+                        try:
+                            raw_results, scoring_warnings = continuous_score(
+                                wav_path, cleaned_reference
+                            )
+                        except RuntimeError as exc:
+                            raise HTTPException(status_code=502, detail=str(exc)) from exc
+                        normalized = normalize_continuous_azure_results(raw_results)
+                        if scoring_warnings:
+                            normalized["warnings"] = scoring_warnings
+                    else:
+                        raw_result = active_scorer.score(wav_path, cleaned_reference)
+                        normalized = normalize_azure_result(raw_result)
 
         if normalized.get("recognition_status") == "no_match":
             # Azure recognized no speech at all; skip persisting a session and
             # word-bank practice update so empty results don't pollute history/stats.
             return {"result": normalized, "session": None}
 
-        session = active_store.create_session(
+        session = actor.store.create_session(
             reference_text=cleaned_reference,
             audio_duration_ms=round(duration_seconds * 1000),
             normalized_result=normalized,
         )
         if score_mode == "short" and (single_word := _single_word_reference(cleaned_reference)):
-            active_store.record_word_practice(
+            actor.store.record_word_practice(
                 single_word,
                 latest_score=normalized.get("scores", {}).get("accuracy"),
                 graduation_score=active_settings.vocabulary_graduation_score,
@@ -183,76 +436,105 @@ def create_app(
             )
         return {"result": normalized, "session": session}
 
+    def _ensure_word_capacity(actor: Actor) -> None:
+        if public.enabled and len(actor.store.list_words()) >= public.max_words:
+            raise HTTPException(
+                status_code=400,
+                detail=f"The word bank is full ({public.max_words} words). Remove some words first.",
+            )
+
     @app.post("/api/score")
     def score(
         reference_text: str = Form(...),
         audio: UploadFile = File(...),
         mode: str = Form("short"),
+        actor: Actor = Depends(get_actor),
     ) -> dict[str, Any]:
         return _score_uploaded_recording(
+            actor=actor,
             reference_text=reference_text,
             audio=audio,
             mode=mode,
         )
 
     @app.get("/api/sessions")
-    def list_sessions() -> list[dict[str, Any]]:
-        return active_store.list_sessions()
+    def list_sessions(actor: Actor = Depends(get_actor)) -> list[dict[str, Any]]:
+        return actor.store.list_sessions()
 
     @app.get("/api/export")
-    def export_data(response: Response) -> dict[str, Any]:
+    def export_data(response: Response, actor: Actor = Depends(get_actor)) -> dict[str, Any]:
         response.headers["Content-Disposition"] = (
             'attachment; filename="just-talk-export.json"'
         )
-        return active_store.export_data()
+        return actor.store.export_data()
 
     @app.get("/api/sessions/{session_id}")
-    def get_session(session_id: str) -> dict[str, Any]:
+    def get_session(session_id: str, actor: Actor = Depends(get_actor)) -> dict[str, Any]:
         try:
-            return active_store.get_session(session_id)
+            return actor.store.get_session(session_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
 
     @app.get("/api/words")
-    def list_words(status: str | None = None) -> list[dict[str, Any]]:
+    def list_words(
+        status: str | None = None, actor: Actor = Depends(get_actor)
+    ) -> list[dict[str, Any]]:
         try:
-            return active_store.list_words(status=status)
+            return actor.store.list_words(status=status)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/stats/activity")
-    def get_activity_stats() -> dict[str, Any]:
-        return active_store.get_activity_stats()
+    def get_activity_stats(actor: Actor = Depends(get_actor)) -> dict[str, Any]:
+        return actor.store.get_activity_stats()
 
     @app.get("/api/phoneme-stats")
-    def list_phoneme_stats(min_attempts: int | None = None) -> list[dict[str, Any]]:
+    def list_phoneme_stats(
+        min_attempts: int | None = None, actor: Actor = Depends(get_actor)
+    ) -> list[dict[str, Any]]:
         if min_attempts is None:
-            return active_store.list_phoneme_stats()
-        return active_store.list_phoneme_stats(min_attempts=max(min_attempts, 1))
+            return actor.store.list_phoneme_stats()
+        return actor.store.list_phoneme_stats(min_attempts=max(min_attempts, 1))
 
     @app.get("/api/materials")
-    def list_materials() -> list[dict[str, Any]]:
-        return active_store.list_materials()
+    def list_materials(actor: Actor = Depends(get_actor)) -> list[dict[str, Any]]:
+        return actor.store.list_materials()
 
     @app.post("/api/material-packs/import")
-    def import_material_pack(request: MaterialPackImportRequest) -> dict[str, Any]:
+    def import_material_pack(
+        request: MaterialPackImportRequest, actor: Actor = Depends(get_actor)
+    ) -> dict[str, Any]:
         payload = request.model_dump()
+        if public.enabled:
+            imported = sum(
+                1 for item in actor.store.list_materials() if item.get("source") != "built-in"
+            )
+            if imported + len(payload["lessons"]) > public.max_imported_lessons:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Imported materials are limited to {public.max_imported_lessons} lessons.",
+                )
         try:
-            return active_store.import_material_pack(payload)
+            return actor.store.import_material_pack(payload)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.delete("/api/material-groups")
-    def delete_material_group(pack_id: str, book: str = "") -> dict[str, int]:
+    def delete_material_group(
+        pack_id: str, book: str = "", actor: Actor = Depends(get_actor)
+    ) -> dict[str, int]:
         try:
-            return {"deleted": active_store.delete_material_group(pack_id=pack_id, book=book)}
+            return {"deleted": actor.store.delete_material_group(pack_id=pack_id, book=book)}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/words")
-    def create_word(request: WordCreateRequest) -> dict[str, Any]:
+    def create_word(
+        request: WordCreateRequest, actor: Actor = Depends(get_actor)
+    ) -> dict[str, Any]:
+        _ensure_word_capacity(actor)
         try:
-            return active_store.create_word(
+            return actor.store.create_word(
                 request.word,
                 source="manual",
                 notes=request.notes,
@@ -261,34 +543,52 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.delete("/api/words/{word_id}")
-    def delete_word(word_id: str) -> dict[str, bool]:
-        return {"deleted": active_store.delete_word(word_id)}
+    def delete_word(word_id: str, actor: Actor = Depends(get_actor)) -> dict[str, bool]:
+        return {"deleted": actor.store.delete_word(word_id)}
 
     @app.post("/api/words/from-session/{session_id}")
     def create_words_from_session(
         session_id: str,
         max_score: float | None = None,
+        actor: Actor = Depends(get_actor),
     ) -> list[dict[str, Any]]:
+        _ensure_word_capacity(actor)
         try:
             cutoff = (
                 active_settings.vocabulary_graduation_score
                 if max_score is None
                 else max_score
             )
-            return active_store.create_words_from_session(session_id, max_score=cutoff)
+            return actor.store.create_words_from_session(session_id, max_score=cutoff)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
 
     @app.post("/api/speak")
-    def speak(request: SpeakRequest) -> dict[str, Any]:
+    def speak(request: SpeakRequest, actor: Actor = Depends(get_actor)) -> dict[str, Any]:
         text = request.text.strip()
         if not text:
             raise HTTPException(status_code=400, detail="text is required.")
-        cache_key = request.cache_key.strip() if request.cache_key else ""
         text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         voice = active_settings.azure_tts_voice
+        if public.enabled:
+            if len(text) > public.max_tts_chars_per_request:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Text is too long to play at once; keep it under "
+                        f"{public.max_tts_chars_per_request} characters."
+                    ),
+                )
+            # Ignore the client's cache_key: the shared cache is keyed on the
+            # full text so nobody can fetch audio for text they didn't send.
+            cache_store = shared_speech_cache
+            cache_key = f"text:{text_hash}"
+        else:
+            cache_store = actor.store
+            cache_key = request.cache_key.strip() if request.cache_key else ""
+        assert cache_store is not None
         if cache_key:
-            cached = active_store.get_speech_cache(
+            cached = cache_store.get_speech_cache(
                 cache_key=cache_key,
                 text_hash=text_hash,
                 voice=voice,
@@ -306,14 +606,16 @@ def create_app(
                 status_code=503,
                 detail="Azure Speech is not configured. Fill AZURE_SPEECH_KEY and AZURE_SPEECH_REGION in .env.",
             )
-        try:
-            synthesis_result = active_synthesizer.synthesize(text)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        _ensure_public_scoring_enabled()
+        with _azure_slot(), _billable_call(actor, "tts", billable_tts_characters(text)):
+            try:
+                synthesis_result = active_synthesizer.synthesize(text)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
         audio_bytes, content_type = synthesis_result[:2]
         word_boundaries = synthesis_result[2] if len(synthesis_result) > 2 else []
         if cache_key:
-            active_store.save_speech_cache(
+            cache_store.save_speech_cache(
                 cache_key=cache_key,
                 text_hash=text_hash,
                 voice=voice,
@@ -340,7 +642,9 @@ def create_app(
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.post("/api/drills/generate")
-    def generate_drill_material(request: DrillGenerateRequest) -> dict[str, Any]:
+    def generate_drill_material(
+        request: DrillGenerateRequest, actor: Actor = Depends(get_actor)
+    ) -> dict[str, Any]:
         if not active_settings.passage_check_configured:
             raise HTTPException(
                 status_code=503,
@@ -352,17 +656,20 @@ def create_app(
         phoneme = request.phoneme.strip().strip("/")
         if not phoneme:
             raise HTTPException(status_code=400, detail="phoneme is required.")
-        seed_words = _seed_words_for_phoneme(active_store, phoneme)
+        seed_words = _seed_words_for_phoneme(actor.store, phoneme)
         try:
             drill = generate_drill(active_settings, phoneme, seed_words=seed_words)
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return active_store.save_drill_material(
+        return actor.store.save_drill_material(
             phoneme=phoneme,
             title=drill["title"],
             passage=drill["passage"],
             focus_words=drill["focus_words"],
         )
+
+    if active_settings.static_dir:
+        mount_static(app, active_settings.static_dir, turnstile=public.turnstile_enabled)
 
     return app
 

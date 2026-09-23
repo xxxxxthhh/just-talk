@@ -4,4 +4,4 @@ python-multipart
 azure-cognitiveservices-speech
 httpx
 pytest
-ruff
+ruff>=0.15,<0.16
