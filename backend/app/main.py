@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import contextlib
 import hashlib
@@ -5,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -40,7 +41,7 @@ from .quota import (
     billable_tts_characters,
 )
 from .scoring import normalize_azure_result, normalize_continuous_azure_results
-from .storage import SessionStore
+from .storage import BUILTIN_MATERIAL_PACK, DRILL_PACK_ID, SessionStore
 from .tts import AzureTextToSpeechSynthesizer
 from .visitors import VISITOR_COOKIE, VisitorLimitError, VisitorRegistry
 
@@ -93,6 +94,13 @@ class Actor:
     store: SessionStore
 
 
+RESERVED_PACK_IDS = frozenset({BUILTIN_MATERIAL_PACK["pack"]["id"], DRILL_PACK_ID})
+# Only these published built-in texts may share synthesized audio across
+# visitors; anything a visitor typed is cached in their own database.
+BUILTIN_TEXTS = frozenset(lesson["text"] for lesson in BUILTIN_MATERIAL_PACK["lessons"])
+MAINTENANCE_INTERVAL_SECONDS = 600
+MAX_MATERIAL_META_CHARS = 200
+
 _VISITOR_LIMIT_MESSAGES = {
     "active_limit": "The public trial is full right now. Please try again later.",
     "issuance_rate": "Too many new visitors right now. Please try again in a while.",
@@ -138,8 +146,7 @@ def create_app(
             data_dir, public, clock=clock, on_delete=ledger.anonymize_visitor
         )
         registry.initialize()
-        # Keyed only by full text + voice, so a visitor can get cached audio
-        # only for text they already sent.
+        # Built-in material audio only; see BUILTIN_TEXTS.
         shared_speech_cache = SessionStore(f"sqlite:///{data_dir / 'speech_cache.db'}")
         shared_speech_cache.initialize(seed_builtin_materials=False)
         azure_slots = threading.BoundedSemaphore(public.max_concurrent_azure)
@@ -147,7 +154,28 @@ def create_app(
         personal_store = store or SessionStore(active_settings.database_url)
         personal_store.initialize()
 
-    app = FastAPI(title="Just Talk API")
+    @contextlib.asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        maintenance = None
+        if registry is not None and ledger is not None:
+
+            async def maintain() -> None:
+                # Expire idle visitors (TTL) and prune old ledger rows even
+                # when no new visitor arrives to trigger cleanup.
+                while True:
+                    await asyncio.sleep(MAINTENANCE_INTERVAL_SECONDS)
+                    with contextlib.suppress(Exception):
+                        await asyncio.to_thread(registry.cleanup_expired)
+                        await asyncio.to_thread(ledger.prune)
+
+            maintenance = asyncio.create_task(maintain())
+        try:
+            yield
+        finally:
+            if maintenance is not None:
+                maintenance.cancel()
+
+    app = FastAPI(title="Just Talk API", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(active_settings.cors_origins),
@@ -427,7 +455,12 @@ def create_app(
             audio_duration_ms=round(duration_seconds * 1000),
             normalized_result=normalized,
         )
-        if score_mode == "short" and (single_word := _single_word_reference(cleaned_reference)):
+        single_word = _single_word_reference(cleaned_reference) if score_mode == "short" else ""
+        if single_word and _word_slots_left(actor) == 0:
+            known = {item["word"].casefold() for item in actor.store.list_words()}
+            if single_word.casefold() not in known:
+                single_word = ""
+        if single_word:
             actor.store.record_word_practice(
                 single_word,
                 latest_score=normalized.get("scores", {}).get("accuracy"),
@@ -436,11 +469,77 @@ def create_app(
             )
         return {"result": normalized, "session": session}
 
-    def _ensure_word_capacity(actor: Actor) -> None:
-        if public.enabled and len(actor.store.list_words()) >= public.max_words:
+    def _word_slots_left(actor: Actor) -> int | None:
+        if not public.enabled:
+            return None
+        return max(public.max_words - len(actor.store.list_words()), 0)
+
+    def _word_bank_full_error() -> HTTPException:
+        return HTTPException(
+            status_code=400,
+            detail=f"The word bank is full ({public.max_words} words). Remove some words first.",
+        )
+
+    def _validate_public_import(payload: dict[str, Any], actor: Actor) -> None:
+        pack = payload["pack"]
+        if pack["id"] in RESERVED_PACK_IDS:
+            raise HTTPException(status_code=400, detail="This pack id is reserved.")
+        # Never trust client labels: imports are always user content.
+        pack["source"] = "user-imported"
+        for field_name in ("id", "title", "license"):
+            if len(str(pack[field_name])) > MAX_MATERIAL_META_CHARS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"pack {field_name} must be at most {MAX_MATERIAL_META_CHARS} characters.",
+                )
+        for lesson in payload["lessons"]:
+            for field_name in ("id", "book", "lesson"):
+                if len(str(lesson.get(field_name) or "")) > MAX_MATERIAL_META_CHARS:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"lesson {field_name} must be at most {MAX_MATERIAL_META_CHARS} characters.",
+                    )
+            if len(lesson["title"]) > public.max_lesson_title_chars:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"lesson title must be at most {public.max_lesson_title_chars} characters.",
+                )
+            if len(lesson["text"]) > public.max_lesson_text_chars:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"lesson text must be at most {public.max_lesson_text_chars} characters.",
+                )
+            tags = lesson.get("tags") or []
+            if len(tags) > public.max_lesson_tags or any(
+                len(str(tag)) > public.max_tag_chars for tag in tags
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"lessons may have at most {public.max_lesson_tags} tags of "
+                        f"{public.max_tag_chars} characters."
+                    ),
+                )
+        # Count every stored non-reserved lesson except the pack being
+        # replaced (an import replaces all lessons of its pack).
+        existing = [
+            item
+            for item in actor.store.list_materials()
+            if item["pack_id"] not in RESERVED_PACK_IDS and item["pack_id"] != pack["id"]
+        ]
+        lesson_count = len(existing) + len(payload["lessons"])
+        char_count = sum(len(item["text"]) + len(item["title"]) for item in existing) + sum(
+            len(lesson["text"]) + len(lesson["title"]) for lesson in payload["lessons"]
+        )
+        if lesson_count > public.max_imported_lessons:
             raise HTTPException(
                 status_code=400,
-                detail=f"The word bank is full ({public.max_words} words). Remove some words first.",
+                detail=f"Imported materials are limited to {public.max_imported_lessons} lessons.",
+            )
+        if char_count > public.max_imported_chars:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Imported materials are limited to {public.max_imported_chars} characters in total.",
             )
 
     @app.post("/api/score")
@@ -506,14 +605,7 @@ def create_app(
     ) -> dict[str, Any]:
         payload = request.model_dump()
         if public.enabled:
-            imported = sum(
-                1 for item in actor.store.list_materials() if item.get("source") != "built-in"
-            )
-            if imported + len(payload["lessons"]) > public.max_imported_lessons:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Imported materials are limited to {public.max_imported_lessons} lessons.",
-                )
+            _validate_public_import(payload, actor)
         try:
             return actor.store.import_material_pack(payload)
         except ValueError as exc:
@@ -532,7 +624,19 @@ def create_app(
     def create_word(
         request: WordCreateRequest, actor: Actor = Depends(get_actor)
     ) -> dict[str, Any]:
-        _ensure_word_capacity(actor)
+        if public.enabled:
+            if len(request.word.strip()) > public.max_word_chars:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Words must be at most {public.max_word_chars} characters.",
+                )
+            if len(request.notes) > public.max_notes_chars:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Notes must be at most {public.max_notes_chars} characters.",
+                )
+            if _word_slots_left(actor) == 0:
+                raise _word_bank_full_error()
         try:
             return actor.store.create_word(
                 request.word,
@@ -552,14 +656,18 @@ def create_app(
         max_score: float | None = None,
         actor: Actor = Depends(get_actor),
     ) -> list[dict[str, Any]]:
-        _ensure_word_capacity(actor)
+        slots = _word_slots_left(actor)
+        if slots == 0:
+            raise _word_bank_full_error()
         try:
             cutoff = (
                 active_settings.vocabulary_graduation_score
                 if max_score is None
                 else max_score
             )
-            return actor.store.create_words_from_session(session_id, max_score=cutoff)
+            return actor.store.create_words_from_session(
+                session_id, max_score=cutoff, max_new_words=slots
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
 
@@ -579,9 +687,10 @@ def create_app(
                         f"{public.max_tts_chars_per_request} characters."
                     ),
                 )
-            # Ignore the client's cache_key: the shared cache is keyed on the
-            # full text so nobody can fetch audio for text they didn't send.
-            cache_store = shared_speech_cache
+            # Ignore the client's cache_key and key on the full text. Built-in
+            # passages share one cache; anything else stays in the visitor's
+            # own database and is deleted with it.
+            cache_store = shared_speech_cache if text in BUILTIN_TEXTS else actor.store
             cache_key = f"text:{text_hash}"
         else:
             cache_store = actor.store

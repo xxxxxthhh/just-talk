@@ -103,7 +103,14 @@ class PublicSettings:
     max_reference_chars: int = 1_500
     min_audio_seconds: float = 0.3
     max_words: int = 500
+    max_word_chars: int = 80
+    max_notes_chars: int = 1_000
     max_imported_lessons: int = 200
+    max_imported_chars: int = 200_000
+    max_lesson_text_chars: int = 10_000
+    max_lesson_title_chars: int = 200
+    max_lesson_tags: int = 10
+    max_tag_chars: int = 40
     max_concurrent_azure: int = 2
     azure_queue_wait_seconds: float = 10.0
     turnstile_site_key: str = ""
@@ -182,7 +189,18 @@ class PublicSettings:
                 env, "PUBLIC_MIN_AUDIO_SECONDS", str(defaults.min_audio_seconds)
             ),
             max_words=n("PUBLIC_MAX_WORDS", defaults.max_words),
+            max_word_chars=n("PUBLIC_MAX_WORD_CHARS", defaults.max_word_chars),
+            max_notes_chars=n("PUBLIC_MAX_NOTES_CHARS", defaults.max_notes_chars),
             max_imported_lessons=n("PUBLIC_MAX_IMPORTED_LESSONS", defaults.max_imported_lessons),
+            max_imported_chars=n("PUBLIC_MAX_IMPORTED_CHARS", defaults.max_imported_chars),
+            max_lesson_text_chars=n(
+                "PUBLIC_MAX_LESSON_TEXT_CHARS", defaults.max_lesson_text_chars
+            ),
+            max_lesson_title_chars=n(
+                "PUBLIC_MAX_LESSON_TITLE_CHARS", defaults.max_lesson_title_chars
+            ),
+            max_lesson_tags=n("PUBLIC_MAX_LESSON_TAGS", defaults.max_lesson_tags),
+            max_tag_chars=n("PUBLIC_MAX_TAG_CHARS", defaults.max_tag_chars),
             max_concurrent_azure=max(
                 n("PUBLIC_MAX_CONCURRENT_AZURE", defaults.max_concurrent_azure), 1
             ),

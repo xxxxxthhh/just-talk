@@ -1003,10 +1003,14 @@ class SessionStore:
         session_id: str,
         *,
         max_score: float = 85.0,
+        max_new_words: int | None = None,
     ) -> list[dict[str, Any]]:
+        """Add weak words from a session. ``max_new_words`` caps how many words
+        not already in the bank may be created; existing words still update."""
         session = self.get_session(session_id)
         added: list[dict[str, Any]] = []
         seen: set[str] = set()
+        new_words = 0
         for word_result in session.get("words", []):
             word = str(word_result.get("word", "")).strip()
             score = word_result.get("accuracy")
@@ -1016,6 +1020,13 @@ class SessionStore:
             if normalized_word in seen:
                 continue
             seen.add(normalized_word)
+            if max_new_words is not None:
+                with self._connection() as connection:
+                    exists = self._find_word(connection, normalized_word) is not None
+                if not exists:
+                    if new_words >= max_new_words:
+                        continue
+                    new_words += 1
             item = self.create_word(word, source="weak-word")
             item = self.record_word_practice(
                 item["word"],
