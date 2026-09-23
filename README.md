@@ -1,8 +1,14 @@
 # Just Talk
 
-Just Talk is a local-first pronunciation coaching app. It records speech in the browser, scores pronunciation with Azure AI Speech, shows word and phoneme feedback, plays standard pronunciation with Azure Text-to-Speech, and keeps a local word bank for targeted practice.
+Just Talk is a pronunciation coaching app for English learners. It records speech in the browser, scores pronunciation with Azure AI Speech, shows word and phoneme feedback, plays standard pronunciation with Azure Text-to-Speech, and keeps a word bank for targeted practice.
 
-The app is designed for personal learning workflows: read a passage, inspect weak words, save them to the word bank, then drill one word at a time.
+Practice loop: read a passage, inspect weak words, save them to the word bank, then drill one word at a time.
+
+It runs in three ways:
+
+- **Personal / local** (default): one user, your own Azure key, data in a local SQLite file. See [Run](#run).
+- **iPhone app**: the same frontend packaged with Capacitor, talking to your own backend. See [iOS](#ios).
+- **Public trial** (`PUBLIC_MODE=1`): anonymous visitors use a server-held Azure key under per-visitor and site-wide usage caps, with per-visitor data they can delete. See [Public trial](#public-trial).
 
 ## Features
 
@@ -11,11 +17,11 @@ The app is designed for personal learning workflows: read a passage, inspect wea
 - Azure Pronunciation Assessment scoring for accuracy, fluency, completeness, prosody, and overall pronunciation.
 - Word-level and phoneme-level review, including likely heard alternatives when Azure returns them.
 - Standard pronunciation playback for passages and selected words.
-- Built-in original practice materials plus local JSON material import.
-- Local history stored in SQLite.
+- Built-in sample passages plus JSON material import.
+- History stored in SQLite.
 - Local word bank for weak words and manual vocabulary practice, with in-progress and graduated views and spaced-repetition review scheduling (successful drills double the review interval; failures make the word due immediately).
-- Optional passage quality check through an OpenAI-compatible LLM endpoint.
-- LLM-generated phoneme drill passages from the insights panel, seeded with your weakest words for that sound (works with any OpenAI-compatible endpoint, including local Ollama).
+- Optional passage quality check through an OpenAI-compatible LLM endpoint (personal mode only).
+- LLM-generated phoneme drill passages from the insights panel, seeded with your weakest words for that sound (works with any OpenAI-compatible endpoint, including local Ollama; personal mode only).
 
 ## Tech Stack
 
@@ -78,9 +84,28 @@ npm run ios:device     # Physical iPhone: build, sign, and install in one step
 
 Alternatively, open `frontend/ios/App/App.xcworkspace` in Xcode and run the App target. `frontend/.env.ios.local` is git-ignored build-time configuration; copy its shape from `frontend/.env.example`. See the [iOS deployment guide](docs/development/ios-deploy.md) for VPS, Tailscale, signing, and reinstall instructions.
 
+## Public Trial
+
+Hosted trial: https://justtalk.randomnessk.com. This address works only once the maintainer confirms the launch; until then it may be unreachable.
+
+Public mode lets people try Just Talk without setting anything up, while keeping Azure usage bounded:
+
+- Visitors start with one click. The server issues an anonymous HttpOnly cookie and stores only a hash of the token. There are no accounts.
+- Each visitor's history, words, and imported materials live in their own SQLite file. **Delete my data** removes it, and idle visitors are removed after 7 days.
+- Billable calls go through a persistent usage ledger:
+  - per-visitor daily caps, plus site-wide daily and monthly caps (UTC windows) on audio seconds, TTS characters, and request counts;
+  - audio is measured by decoding it, not from container metadata;
+  - a call counts once it reaches Azure, even if it then fails.
+- Uploads and request bodies are size-capped while they stream. State-changing requests must come from an allowed `Origin`, and API responses are not cached.
+- LLM features are off. The frontend is built with `VITE_PUBLIC_MODE=1` and served by FastAPI on the same origin.
+
+Deployment, defaults, cost estimate, and known limits are in [docs/deploy-public.md](docs/deploy-public.md). What happens to user data is described in [PRIVACY.md](PRIVACY.md).
+
+Anonymous cookies can be reset, so per-visitor caps only share the allowance fairly. The site-wide caps are what bound usage, and a determined client can still use up the shared daily allowance.
+
 ## Material Import
 
-The Materials panel includes a few original built-in passages and accepts local JSON imports. Imported materials stay in the local SQLite database and can be selected as the current passage.
+The Materials panel includes three built-in sample passages and accepts JSON imports. Imported materials stay in the local SQLite database and can be selected as the current passage.
 
 Use `schema_version: 1`:
 
@@ -139,6 +164,7 @@ docs/materials/      Example material import files
 docs/research/       Initial technical research and provider evaluation
 docs/design/         Product and architecture design notes
 docs/development/    Implementation planning notes
+deploy/              Personal backend compose (Tailscale) and deploy/public/ public trial stack
 ```
 
 ## Configuration
@@ -156,10 +182,17 @@ docs/development/    Implementation planning notes
 | `LLM_BASE_URL` | No | OpenAI-compatible endpoint for optional passage review and phoneme drill generation. |
 | `LLM_API_KEY` | No | API key for optional passage review and phoneme drill generation. |
 | `LLM_MODEL` | No | Model name for optional passage review and phoneme drill generation. |
+| `CORS_ORIGINS` | No | Comma-separated origins allowed to call the API. Defaults to the Vite dev origins plus `capacitor://localhost`. |
+| `STATIC_DIR` | No | Serve a built frontend from this directory on the same origin (used by the public image). |
+| `PUBLIC_MODE` | No | `1` enables the public trial. All `PUBLIC_*` settings are listed in [deploy/public/.env.example](deploy/public/.env.example). |
 
 ## Notes
 
 - Keep recordings at or under `MAX_AUDIO_SECONDS` because v1 uses Azure's single-shot scripted assessment path with miscue enabled.
 - Do not put the Azure key in frontend code. The browser only talks to the local FastAPI backend.
 - `.env`, local SQLite data, virtual environments, dependencies, and build outputs are intentionally ignored by git.
-- The backend has no authentication in stages 0–1. Bind it to `0.0.0.0` only temporarily on a trusted LAN for physical-device testing; use the protected deployment path in the iOS guide for remote access.
+- Personal mode has no authentication. Bind it to `0.0.0.0` only temporarily on a trusted LAN for physical-device testing, and use the Tailscale path in the iOS guide for remote access. Only public mode is designed to face the internet; see [SECURITY.md](SECURITY.md).
+
+## License
+
+MIT, see [LICENSE](LICENSE). Where the bundled sample content comes from, and what has not been verified, is listed in [docs/CONTENT-PROVENANCE.md](docs/CONTENT-PROVENANCE.md).

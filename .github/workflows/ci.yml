@@ -55,3 +55,15 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+  public-image:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build public trial image
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: docker build -f deploy/public/Dockerfile -t just-talk-public:ci .

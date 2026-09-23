@@ -86,6 +86,10 @@
   color: var(--accent-color-hover);
 }
 
+.pg-bar-link {
+  color: var(--text-muted);
+}
+
 .pg-bar-usage {
   color: var(--text-muted);
 }

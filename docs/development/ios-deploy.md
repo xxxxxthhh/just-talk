@@ -1,12 +1,12 @@
 # Just Talk iOS 后端部署手册
 
-本文只描述部署产物和操作步骤，不代表服务器已经部署。当前 VPS 尚未在雅加达与新山之间选定，所有尖括号占位符都必须在执行前替换。
+本文只描述部署产物和操作步骤，不代表服务器已经部署。所有尖括号占位符都必须在执行前替换。
 
 ## 占位符
 
 | 占位符 | 需要替换为 |
 | --- | --- |
-| `<VPS_HOST>` | 最终选定的雅加达或新山 VPS 的 IP/SSH 主机名 |
+| `<VPS_HOST>` | 最终选定 VPS 的 IP/SSH 主机名 |
 | `<REPO_DIR>` | VPS 上的仓库绝对路径 |
 | `<TAILNET_HOST>` | VPS 在 Tailscale 中的机器名 |
 | `<TAILNET_NAME>` | tailnet DNS 名称中 `.ts.net` 前的部分 |
@@ -23,9 +23,9 @@
 
 ### 1. 前置条件
 
-- 先确定使用雅加达还是新山 VPS，并把仓库放到 `<REPO_DIR>`。
+- 先确定使用哪台 VPS，并把仓库放到 `<REPO_DIR>`。
 - VPS 安装 Docker Engine、Docker Compose plugin 和 Tailscale。安装命令随 VPS Linux 发行版而异，选定 VPS 后按对应系统的官方说明执行。
-- 火山引擎安全组放行 **UDP 41641**，供 Tailscale 尝试直连。不要向公网放行 TCP 8000。
+- 云厂商安全组放行 **UDP 41641**，供 Tailscale 尝试直连。不要向公网放行 TCP 8000。
 
 ### 2. 配置后端环境变量
 
@@ -57,7 +57,7 @@ LLM_MODEL=gpt-4o-mini
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,capacitor://localhost
 ```
 
-`AZURE_SPEECH_REGION` 建议使用离雅加达/新山较近的 `southeastasia`。`CORS_ORIGINS` 是逗号分隔值，必须包含 `capacitor://localhost`，否则 Capacitor App 的跨域请求会被拒绝。
+`AZURE_SPEECH_REGION` 建议使用离 VPS 较近的区域（例如东南亚 VPS 用 `southeastasia`）。`CORS_ORIGINS` 是逗号分隔值，必须包含 `capacitor://localhost`，否则 Capacitor App 的跨域请求会被拒绝。
 
 ### 3. 准备数据目录并启动后端
 
@@ -192,7 +192,7 @@ docker compose -f deploy/docker-compose.yml start backend
    将结果写入服务器 `deploy/.env` 的 `API_TOKEN`，并在 Mac 的 `frontend/.env.ios.local` 写入同一个 `VITE_API_TOKEN`。这些步骤只能在鉴权代码落地后执行。
 3. 将 `deploy/Caddyfile` 中的 `YOUR_DOMAIN.example.com` 替换为 `<PUBLIC_DOMAIN>`。
 4. 按 `deploy/docker-compose.yml` 中的注释启用 `caddy` 服务和顶层 volumes，并删除 backend 的宿主机 `ports` 配置。Caddy 会通过 Compose 内部网络反代到 `backend:8000`。
-5. 火山引擎安全组放行 TCP 80/443。域名解析正确且这两个端口公网可达时，Caddy 会自动申请和续期 Let's Encrypt 证书。
+5. 云厂商安全组放行 TCP 80/443。域名解析正确且这两个端口公网可达时，Caddy 会自动申请和续期 Let's Encrypt 证书。
 6. 将 `VITE_API_BASE_URL` 改为 `https://<PUBLIC_DOMAIN>`，重新执行 `npm run build:ios` 并安装 App。
 
 是否进入阶段 2，取决于用户后续是否选择公网域名方案；当前交付不包含实际部署、域名配置或鉴权实现。

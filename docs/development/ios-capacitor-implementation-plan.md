@@ -27,7 +27,7 @@
 - **B. Tailscale**：服务器 + iPhone 装 Tailscale，`tailscale serve` 顺带解决 HTTPS，后端零鉴权代码。代价是手机要常开 VPN。若你选 B，Task 2 整个跳过。
 - ⚠️ 需要你确认：选 A 还是 B？服务器是什么系统、有没有 Docker、有没有域名（A 需要域名指向服务器）？
 
-**D1 结论（已确认：VPS 在火山引擎雅加达 / 新山，均为境外地域）**
+**D1 结论（已确认：VPS 位于境外地域）**
 
 - 境外地域**无 ICP 备案限制**，下面的备案决策表对你不适用，保留仅作参考。两条路都畅通。
 - **决定的执行顺序：阶段 0 本机 → 阶段 1 VPS + Tailscale → 阶段 2（可选）公网 HTTPS + token。**
@@ -37,9 +37,9 @@
   - 阶段 2（可选，公网 HTTPS）：买/用一个域名指向 VPS，Caddy 监听 443 自动签发，补 Task 2 鉴权。App 侧只改 `VITE_API_BASE_URL` 重新 build。
   - 后端代码始终在 VPS 上，两个阶段之间后端不动。
 - 提示：若 iPhone 平时在大陆网络，Tailscale 协调服务器 `login.tailscale.com` 偶尔不稳（影响首次登录/密钥交换，不影响已建立的直连）。若体感不好，这就是切阶段 2 的信号。
-- 后端出网：雅加达/新山访问 Azure Speech（建议 `AZURE_SPEECH_REGION` 选 `southeastasia`，就近）和 LLM 端点均无障碍。
+- 后端出网：东南亚 VPS 访问 Azure Speech（建议 `AZURE_SPEECH_REGION` 选 `southeastasia`，就近）和 LLM 端点均无障碍。
 
-**（参考）火山引擎大陆地域的 ICP 备案问题**
+**（参考）国内云厂商大陆地域的 ICP 备案问题**
 
 若 VPS 在中国大陆地域，云厂商会在网络层拦截未备案域名到 80/443 端口的 HTTP(S) 请求。这意味着：
 
@@ -50,9 +50,9 @@
 | VPS 在**大陆地域**且域名**未备案** | 80/443 走不通。可行的绕法（按推荐顺序）：<br>**A1. 非标端口 + DNS-01 签证**：后端 HTTPS 监听如 `8443`（备案拦截只针对 80/443），证书用 acme.sh 走 DNS-01（需要域名 DNS 托管在支持 API 的服务商，如 Cloudflare / 阿里云 DNS / 火山 DNS）。Caddy 的 HTTP-01/TLS-ALPN-01 都要用 80/443，所以这条路**用 acme.sh + nginx**（或 Caddy 加 DNS 插件）。App 的 `VITE_API_BASE_URL` 写成 `https://domain:8443`。<br>**A2. 只用 IP + 自签证书**：iOS 会拒绝，需要在手机上装 CA 描述文件并手动信任 —— 每台设备折腾一次，能用但脏，不推荐。<br>**B. Tailscale**：完全绕开备案和证书（`tailscale serve` 给 `*.ts.net` 域名自动 HTTPS）。大陆 VPS 与 iPhone 之间的直连成功率一般不错，直连不了会走 DERP 中继（境外，可能慢）。手机需常开 Tailscale VPN。 |
 | 没有域名 | 只剩 A2 或 B → 推荐 B |
 
-另外两个和火山引擎相关的确认项：
+另外两个和云厂商相关的确认项：
 - 后端要出网访问 **Azure Speech**（`*.cognitiveservices.azure.com` / `*.stt.speech.microsoft.com`）和你配置的 **LLM 端点**。你本地已经跑通，说明大陆网络到 Azure 是通的，但 VPS 出口 IP 不一定一样，部署后先 `curl` 一下 Azure region 端点确认。
-- 火山引擎安全组默认只放 22，需要放行你选的端口（443 或 8443，或 Tailscale 的 UDP 41641）。
+- 云厂商安全组默认只放 22，需要放行你选的端口（443 或 8443，或 Tailscale 的 UDP 41641）。
 
 **D2. API 地址和 token 怎么进 App —— 构建期注入**
 - 用 `VITE_API_BASE_URL` / `VITE_API_TOKEN`（写在 `frontend/.env.ios.local`，git-ignore）。个人自用、不上架，token 打进包里可接受。
@@ -75,7 +75,7 @@
 
 | 风险 | 何时验证 | 应对 |
 |---|---|---|
-| ATS 拦截明文 HTTP | 编译期即知 | **真机实测通过（2026-08-16，iPhone 16 Pro Max / iOS 27.0）**：App 经 `capacitor://localhost` 以明文 HTTP 访问 `http://192.168.1.8:8000`，后端实收该机 `192.168.1.11` 的 `/api/health`、`/api/words`、`/api/materials`、`/api/sessions` 全部 200，未被 ATS 拦截，**未加任何 ATS 例外**（也不需要 `NSAllowsLocalNetworking`）。阶段 1/2 走 HTTPS 时同样不加例外 |
+| ATS 拦截明文 HTTP | 编译期即知 | **真机实测通过（2026-08-16，iPhone / iOS 27）**：App 经 `capacitor://localhost` 以明文 HTTP 访问 `http://192.168.1.8:8000`，后端实收该机 `192.168.1.11` 的 `/api/health`、`/api/words`、`/api/materials`、`/api/sessions` 全部 200，未被 ATS 拦截，**未加任何 ATS 例外**（也不需要 `NSAllowsLocalNetworking`）。阶段 1/2 走 HTTPS 时同样不加例外 |
 | `getUserMedia` 需要安全上下文 | 真机 | Capacitor 的 `capacitor://localhost` 是安全上下文，OK；仍需 `NSMicrophoneUsageDescription` |
 | 静音拨片开着时 TTS 无声 | **真机**（模拟器测不出） | 先观察；若发生，在 `AppDelegate` 里设 `AVAudioSession` category 为 `.playAndRecord` + `.defaultToSpeaker`。**不预先解决** |
 | 录音后声音走听筒而不是扬声器 | 真机 | 同上 |
@@ -125,7 +125,7 @@
 - **真机（阶段 0）**：`VITE_API_BASE_URL=http://<Mac 局域网 IP>:8000`，同一 Wi-Fi；`ipconfig getifaddr en0` 取 IP
 - **真机验证清单**（模拟器覆盖不到的）：麦克风权限弹窗 → 录音 → 评分返回 → TTS 播放（静音拨片开/关各试一次）→ 录音后播放的出声设备
 
-### Task 4: 后端部署到火山引擎 VPS
+### Task 4: 后端部署到 VPS
 
 **Files:** `backend/Dockerfile`(新), `deploy/docker-compose.yml`(新), `deploy/Caddyfile` 或 `deploy/nginx.conf`(新，取决于 D1 补充表), `docs/development/ios-deploy.md`(新)
 
@@ -159,8 +159,8 @@
 
 ## 5. 待你确认的问题汇总
 
-已确认：无付费 Apple 账号（走免费签名，7 天重装）；iPhone 为最新 beta；服务器为火山引擎 VPS。
+已确认：无付费 Apple 账号（走免费签名，7 天重装）；iPhone 为最新 beta；服务器为自有 VPS。
 
-已确认：VPS 在雅加达/新山（境外，无备案问题），可装 Docker；先在本机（阶段 0）跑通，再上 VPS + Tailscale。Bundle ID 用 `com.kyx.justtalk`（未反对即采用，随时可改）。
+已确认：VPS 在境外（无备案问题），可装 Docker；先在本机（阶段 0）跑通，再上 VPS + Tailscale。Bundle ID 用 `com.kyx.justtalk`（未反对即采用，随时可改）。
 
-Task 4 开工前再定：用雅加达还是新山那台（就近原则）。
+Task 4 开工前再定具体使用哪台 VPS（就近原则）。

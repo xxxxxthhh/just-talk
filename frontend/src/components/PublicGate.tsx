@@ -5,6 +5,8 @@ import { USAGE_CHANGED_EVENT, VISITOR_REQUIRED_EVENT } from "../publicMode";
 import type { Health, QuotaStatus, QuotaWindow } from "../types";
 import "./PublicGate.css";
 
+const SOURCE_URL = "https://github.com/xxxxxthhh/just-talk";
+
 type GateState = "checking" | "welcome" | "ready" | "unavailable";
 
 declare global {
@@ -174,8 +176,11 @@ function Welcome({ health, onReady }: { health: Health | null; onReady: () => vo
           {busy ? "Starting…" : "Start practicing"}
         </button>
         <p className="pg-fineprint">
-          Microphone access is requested only when you press record. You can also run Just Talk
-          yourself with your own Azure key; see the project README.
+          Microphone access is requested only when you press record. Just Talk is open source
+          (MIT): you can run it yourself with your own Azure key.{" "}
+          <a href={SOURCE_URL} target="_blank" rel="noreferrer">
+            Source code
+          </a>
         </p>
       </div>
     </div>
@@ -252,6 +257,9 @@ function PublicBar({ health }: { health: Health | null }) {
         </span>
       ) : null}
       <span className="pg-bar-actions">
+        <a className="pg-bar-link" href={SOURCE_URL} target="_blank" rel="noreferrer">
+          Source
+        </a>
         {confirming ? (
           <>
             <span>Delete all your history and words from this server?</span>
