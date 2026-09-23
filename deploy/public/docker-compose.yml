@@ -1,0 +1,58 @@
+# Public trial stack. Nothing is published on the host: the app is reachable
+# only through the Cloudflare Tunnel connector on the internal network.
+#
+#   cp deploy/public/.env.example deploy/public/.env      # fill Azure + origin
+#   mkdir -p deploy/public/data && sudo chown 10001:10001 deploy/public/data
+#   # place cloudflared config.yml + credentials.json (see docs/deploy-public.md)
+#   docker compose -f deploy/public/docker-compose.yml up -d --build
+name: justtalk-public
+
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: deploy/public/Dockerfile
+    image: just-talk-public:local
+    env_file:
+      - .env
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    volumes:
+      # Visitors, usage ledger, and TTS cache (SQLite). Back up before upgrades.
+      - ./data:/app/data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: "1.0"
+    mem_limit: 1g
+    pids_limit: 128
+    networks:
+      - internal
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.8.2
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - ./cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: "0.5"
+    mem_limit: 256m
+    pids_limit: 64
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: unless-stopped
+
+networks:
+  internal: {}

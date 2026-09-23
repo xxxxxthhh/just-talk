@@ -190,7 +190,7 @@ def mount_static(app: FastAPI, static_dir: str, *, turnstile: bool) -> None:
         ),
     }
 
-    @app.get("/{requested_path:path}", include_in_schema=False)
+    @app.api_route("/{requested_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     def serve_frontend(requested_path: str) -> FileResponse:
         if requested_path == "api" or requested_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="Not found.")

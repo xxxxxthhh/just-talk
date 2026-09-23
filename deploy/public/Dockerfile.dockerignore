@@ -1,0 +1,19 @@
+# BuildKit uses this file (next to the Dockerfile) instead of the root
+# .dockerignore, which excludes the frontend for the personal backend image.
+**
+!backend/requirements.txt
+!backend/app/**
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/index.html
+!frontend/tsconfig.json
+!frontend/tsconfig.node.json
+!frontend/vite.config.ts
+!frontend/eslint.config.mjs
+!frontend/public/**
+!frontend/src/**
+**/__pycache__
+**/*.pyc
+**/.env
+**/.env.*
+**/*.db

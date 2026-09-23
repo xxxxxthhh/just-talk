@@ -22,3 +22,7 @@ frontend/ios/App/Pods/
 frontend/ios/App/build/
 frontend/ios/App/App/public/
 frontend/ios/DerivedData/
+deploy/public/.env
+deploy/public/data/
+deploy/public/cloudflared/config.yml
+deploy/public/cloudflared/*.json

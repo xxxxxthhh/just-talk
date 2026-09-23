@@ -1,0 +1,10 @@
+# Locally-managed named tunnel. Copy to config.yml and fill in the tunnel id
+# and hostname. credentials.json comes from `cloudflared tunnel create`; keep
+# it out of git (it is ignored) and readable by the container user (65532).
+tunnel: 00000000-0000-0000-0000-000000000000
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: justtalk.example.com
+    service: http://app:8000
+  - service: http_status:404
