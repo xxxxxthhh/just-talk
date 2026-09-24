@@ -82,7 +82,7 @@ npm run build:ios      # Simulator: build the bundle, then run from Xcode
 npm run ios:device     # Physical iPhone: build, sign, and install in one step
 ```
 
-`ios:device` reads your iPhone UDID and Apple signing team ID from the environment: `IOS_DEVICE_ID=<udid> IOS_DEVELOPMENT_TEAM=<team-id> npm run ios:device`. When running from Xcode instead, pick your team under Signing & Capabilities. Free Apple ID signing expires after 7 days, so rerun that one command to reinstall.
+`ios:device` reads your iPhone UDID and Apple signing team ID from `IOS_DEVICE_ID` / `IOS_DEVELOPMENT_TEAM`, or from a git-ignored `frontend/.env.ios-device.local` containing those two lines (environment values win). When running from Xcode instead, pick your team under Signing & Capabilities. Free Apple ID signing expires after 7 days, so rerun that one command to reinstall.
 
 Alternatively, open `frontend/ios/App/App.xcworkspace` in Xcode and run the App target. `frontend/.env.ios.local` is git-ignored build-time configuration; copy its shape from `frontend/.env.example`. See the [iOS deployment guide](docs/development/ios-deploy.md) for VPS, Tailscale, signing, and reinstall instructions.
 

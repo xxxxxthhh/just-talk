@@ -3,7 +3,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "build:ios": "vite build --mode ios && cap sync ios",
-    "ios:device": "npm run build:ios && xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Debug -destination id=${IOS_DEVICE_ID:?Set IOS_DEVICE_ID to your iPhone UDID} -derivedDataPath ios/DerivedData -allowProvisioningUpdates DEVELOPMENT_TEAM=${IOS_DEVELOPMENT_TEAM:?Set IOS_DEVELOPMENT_TEAM to your Apple signing team ID} build && xcrun devicectl device install app --device ${IOS_DEVICE_ID} ios/DerivedData/Build/Products/Debug-iphoneos/App.app",
+    "ios:device": "sh scripts/ios-device.sh",
     "lint": "eslint src",
     "test": "vitest run"
   },
