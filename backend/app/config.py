@@ -69,11 +69,13 @@ def _non_negative_int_env(env: dict[str, str], key: str, default: str) -> int:
 
 @dataclass(frozen=True)
 class PublicSettings:
-    """Hosted "public trial" mode: anonymous visitors, per-visitor data, and
+    """Hosted "public trial" mode: Google accounts, per-account data, and
     persistent site-wide caps on billable Azure usage. Off by default so the
     personal/local and iOS setups behave exactly as before."""
 
     enabled: bool = False
+    supabase_url: str = ""
+    supabase_publishable_key: str = ""
     data_dir: str = "./data/public"
     allowed_origins: tuple[str, ...] = ()
     cookie_secure: bool = True
@@ -133,6 +135,8 @@ class PublicSettings:
         ) or cors_origins
         return cls(
             enabled=_bool_env(env, "PUBLIC_MODE", "0"),
+            supabase_url=env.get("SUPABASE_URL", "").rstrip("/"),
+            supabase_publishable_key=env.get("SUPABASE_PUBLISHABLE_KEY", ""),
             data_dir=env.get("PUBLIC_DATA_DIR", defaults.data_dir),
             allowed_origins=allowed_origins,
             cookie_secure=_bool_env(env, "PUBLIC_COOKIE_SECURE", "1"),

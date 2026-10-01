@@ -12,9 +12,13 @@ opening a public issue. Include steps to reproduce and the impact you expect.
   or reach it only through a private network such as Tailscale.
 - Only the public trial mode (`PUBLIC_MODE=1`, see
   [docs/deploy-public.md](docs/deploy-public.md)) is designed to face the
-  internet. It uses anonymous visitors, per-visitor data files, persistent
+  internet. It uses server-verified Google accounts through Supabase Auth, per-account data files, persistent
   usage caps, request size limits, and Origin checks.
 - The public caps bound *usage recorded by the app*. They are not a
   guarantee on the provider bill. Also set an Azure budget alert. Budgets
   only notify you; they do not stop spending.
 - Never commit `.env` files, tunnel credentials, or SQLite data.
+
+- Hosted APIs fail closed when Supabase verification is unavailable. Browser
+  configuration includes only the Supabase project origin and publishable key;
+  never use a secret/service-role key. Local mode remains private and unauthenticated.

@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { lazy, Suspense } from "react";
 
-import { apiUrl } from "./api";
+import { downloadBackup } from "./api";
 import { AudioPlayer } from "./components/AudioPlayer";
 import { AudioVisualizer } from "./components/AudioVisualizer";
 import { BrandMark } from "./components/BrandMark";
@@ -83,6 +83,7 @@ export default function DesktopApp() {
     isSavingWords,
     isImportingMaterials,
     error,
+    setError,
     health,
     sessions,
     vocabulary,
@@ -207,9 +208,9 @@ export default function DesktopApp() {
         </nav>
         <div className="topbar-actions">
           <StatusPill health={health} />
-          <a className="icon-button" href={apiUrl("/api/export")} download title="Download backup (JSON)">
+          <button className="icon-button" type="button" onClick={() => void downloadBackup().catch((error: unknown) => setError(error instanceof Error ? error.message : "Could not download backup."))} title="Download backup (JSON)">
             <Download size={18} />
-          </a>
+          </button>
           <button
             className="icon-button"
             onClick={toggleTheme}

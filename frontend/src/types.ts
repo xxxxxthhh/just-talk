@@ -10,6 +10,7 @@ export type Health = {
 };
 
 export type PublicTrialInfo = {
+  auth: { provider: "google"; url: string; publishable_key: string } | null;
   scoring_enabled: boolean;
   turnstile_site_key: string;
   max_tts_chars_per_request: number;

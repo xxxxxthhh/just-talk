@@ -153,9 +153,8 @@ describe("App", () => {
 
     render(<App />);
 
-    const exportLink = await screen.findByRole("link", { name: /Download backup/i });
-    expect(exportLink).toHaveAttribute("href", "/api/export");
-    expect(exportLink).toHaveAttribute("download");
+    const exportButton = await screen.findByRole("button", { name: /Download backup/i });
+    expect(exportButton).toBeEnabled();
   });
 
   test("fetches and renders activity stats when the Insights tab opens", async () => {

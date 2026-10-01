@@ -109,7 +109,7 @@ class PublicGuardMiddleware:
                         if key.lower() != b"cache-control"
                     ],
                     (b"cache-control", b"no-store"),
-                    (b"vary", b"Cookie"),
+                    (b"vary", b"Authorization"),
                 ]
             await send(message)
 
@@ -165,7 +165,7 @@ def client_address(request: Request, header: str) -> str | None:
     return request.client.host if request.client else None
 
 
-def mount_static(app: FastAPI, static_dir: str, *, turnstile: bool) -> None:
+def mount_static(app: FastAPI, static_dir: str, *, turnstile: bool, auth_origin: str = "") -> None:
     """Serve the built frontend from the same origin, with SPA fallback."""
     root = Path(static_dir).resolve()
     index = root / "index.html"
@@ -184,7 +184,7 @@ def mount_static(app: FastAPI, static_dir: str, *, turnstile: bool) -> None:
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: blob:; "
             "media-src 'self' data: blob:; "
-            "connect-src 'self'; "
+            f"connect-src 'self'{' ' + auth_origin if auth_origin else ''}; "
             f"frame-src {frame_src}; "
             "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         ),

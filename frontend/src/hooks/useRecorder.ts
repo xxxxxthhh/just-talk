@@ -16,9 +16,25 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
   const startedAtRef = useRef<number>(0);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const recorder = mediaRecorderRef.current;
+      if (recorder) {
+        recorder.onstop = null;
+        recorder.ondataavailable = null;
+        if (recorder.state === "recording") recorder.stop();
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -54,6 +70,10 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
         autoGainControl: true
       }
     });
+    if (!mountedRef.current) {
+      stream.getTracks().forEach((track) => track.stop());
+      return false;
+    }
     // Chrome/Firefox support opus-in-webm; Safari does not, but does support
     // mp4. Feature-detect both before falling back to the browser default so
     // the recorded blob's type isn't mislabeled on Safari.
@@ -62,6 +82,7 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
       : MediaRecorder.isTypeSupported("audio/mp4")
       ? "audio/mp4"
       : "";
+    streamRef.current = stream;
     const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     chunksRef.current = [];
     recorder.ondataavailable = (event) => {

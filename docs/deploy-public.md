@@ -1,7 +1,7 @@
 # Deploying the public trial
 
-The public trial runs Just Talk for anonymous visitors with a server-side
-Azure AI Speech key. It has per-visitor data, persistent usage caps, and no
+The public trial runs Just Talk for signed-in Google accounts with a server-side
+Azure AI Speech key. It has per-account data, persistent usage caps, and no
 host ports: traffic arrives only through a Cloudflare Tunnel connector on an
 internal Docker network.
 
@@ -12,6 +12,9 @@ Replace them with your own values.
 
 - A Linux host with Docker Engine and the Compose plugin. The app container is
   limited to 1 CPU and 1 GiB of memory.
+- A dedicated Supabase project with Google Auth enabled, its URL and a
+  publishable key. No database tables or service-role key are needed. See
+  [Google Auth setup](auth-preview.md).
 - An Azure AI Speech resource. A dedicated resource for the public trial is
   recommended, so you can rotate its key without affecting other use.
 - A domain on Cloudflare and `cloudflared` on an admin machine that is logged
@@ -24,7 +27,8 @@ cp deploy/public/.env.example deploy/public/.env
 chmod 600 deploy/public/.env
 ```
 
-Fill in `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION`, and set
+Fill in `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `AZURE_SPEECH_KEY` and
+`AZURE_SPEECH_REGION`, and set
 `PUBLIC_ALLOWED_ORIGINS` and `CORS_ORIGINS` to the exact public origin (for
 example `https://justtalk.example.com`). Any unsafe request (POST/PUT/PATCH/DELETE) without an allowed
 `Origin` header is rejected. Keep `PUBLIC_CLIENT_IP_HEADER=CF-Connecting-IP`
@@ -96,7 +100,7 @@ while allowing DNS and HTTPS egress.
 | Back up | `stop app`, copy `deploy/public/data/`, then `start app` |
 | Upgrade | Pull, then `up -d --build`. Back up first |
 
-Keep the app at **one worker**. Per-visitor write locks and the Azure
+Keep the app at **one worker**. Per-account write locks and the Azure
 concurrency limit are in-process. Usage caps live in SQLite.
 
 ## Usage caps and cost
@@ -108,12 +112,12 @@ ledger and rejects requests before calling Azure once a cap is reached:
 | --- | --- |
 | Site-wide per month | 4 h of scored audio, 100,000 TTS characters, 1,500 scores, 3,000 TTS requests |
 | Site-wide per day | 30 min of audio, 5,000 characters, 120 scores, 200 TTS requests |
-| Per visitor per day | 3 min of audio, 1,000 characters, 20 scores, 40 TTS requests |
+| Per account per day | 3 min of audio, 1,000 characters, 20 scores, 40 TTS requests |
 | Per recording | 30 s (short), 90 s (long passage) |
 
 Once a request reaches Azure, its usage counts even if the call fails or
 times out. It is never refunded or retried automatically. Deleting data,
-clearing cookies, or restarting does not reset site-wide usage.
+clearing cookies, signing out, or restarting does not reset account or site-wide usage.
 
 **Estimate only.** These are Azure Retail Prices API list prices (eastus,
 checked 2026-09-24). See the [Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices)
@@ -134,11 +138,11 @@ spending.
 
 ## Known limits
 
-- Visitor identity is an anonymous cookie. Clearing it gives a new
-  per-visitor allowance, so per-visitor caps only share the allowance fairly;
-  the site-wide caps are what bound usage. A determined client can use up the
-  shared daily allowance for everyone. Optional Turnstile
-  (`TURNSTILE_SITE_KEY`/`TURNSTILE_SECRET_KEY`) makes automated abuse more
-  expensive but does not prevent it.
+- Each verified Supabase user ID has a stable account allowance across browsers.
+  A person with multiple Google accounts can still consume multiple account
+  allowances, so global limits remain necessary. Practice deletion retains
+  account-linked usage until the ledger's approximately 70-day retention expires.
+- This is a single-worker/single-host setup. Locks and Azure concurrency are
+  in-process; SQLite quota reservations remain atomic and persistent.
 - LLM features (passage check, drill generation) are disabled in public mode.
 - Only English (en-US) scoring is supported.

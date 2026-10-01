@@ -1,3 +1,4 @@
+import { accountEpoch, accountFetch } from "./auth";
 import type {
   ActivityStats,
   Health,
@@ -31,6 +32,7 @@ export function apiUrl(path: string): string {
 }
 
 export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  if (PUBLIC_MODE) return accountFetch(apiUrl(path), init);
   const token = import.meta.env.VITE_API_TOKEN ?? "";
   if (!token) {
     return init === undefined ? fetch(apiUrl(path)) : fetch(apiUrl(path), init);
@@ -48,7 +50,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const detail = typeof payload.detail === "string" ? payload.detail : "Request failed.";
     const code = typeof payload.code === "string" ? payload.code : undefined;
-    if (PUBLIC_MODE && code === "visitor_required") {
+    if (PUBLIC_MODE && code === "auth_required") {
       window.dispatchEvent(new Event(VISITOR_REQUIRED_EVENT));
     }
     throw new ApiError(detail, response.status, code);
@@ -62,14 +64,18 @@ function notifyUsageChanged() {
   }
 }
 
-export async function createVisitor(turnstileToken = ""): Promise<{ created: boolean }> {
-  return parseResponse<{ created: boolean }>(
-    await apiFetch("/api/visitor", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ turnstile_token: turnstileToken })
-    })
-  );
+export async function downloadBackup(): Promise<void> {
+  const epoch = accountEpoch();
+  const response = await apiFetch("/api/export");
+  if (!response.ok) { await parseResponse(response); return; }
+  const blob = await response.blob();
+  if (PUBLIC_MODE && epoch !== accountEpoch()) throw new DOMException("Account changed", "AbortError");
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "just-talk-export.json";
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 export async function fetchQuota(): Promise<QuotaStatus> {

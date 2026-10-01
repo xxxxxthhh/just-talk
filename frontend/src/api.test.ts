@@ -313,3 +313,19 @@ describe("api environment configuration", () => {
     expect(headers.get("Content-Type")).toBe("application/json");
   });
 });
+
+test("downloads backup with fetch and a temporary blob URL", async () => {
+  const { downloadBackup } = await import("./api");
+  const fetchMock = vi.fn().mockResolvedValue(new Response('{"sessions":[]}'));
+  vi.stubGlobal("fetch", fetchMock);
+  const createUrl = vi.fn().mockReturnValue("blob:backup");
+  const revokeUrl = vi.fn();
+  vi.stubGlobal("URL", { createObjectURL: createUrl, revokeObjectURL: revokeUrl });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  await downloadBackup();
+  expect(fetchMock).toHaveBeenCalledWith("/api/export");
+  expect(click).toHaveBeenCalledOnce();
+  expect(createUrl).toHaveBeenCalledWith(expect.any(Blob));
+  expect(revokeUrl).toHaveBeenCalledWith("blob:backup");
+  vi.unstubAllGlobals();
+});
