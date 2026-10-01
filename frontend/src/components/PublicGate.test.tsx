@@ -69,3 +69,35 @@ test("disables sign-in while provider setup is missing", async () => {
   expect(await screen.findByRole("button", { name: "Continue with Google" })).toBeDisabled();
   expect(screen.getByText(/sign-in is being set up/)).toBeInTheDocument();
 });
+
+test("recovers from an expired-token rejection when the same account refreshes", async () => {
+  const { VISITOR_REQUIRED_EVENT } = await import("../publicMode");
+  mock.session = { user: { id: "account-a" } };
+  render(<PublicGate><p>private practice</p></PublicGate>);
+  expect(await screen.findByText("private practice")).toBeInTheDocument();
+  await act(async () => { mock.callback?.("INITIAL_SESSION", mock.session); });
+  await screen.findByText("private practice");
+  act(() => { window.dispatchEvent(new Event(VISITOR_REQUIRED_EVENT)); });
+  expect(await screen.findByRole("button", { name: "Continue with Google" })).toBeEnabled();
+  expect(screen.queryByText("private practice")).not.toBeInTheDocument();
+  await act(async () => { mock.callback?.("TOKEN_REFRESHED", mock.session); });
+  expect(await screen.findByText("private practice")).toBeInTheDocument();
+});
+
+test("focus sign-in and token refresh keep an authenticated practice mounted", async () => {
+  mock.session = { user: { id: "account-a" } };
+  const cleanup = vi.fn();
+  const { useEffect } = await import("react");
+  function Practice() { useEffect(() => cleanup, []); return <p>private practice</p>; }
+  render(<PublicGate><Practice /></PublicGate>);
+  await screen.findByText("private practice");
+  await act(async () => { mock.callback?.("INITIAL_SESSION", mock.session); });
+  await screen.findByText("private practice");
+  cleanup.mockClear();
+  await act(async () => {
+    mock.callback?.("SIGNED_IN", mock.session);
+    mock.callback?.("TOKEN_REFRESHED", mock.session);
+  });
+  expect(screen.getByText("private practice")).toBeInTheDocument();
+  expect(cleanup).not.toHaveBeenCalled();
+});

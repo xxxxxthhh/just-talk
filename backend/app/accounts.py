@@ -74,6 +74,10 @@ class AccountRegistry(VisitorRegistry):
         # Block new uses before waiting. Never replace files while an old
         # request could write to them after deletion and resurrect private data.
         with self._lock:
+            if account_id in self._deleting:
+                raise PublicApiError(
+                    409, "data_deleting", "Practice data is already being deleted."
+                )
             self._deleting.add(account_id)
             try:
                 deadline = time.monotonic() + 5.0

@@ -251,6 +251,9 @@ def test_delete_waits_for_inflight_and_blocks_new_requests(tmp_path):
         with pytest.raises(PublicApiError):
             registry.ensure_account(uid)
         assert not finished.is_set()
+        with pytest.raises(PublicApiError) as concurrent_delete:
+            registry.delete(uid)
+        assert concurrent_delete.value.code == "data_deleting"
     thread.join(timeout=2)
     assert finished.is_set()
     registry.ensure_account(uid)

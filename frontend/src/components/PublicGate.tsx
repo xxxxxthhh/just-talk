@@ -14,6 +14,7 @@ export default function PublicGate({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const generation = useRef(0);
+  const authRejected = useRef(false);
 
   const probe = useCallback(async () => {
     const current = ++generation.current;
@@ -24,10 +25,11 @@ export default function PublicGate({ children }: { children: ReactNode }) {
       setAccount(session?.user.id ?? null);
       if (!session) { setState("welcome"); return; }
       await fetchQuota();
-      if (current === generation.current) setState("ready");
+      if (current === generation.current) { authRejected.current = false; setState("ready"); }
     } catch (error) {
       if (current !== generation.current) return;
       if (error instanceof ApiError && error.code === "auth_required") {
+        authRejected.current = true;
         setState("welcome");
       } else {
         setMessage(error instanceof Error ? error.message : "The service is unavailable.");
@@ -48,7 +50,8 @@ export default function PublicGate({ children }: { children: ReactNode }) {
       const subscription = client.auth.onAuthStateChange((event, session) => {
         // The callback is synchronous: defer SDK calls to avoid its auth lock.
         const nextAccount = session?.user.id ?? null;
-        if (event === "SIGNED_OUT" || nextAccount !== previousAccount) {
+        if (event === "SIGNED_OUT" || nextAccount !== previousAccount ||
+            (authRejected.current && (event === "TOKEN_REFRESHED" || event === "SIGNED_IN"))) {
           previousAccount = nextAccount;
           generation.current += 1;
           setState("checking");
@@ -63,7 +66,7 @@ export default function PublicGate({ children }: { children: ReactNode }) {
         setState("unavailable");
       }
     });
-    const onAuthRequired = () => { generation.current += 1; setState("welcome"); };
+    const onAuthRequired = () => { authRejected.current = true; generation.current += 1; setState("welcome"); };
     window.addEventListener(VISITOR_REQUIRED_EVENT, onAuthRequired);
     return () => {
       cancelled = true;
