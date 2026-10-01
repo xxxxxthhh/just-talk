@@ -6,7 +6,7 @@ const TutorialContext = createContext({ open: false, busy: false, start: () => {
 export function useTutorial() { return useContext(TutorialContext); }
 export function TutorialHelp() {
   const tutorial = useTutorial();
-  return <button type="button" className="secondary-button compact" disabled={tutorial.busy} onClick={tutorial.start}>使用引导</button>;
+  return <button type="button" className="secondary-button compact tutorial-help" disabled={tutorial.busy} onClick={tutorial.start}>使用引导</button>;
 }
 export function TutorialProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);

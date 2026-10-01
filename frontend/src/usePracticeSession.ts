@@ -709,7 +709,10 @@ export function usePracticeSession() {
     playPronunciation(passage, passageSpeechOptions);
   }
 
-  function preloadCurrentPassage() {
+  function preloadCurrentPassage(event?: { relatedTarget: EventTarget | null }) {
+    // Focusing the tour must never synthesize audio through the textarea blur.
+    if (document.querySelector("dialog.practice-tutorial")) return;
+    if (event?.relatedTarget instanceof HTMLElement && event.relatedTarget.closest(".tutorial-help")) return;
     void preloadSpeech(passage, passageSpeechOptions);
   }
 
