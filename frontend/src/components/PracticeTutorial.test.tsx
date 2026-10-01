@@ -19,18 +19,18 @@ test("first visit can skip, reopen, go back and complete without practice action
   const calls = vi.fn(); window.addEventListener("keydown", calls);
   render(<Fixture />);
   await screen.findByRole("dialog");
-  fireEvent.click(screen.getByRole("button", { name: "跳过" }));
+  fireEvent.click(screen.getByRole("button", { name: "Skip" }));
   await waitFor(() => expect(finishTutorial).toHaveBeenCalledWith(1));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "使用引导" }));
-  fireEvent.click(screen.getByRole("button", { name: "下一步" }));
-  expect(screen.getByRole("heading", { name: "先听示范，再跟读" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Tutorial" }));
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(screen.getByRole("heading", { name: "Listen to the example" })).toBeInTheDocument();
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
   expect(calls).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "上一步" }));
-  for (let i = 0; i < 4; i++) fireEvent.click(screen.getByRole("button", { name: "下一步" }));
-  expect(screen.getByText(/现在没有结果也没关系/)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "开始练习" }));
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  for (let i = 0; i < 5; i++) fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(screen.getByRole("heading", { name: "Explore your feedback" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   window.removeEventListener("keydown", calls);
 });
@@ -51,17 +51,26 @@ test("late preference response from previous account cannot open next account", 
   await act(async () => { resolve({ completed_version: 0 }); });
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
-test("mobile explains the result entry honestly and missing targets have a fallback", async () => {
+test("missing targets have a concise fallback", async () => {
   render(<Fixture mobile />); await screen.findByRole("dialog");
-  for (let i = 0; i < 4; i++) fireEvent.click(screen.getByRole("button", { name: "下一步" }));
-  expect(screen.getByText(/点它打开详情/)).toBeInTheDocument();
-  expect(screen.getByText(/当前页面未显示/)).toBeInTheDocument();
+  for (let i = 0; i < 5; i++) fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(screen.getByText("Return to Practice to find this control.")).toBeInTheDocument();
 });
 test("failed save is recoverable without forcing tutorial to remain open", async () => {
   vi.mocked(finishTutorial).mockRejectedValueOnce(new Error("offline"));
   render(<Fixture />); await screen.findByRole("dialog");
-  fireEvent.click(screen.getByRole("button", { name: "关闭引导" }));
-  expect(await screen.findByRole("status")).toHaveTextContent("引导偏好未保存");
-  fireEvent.click(screen.getByRole("button", { name: "重试保存" }));
+  fireEvent.click(screen.getByRole("button", { name: "Close tutorial" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Couldn’t save your tutorial preference.");
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+});
+
+test("Tab and Shift+Tab cycle within the tutorial", async () => {
+  render(<Fixture />); await screen.findByRole("dialog");
+  const next = screen.getByRole("button", { name: "Next" });
+  const close = screen.getByRole("button", { name: "Close tutorial" });
+  next.focus(); fireEvent.keyDown(next, { key: "Tab" });
+  expect(close).toHaveFocus();
+  fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+  expect(next).toHaveFocus();
 });
