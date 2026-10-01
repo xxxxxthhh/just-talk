@@ -310,3 +310,22 @@ def test_azure_concurrency_cap_is_retained(env):
         with ThreadPoolExecutor(max_workers=8) as pool:
             assert list(pool.map(request, range(8))) == [200] * 8
     assert maximum == public.max_concurrent_azure
+
+
+def test_tutorial_is_account_bound_and_survives_practice_deletion(env):
+    app, _, scorer, synth, _ = env
+    with TestClient(app) as first, TestClient(app) as second:
+        assert first.get("/api/me/tutorial").status_code == 401
+        assert first.put("/api/me/tutorial", json={"version": 1}, headers=headers("expired")).status_code == 401
+        assert first.get("/api/me/tutorial", headers=headers()).json() == {"completed_version": 0}
+        assert first.put("/api/me/tutorial", json={"version": 1}, headers=headers()).status_code == 200
+        assert second.get("/api/me/tutorial", headers=headers()).json() == {"completed_version": 1}
+        assert second.get("/api/me/tutorial", headers=headers("account-b")).json() == {"completed_version": 0}
+        assert first.delete("/api/me", headers=headers()).status_code == 200
+        assert second.get("/api/me/tutorial", headers=headers()).json() == {"completed_version": 1}
+        assert first.put("/api/me/tutorial", json={"version": 999}, headers=headers()).status_code == 422
+        quota = first.get("/api/me/quota", headers=headers()).json()
+        assert quota["score"]["visitor_day"]["used"] == 0
+        assert quota["tts"]["visitor_day"]["used"] == 0
+    assert synth.calls == []
+    assert not hasattr(scorer, "wav_path")

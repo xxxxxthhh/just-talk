@@ -1,0 +1,17 @@
+.practice-tutorial { position: fixed; inset: 0; margin: 0; padding: 0; width: 100vw; height: 100dvh; max-width: none; max-height: none; border: 0; background: transparent; color: #182421; }
+.practice-tutorial::backdrop { background: rgba(8,22,18,.55); }
+.tutorial-highlight { position: fixed; pointer-events: none; border: 3px solid #84e5b7; border-radius: 12px; box-sizing: border-box; box-shadow: 0 0 0 4px rgba(132,229,183,.16); }
+.tutorial-card { position: fixed; box-sizing: border-box; background: #fff; padding: 22px; border-radius: 18px; box-shadow: 0 12px 60px rgba(0,0,0,.3); max-height: calc(100dvh - 32px); overflow: auto; }
+.tutorial-topline { display: flex; align-items: center; justify-content: space-between; color: #51635b; font-size: 13px; }
+.tutorial-card h2 { margin: 14px 0 10px; font-size: 21px; line-height: 1.4; }
+.tutorial-card p { margin: 0 0 16px; font-size: 15px; line-height: 1.75; }
+.tutorial-card .tutorial-hint { color: #586b62; font-size: 12px; line-height: 1.6; }
+.tutorial-close { background: transparent; color: #344f40; border: none; font-size: 26px; cursor: pointer; min-width: 38px; min-height: 38px; }
+.tutorial-actions { display: flex; align-items: center; gap: 8px; }
+.tutorial-actions button { min-height: 42px; font-size: 13px; white-space: nowrap; }
+.tutorial-skip { margin-right: auto; background: transparent; border: 0; color: #51635b; cursor: pointer; }
+.tutorial-card button:focus-visible { outline: 3px solid #177651; outline-offset: 3px; }
+.tutorial-save-notice { padding: 10px 16px; background: #fff2d4; color: #654818; font-size: 13px; }
+.tutorial-save-notice button { margin-left: 12px; }
+.m-listen-button { display: inline-flex; align-items: center; gap: 7px; margin-bottom: 12px; min-height: 42px; }
+@media (max-width: 420px) { .tutorial-card { padding: 16px; } .tutorial-card h2 { font-size: 19px; } }

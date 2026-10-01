@@ -21,6 +21,41 @@ class AccountRegistry(VisitorRegistry):
         self.visitors_dir = data_dir / "accounts"
         self._deleting: set[str] = set()
 
+    def initialize(self) -> None:
+        super().initialize()
+        with self._db() as connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS tutorial_preferences "
+                "(account_id TEXT PRIMARY KEY, version INTEGER NOT NULL, updated_at TEXT NOT NULL)"
+            )
+
+    def tutorial_version(self, account_id: str) -> int:
+        # Separate from practice files: deletion/TTL must not repeat onboarding.
+        with self._lock, self._db() as connection:
+            now = self._clock()
+            connection.execute(
+                "DELETE FROM tutorial_preferences WHERE updated_at < ?",
+                ((now - timedelta(days=70)).isoformat(),),
+            )
+            row = connection.execute(
+                "SELECT version FROM tutorial_preferences WHERE account_id = ?", (account_id,)
+            ).fetchone()
+            if row:
+                connection.execute(
+                    "UPDATE tutorial_preferences SET updated_at = ? WHERE account_id = ?",
+                    (now.isoformat(), account_id),
+                )
+            return row["version"] if row else 0
+
+    def finish_tutorial(self, account_id: str, version: int) -> None:
+        with self._lock, self._db() as connection:
+            connection.execute(
+                "INSERT INTO tutorial_preferences VALUES (?, ?, ?) "
+                "ON CONFLICT(account_id) DO UPDATE SET "
+                "version = MAX(version, excluded.version), updated_at = excluded.updated_at",
+                (account_id, version, self._clock().isoformat()),
+            )
+
     def ensure_account(self, account_id: str) -> None:
         account_id = UUID(account_id).hex
         with self._lock:

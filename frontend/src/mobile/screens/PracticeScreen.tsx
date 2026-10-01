@@ -1,4 +1,4 @@
-import { Clock3, Loader2, Mic, Square, UploadCloud, X } from "lucide-react";
+import { Clock3, Loader2, Mic, Pause, Square, UploadCloud, Volume2, X } from "lucide-react";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 
 import { AudioPlayer } from "../../components/AudioPlayer";
@@ -8,6 +8,8 @@ import {
   MaterialLibrary,
 } from "../../components/MaterialLibrary";
 import { ScoredPassage } from "../../components/ScoredPassage";
+import { PhonemeInspector } from "../../components/PhonemeInspector";
+import { useTutorial } from "../../components/PracticeTutorial";
 import { ScoreGrid } from "../../components/ScoreGrid";
 import { scoreValue } from "../../scoreUtils";
 import { usePracticeSession } from "../../usePracticeSession";
@@ -19,6 +21,7 @@ type PracticeScreenProps = {
 };
 
 export default function PracticeScreen({ session }: PracticeScreenProps) {
+  const tutorial = useTutorial();
   const materialLibraryRef = useRef<HTMLDivElement | null>(null);
   const resultSheetRef = useRef<HTMLDialogElement | null>(null);
   const resultSheetCloseRef = useRef<HTMLButtonElement | null>(null);
@@ -122,6 +125,8 @@ export default function PracticeScreen({ session }: PracticeScreenProps) {
     }
   }, [recorderState]);
 
+  useEffect(() => { if (tutorial.open) setIsResultSheetOpen(false); }, [tutorial.open]);
+
   function openMaterialLibrary() {
     materialLibraryRef.current?.querySelector<HTMLButtonElement>("button")?.click();
   }
@@ -172,6 +177,7 @@ export default function PracticeScreen({ session }: PracticeScreenProps) {
     <section
       className={`m-practice ${isResultSheetOpen ? "m-result-sheet-open" : ""}`}
       aria-label="Practice"
+      data-tutorial="practice"
     >
       <header className="m-practice-header">
         <div className="m-practice-title">
@@ -197,6 +203,14 @@ export default function PracticeScreen({ session }: PracticeScreenProps) {
       </header>
 
       <div className="m-practice-scroll">
+        <button
+          type="button" className="m-small-button m-listen-button" data-tutorial="listen"
+          disabled={!passage.trim() || (session.isSpeechBusy && !isPassageSpeechActive)}
+          onClick={session.togglePassageSpeech}
+        >
+          {speechStatus === "playing" && isPassageSpeechActive ? <Pause size={16} /> : <Volume2 size={16} />}
+          {isPassageSpeechActive && speechStatus === "loading" ? "Loading…" : isPassageSpeechActive && speechStatus === "playing" ? "Pause" : "Play example"}
+        </button>
         {isReviewActive ? (
           <div className="m-review" role="status">
             <div className="m-review-info">
@@ -281,7 +295,7 @@ export default function PracticeScreen({ session }: PracticeScreenProps) {
         ) : null}
       </div>
 
-      <div className="m-recorder">
+      <div className="m-recorder" data-tutorial="feedback">
         <div className={`m-wave-row ${result ? "m-wave-row-with-score" : ""}`}>
           <AudioVisualizer
             recorderState={recorderState}
@@ -337,17 +351,18 @@ export default function PracticeScreen({ session }: PracticeScreenProps) {
 
         <div className="m-record-actions">
           {recorderState === "recording" ? (
-            <button className="m-record-button m-record-button-stop" type="button" onClick={stopRecording}>
+            <button data-tutorial="record" className="m-record-button m-record-button-stop" type="button" onClick={stopRecording}>
               <Square size={20} />
               Stop
             </button>
           ) : (
-            <button className="m-record-button" type="button" onClick={handleStartRecording}>
+            <button data-tutorial="record" className="m-record-button" type="button" onClick={handleStartRecording}>
               <Mic size={21} />
               Record
             </button>
           )}
           <button
+            data-tutorial="score"
             className="m-score-button"
             type="button"
             disabled={!audioBlob || isScoring}
@@ -418,6 +433,11 @@ export default function PracticeScreen({ session }: PracticeScreenProps) {
                 <p className="m-result-passage-text">{passage}</p>
               )}
             </section>
+            {session.selectedWord ? (
+              <PhonemeInspector word={session.selectedWord}
+                onPlay={() => { if (session.selectedWord) session.playWord(session.selectedWord.word); }}
+                isSpeaking={session.isSpeechBusy} />
+            ) : null}
           </div>
         </dialog>
       ) : null}

@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,6 +49,10 @@ from .visitors import VisitorLimitError, VisitorRegistry
 class WordCreateRequest(BaseModel):
     word: str
     notes: str = ""
+
+
+class TutorialRequest(BaseModel):
+    version: Literal[1]
 
 
 class SpeakRequest(BaseModel):
@@ -334,6 +338,19 @@ def create_app(
         def my_quota(actor: Actor = Depends(get_actor)) -> dict[str, Any]:
             assert ledger is not None and actor.visitor_id is not None
             return ledger.status(visitor_id=actor.visitor_id)
+
+        @app.get("/api/me/tutorial")
+        def my_tutorial(actor: Actor = Depends(get_actor)) -> dict[str, int]:
+            assert registry is not None and actor.visitor_id is not None
+            return {"completed_version": registry.tutorial_version(actor.visitor_id)}
+
+        @app.put("/api/me/tutorial")
+        def finish_tutorial(
+            payload: TutorialRequest, actor: Actor = Depends(get_actor)
+        ) -> dict[str, int]:
+            assert registry is not None and actor.visitor_id is not None
+            registry.finish_tutorial(actor.visitor_id, payload.version)
+            return {"completed_version": registry.tutorial_version(actor.visitor_id)}
 
         @app.delete("/api/me")
         def delete_me(request: Request) -> dict[str, bool]:

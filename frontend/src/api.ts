@@ -82,6 +82,16 @@ export async function fetchQuota(): Promise<QuotaStatus> {
   return parseResponse<QuotaStatus>(await apiFetch("/api/me/quota"));
 }
 
+export async function fetchTutorial(): Promise<{ completed_version: number }> {
+  return parseResponse(await apiFetch("/api/me/tutorial"));
+}
+
+export async function finishTutorial(version: number): Promise<{ completed_version: number }> {
+  return parseResponse(await apiFetch("/api/me/tutorial", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version })
+  }));
+}
+
 export async function deleteMyData(): Promise<{ deleted: boolean }> {
   return parseResponse<{ deleted: boolean }>(await apiFetch("/api/me", { method: "DELETE" }));
 }

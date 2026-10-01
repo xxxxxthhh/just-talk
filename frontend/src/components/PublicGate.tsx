@@ -3,6 +3,7 @@ import { ApiError, checkHealth, deleteMyData, fetchQuota } from "../api";
 import { authClient, configureAuth } from "../auth";
 import { USAGE_CHANGED_EVENT, VISITOR_REQUIRED_EVENT } from "../publicMode";
 import type { Health, QuotaStatus, QuotaWindow } from "../types";
+import { TutorialProvider, TutorialHelp } from "./PracticeTutorial";
 import "./PublicGate.css";
 
 const SOURCE_URL = "https://github.com/xxxxxthhh/just-talk";
@@ -84,7 +85,7 @@ export default function PublicGate({ children }: { children: ReactNode }) {
     </div></div>
   );
   if (state === "welcome") return <Welcome health={health} />;
-  return <div key={account}><PublicBar health={health} />{children}</div>;
+  return <TutorialProvider key={account}><PublicBar health={health} />{children}</TutorialProvider>;
 }
 
 function Welcome({ health }: { health: Health | null }) {
@@ -112,7 +113,7 @@ function Welcome({ health }: { health: Health | null }) {
       <ul className="pg-points">
         <li><strong>Free practice funded by Just Talk.</strong> Sign in with Google. Your account shares the same daily allowance across browsers. Recording and listening also share site-wide daily and monthly limits, resetting in UTC.</li>
         <li><strong>Recordings.</strong> Audio and reference text are sent to Microsoft Azure AI Speech. Temporary recordings are deleted after processing; text, scores and model audio are stored.</li>
-        <li><strong>Your account and data.</strong> Google and Supabase manage sign-in. Just Talk uses your Supabase account ID for history, saved words and quota. Practice data expires after {health?.public?.visitor_ttl_days ?? 7} days without use or can be deleted immediately. Account-linked usage records remain for about 70 days; deleting practice data or signing out does not reset allowance.</li>
+        <li><strong>Your account and data.</strong> Google and Supabase manage sign-in. Just Talk uses your Supabase account ID for history, saved words and quota. Practice data expires after {health?.public?.visitor_ttl_days ?? 7} days without use or can be deleted immediately. Account-linked usage records and tutorial preferences remain for about 70 days; deleting practice data or signing out does not reset allowance.</li>
         <li><strong>Provider logs.</strong> Google, Supabase, Cloudflare and Microsoft may retain logs including IP addresses.</li>
       </ul>
       {!configured ? <p className="pg-warning">Google sign-in is being set up. Please check back soon.</p> : null}
@@ -217,6 +218,7 @@ function PublicBar({ health }: { health: Health | null }) {
         </span>
       ) : null}
       <span className="pg-bar-actions">
+        <TutorialHelp />
         <a className="pg-bar-link" href={SOURCE_URL} target="_blank" rel="noreferrer">
           Source
         </a>

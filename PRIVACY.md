@@ -45,6 +45,10 @@ The public trial never enables LLM features.
   delete your Google/Supabase account or reset your allowance.
 - Practice data expires after 7 days without use (deployment configurable).
   Cleanup runs about every 10 minutes.
+- Tutorial completion or dismissal is saved by account and guide version so it
+  does not repeat in another browser. This preference lasts about 70 days
+  without use, remains after deleting practice data, and can be reopened with
+  “使用引导”. It contains no audio or practice text.
 - Account-linked usage records are retained for about 70 days to enforce
   daily/monthly limits even after practice deletion, logout, or expiry. Records
   contain account ID, timestamps, units and request outcome, not practice text

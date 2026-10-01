@@ -715,6 +715,7 @@ export function usePracticeSession() {
 
   const shortcutHandlerRef = useRef<(event: KeyboardEvent) => void>(() => {});
   shortcutHandlerRef.current = (event: KeyboardEvent) => {
+    if (document.querySelector("dialog.practice-tutorial[open]")) return;
     if (event.metaKey || event.ctrlKey || event.altKey || event.repeat) return;
     if (appView !== "practice" || activeCoachPhoneme) return;
     // Keep native keyboard behavior on focused interactive elements: typing in

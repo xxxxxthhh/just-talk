@@ -198,3 +198,14 @@ deploy/              Personal backend compose (Tailscale) and deploy/public/ pub
 ## License
 
 MIT, see [LICENSE](LICENSE). Where the bundled sample content comes from, and what has not been verified, is listed in [docs/CONTENT-PROVENANCE.md](docs/CONTENT-PROVENANCE.md).
+
+### First-login practice guide
+
+The Google account preview shows a five-step guide on first sign-in: choose a
+passage, listen to the example, record and stop, submit for scoring, and inspect
+word/phoneme feedback. “使用引导” reopens it from the free-trial bar. Skip, close,
+and finish save guide version 1 against the verified account, including across
+browsers. Practice-data deletion does not reset this preference. The guide
+never starts playback, microphone capture, or scoring, and cannot interrupt an
+active recording or scoring request. Preferences expire after about 70 days
+without access; see [PRIVACY.md](PRIVACY.md).
