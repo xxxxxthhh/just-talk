@@ -23,6 +23,15 @@ export function chooseFocusPhoneme(stats: readonly PhonemeStat[]): StarterPhonem
   return focus;
 }
 
+const BOUNDARY_PUNCTUATION = /^[.,!?;:"'()[\]{}]+|[.,!?;:"'()[\]{}]+$/g;
+
+// Mirrors the backend's _single_word_reference: the scoring target of a word
+// prompt, or "" when the text is not one word. Used lowercased as the dedupe key.
+function singleWordKey(text: string): string {
+  const stripped = text.trim().replace(BOUNDARY_PUNCTUATION, "").trim();
+  return stripped && stripped.split(/\s+/).length === 1 ? stripped.toLowerCase() : "";
+}
+
 function starterPrompt(item: StarterItem, itemId: string): RunPrompt {
   return {
     itemId,
@@ -45,11 +54,8 @@ export type RunDeckInput = {
 export function buildRunDeck({ phonemeStats, vocabulary, previousWeakWords = [] }: RunDeckInput): readonly RunPrompt[] {
   const phoneme = chooseFocusPhoneme(phonemeStats);
   const group = STARTER_PACK.filter((item) => item.phoneme === phoneme);
-  const taken = new Set(
-    group.filter((item) => item.stage !== "context").map((item) => item.text.toLowerCase())
-  );
-  const newContextTarget = group.filter((item) => item.stage === "context")[1].targetWord;
-  taken.add(newContextTarget.toLowerCase());
+  const taken = new Set(group.filter((item) => item.stage !== "context").map((item) => singleWordKey(item.text)));
+  taken.add(singleWordKey(group.filter((item) => item.stage === "context")[1].targetWord));
 
   const warmups: RunPrompt[] = [];
   const external: [string, RunPrompt["source"]][] = [
@@ -59,8 +65,8 @@ export function buildRunDeck({ phonemeStats, vocabulary, previousWeakWords = [] 
   for (const [raw, source] of external) {
     if (warmups.length === 2) break;
     const text = raw.trim();
-    const key = text.toLowerCase();
-    if (!text || taken.has(key)) continue;
+    const key = singleWordKey(text);
+    if (!key || taken.has(key)) continue;
     taken.add(key);
     warmups.push({
       itemId: `warmup-${warmups.length + 1}`,

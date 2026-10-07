@@ -127,6 +127,40 @@ describe("buildRunDeck", () => {
     expect(deck[0].text).toBe("earliest");
   });
 
+  it("does_not_label_a_multiword_due_entry_as_a_word_prompt", () => {
+    const deck = buildRunDeck({
+      phonemeStats: [],
+      vocabulary: [vocab("new york", null), vocab("good morning", past(1)), vocab("bright", past(2))],
+      previousWeakWords: ["ice cream", "  "],
+    });
+
+    expect(deck.slice(0, 2).map((prompt) => [prompt.text, prompt.source])).toEqual([
+      ["bright", "due-word"],
+      ["thin", "starter"],
+    ]);
+    for (const prompt of deck.filter((candidate) => candidate.kind === "word")) {
+      expect(prompt.text.trim().split(/\s+/)).toHaveLength(1);
+    }
+  });
+
+  it("filters_an_external_focus_word_with_boundary_punctuation", () => {
+    const deck = buildRunDeck({
+      phonemeStats: [],
+      vocabulary: [vocab("Think!", past(1)), vocab("(path)", past(2)), vocab("don't", past(3)), vocab("well-known", past(4))],
+      previousWeakWords: ['"thank,"'],
+    });
+
+    // Internal apostrophes and hyphens are kept; only boundary punctuation is cleaned.
+    expect(deck.slice(0, 2).map((prompt) => [prompt.text, prompt.source])).toEqual([
+      ["don't", "due-word"],
+      ["well-known", "due-word"],
+    ]);
+    const wordTargets = deck
+      .filter((prompt) => prompt.kind === "word")
+      .map((prompt) => prompt.text.toLowerCase());
+    expect(new Set(wordTargets).size).toBe(4);
+  });
+
   it("play_again_prefers_eligible_previous_weak_words", () => {
     const vocabulary = [vocab("water", past(1)), vocab("bright", past(2))];
 
