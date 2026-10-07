@@ -164,7 +164,8 @@ function scoreReceived(state: RunState, attempt: Attempt, response: ScoreRespons
 
   const low = judgment.accuracy < PASS_ACCURACY;
   if (!rescuing && low) {
-    scored = { ...scored, verdict: "relisten", firstLowAttemptId: attempt.key.attemptId };
+    // Also re-opens an item whose earlier reading was not judged: this is its first valid reading.
+    scored = { ...scored, resolution: "open", verdict: "relisten", firstLowAttemptId: attempt.key.attemptId };
     next = { ...replaceItem(next, next.index, scored), phase: "rescue" };
     return nextCapture(next) ? next : cannotConfirm(next);
   }
@@ -229,7 +230,12 @@ export function runReducer(state: RunState | null, action: RunAction): RunState 
         sync: "not-needed",
         candidates: []
       };
-      const next = replaceItem(state, state.index, { ...item, attempts: [...item.attempts, attempt] });
+      const next = replaceItem(state, state.index, {
+        ...item,
+        attempts: [...item.attempts, attempt],
+        verdict: item.verdict === "rejected" ? null : item.verdict,
+        lastRejection: null
+      });
       return { ...next, activeAttemptId: action.key.attemptId, phase: "recording" };
     }
     case "BLOB_READY": {

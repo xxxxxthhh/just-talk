@@ -230,6 +230,41 @@ describe("run model", () => {
     expect(canAdvance(state)).toBe(true);
   });
 
+  it("nomatch_then_two_valid_lows_loses_one_heart", () => {
+    let state = play(start("challenge"), noMatch);
+    expect(state.items[0].resolution).toBe("unjudged");
+    expect(nextCapture(state)).toEqual({ purpose: "rerecord", slot: "extra" });
+    state = play(state, scored(50));
+    expect(state.items[0].resolution).toBe("open");
+    expect(state.items[0].verdict).toBe("relisten");
+    expect(state.phase).toBe("rescue");
+    expect(nextCapture(state)).toEqual({ purpose: "rescue", slot: "extra" });
+    expect(state.hearts).toBe(2);
+
+    state = rescue(state, scored(50));
+    expect(state.items[0].verdict).toBe("heart-lost");
+    expect(state.items[0].resolution).toBe("resolved");
+    expect(state.hearts).toBe(1);
+    expect(state.budgetUsed).toBe(3);
+  });
+
+  it("lastRejection_clears_when_a_new_capture_begins", () => {
+    const [sent, key] = send(start("route"));
+    let state = reduce(sent, { type: "SCORE_FAILED", key, failure: { kind: "rejected", message: "too short" } });
+    expect(state.items[0].lastRejection?.message).toBe("too short");
+    expect(state.items[0].verdict).toBe("rejected");
+    const next = { ...key, attemptId: "retry" };
+    state = reduce(state, { type: "BEGIN_CAPTURE", key: next, purpose: "initial", slot: "main" });
+    expect(state.items[0].lastRejection).toBeNull();
+    expect(state.items[0].verdict).toBeNull();
+  });
+
+  it("nomatch_then_valid_reading_resolves_route_item", () => {
+    const state = play(play(start("route"), noMatch), scored(50));
+    expect(state.items[0].resolution).toBe("resolved");
+    expect(state.items[0].verdict).toBe("practiced");
+  });
+
   it("rejected_refunds_exact_slot_once_and_keeps_current_item", () => {
     let [state, key] = send(start("challenge"));
     expect(state.budgetUsed).toBe(1);
