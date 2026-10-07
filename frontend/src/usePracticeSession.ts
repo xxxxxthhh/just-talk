@@ -268,6 +268,7 @@ export function usePracticeSession() {
   // the time the response arrives, the response no longer matches what's on
   // screen and is dropped rather than applied.
   const practiceContextRef = useRef(0);
+  const scoreRequestRef = useRef(0);
   function bumpPracticeContext() {
     practiceContextRef.current += 1;
   }
@@ -325,9 +326,16 @@ export function usePracticeSession() {
       return;
     }
     const requestContext = practiceContextRef.current;
+    scoreRequestRef.current += 1;
+    const requestId = scoreRequestRef.current;
+    // An older request settling late must not clear a newer request's busy state.
+    const releaseScoring = () => {
+      if (scoreRequestRef.current === requestId) setIsScoring(false);
+    };
     setIsScoring(true);
     setError("");
     setStatus(isLongMode ? "Scoring long passage" : "Scoring pronunciation");
+    let sessionId: string;
     try {
       const response = await scoreRecording(passage, audioBlob, practiceMode);
       if (practiceContextRef.current !== requestContext) {
@@ -348,45 +356,47 @@ export function usePracticeSession() {
       }
 
       // The score was genuinely accepted for the word/passage on screen right
-      // now (the token check above just confirmed it). Latch "practiced" and
-      // flip the button label immediately so neither depends on the ancillary
-      // refreshes below succeeding, or survives them being abandoned.
+      // now (the token check above just confirmed it). Show it and latch
+      // "practiced" before word collection, so neither waits on or depends on
+      // the ancillary work below.
       if (isReviewActive) {
         reviewWordScoredRef.current = true;
         setReviewJustScored(true);
       }
+      sessionId = response.session.id;
+      setNoMatchNotice("");
+      setResult(response.result);
+      setCurrentSessionId(sessionId);
+      setSelectedWordIndex(0);
+      setStatus("Score complete");
+    } catch (err) {
+      if (practiceContextRef.current === requestContext) {
+        setError(err instanceof Error ? err.message : "Scoring failed.");
+        setStatus("");
+      }
+      return;
+    } finally {
+      releaseScoring();
+    }
 
-      const sessionId = response.session.id;
+    try {
       const addedWords = await addWordsFromSession(sessionId);
       // Scoring only changes history and the word bank; skip refetching
       // materials and health.
       await Promise.all([refreshSessions(), refreshVocabulary()]);
       void activity.loadActivityStats();
-
-      if (practiceContextRef.current !== requestContext) {
-        // The user moved on while these ancillary refreshes were in flight.
-        // The score was already latched above; none of this response's
-        // display state belongs to whatever is on screen now.
-        return;
+      if (practiceContextRef.current === requestContext && addedWords.length) {
+        setStatus(`Score complete · ${addedWords.length} weak words saved`);
       }
-
-      setNoMatchNotice("");
-      setResult(response.result);
-      setCurrentSessionId(sessionId);
-      setSelectedWordIndex(0);
-      setStatus(
-        addedWords.length
-          ? `Score complete · ${addedWords.length} weak words saved`
-          : "Score complete"
-      );
     } catch (err) {
-      if (practiceContextRef.current !== requestContext) {
-        return;
+      // The score stands; only the word bank or history refresh failed.
+      if (practiceContextRef.current === requestContext) {
+        setError(
+          `Score saved, but the word bank could not be updated${
+            err instanceof Error ? `: ${err.message}` : "."
+          }`
+        );
       }
-      setError(err instanceof Error ? err.message : "Scoring failed.");
-      setStatus("");
-    } finally {
-      setIsScoring(false);
     }
   }
 

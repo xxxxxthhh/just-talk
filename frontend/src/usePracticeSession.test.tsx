@@ -25,11 +25,28 @@ const weakResult: ScoreResult = {
   raw: {}
 };
 
+type FetchResponse = { ok: boolean; status: number; json: () => Promise<unknown> };
+// Per-URL handlers for tests that hold or fail a specific request.
+let overrides: Record<string, () => Promise<FetchResponse>> = {};
+
+function respond(payload: unknown, status = 200): FetchResponse {
+  return { ok: status < 400, status, json: async () => payload };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 function installFetch() {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (overrides[url]) return overrides[url]();
       const payload =
         url === "/api/health"
           ? health
@@ -115,6 +132,7 @@ function pressEnter() {
 
 describe("usePracticeSession run wiring", () => {
   beforeEach(() => {
+    overrides = {};
     deferPermission = false;
     asyncStop = false;
     recorders = [];
@@ -305,5 +323,135 @@ describe("usePracticeSession run wiring", () => {
     act(() => session.current.exitRun());
     act(() => session.current.setResult(runOnlyResult));
     await waitFor(() => expect(spokenTexts()).toContain("those"));
+  });
+});
+
+const dueWord = {
+  id: "w1",
+  word: "thin",
+  source: "manual",
+  notes: "",
+  latest_score: null,
+  practice_count: 0,
+  last_practiced_at: null,
+  status: "active",
+  consecutive_successes: 0,
+  graduated_at: null,
+  interval_days: 0,
+  due_at: null,
+  created_at: "",
+  updated_at: ""
+};
+
+const otherResult: ScoreResult = { ...weakResult, transcript: "then", words: [word("then", 95)] };
+
+function scoreResponse(result: ScoreResult, id: string) {
+  return respond({ result, session: { id, created_at: "", reference_text: "", audio_duration_ms: 0, scores: result.scores } });
+}
+
+async function recordTake(session: Awaited<ReturnType<typeof renderSession>>) {
+  await act(async () => {
+    await session.current.startRecording();
+  });
+  act(() => session.current.stopRecording());
+}
+
+describe("usePracticeSession normal scoring order", () => {
+  beforeEach(() => {
+    overrides = {};
+    asyncStop = false;
+    recorders = [];
+    installFetch();
+    installRecorder();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("ordinary_score_visible_while_collection_pending", async () => {
+    const collection = deferred<FetchResponse>();
+    overrides["/api/words/from-session/s1"] = () => collection.promise;
+    const session = await renderSession();
+    await recordTake(session);
+
+    act(() => {
+      void session.current.submitRecording();
+    });
+    await waitFor(() => expect(session.current.result).toEqual(weakResult));
+    expect(session.current.currentSessionId).toBe("s1");
+    expect(session.current.isScoring).toBe(false);
+    expect(session.current.status).toBe("Score complete");
+
+    await act(async () => {
+      collection.resolve(respond([{ id: "1", word: "thin" }, { id: "2", word: "path" }]));
+    });
+    await waitFor(() => expect(session.current.status).toBe("Score complete · 2 weak words saved"));
+    expect(session.current.error).toBe("");
+  });
+
+  it("collection_failure_preserves_score_and_review_latch", async () => {
+    overrides["/api/words"] = async () => respond([dueWord]);
+    overrides["/api/words/from-session/s1"] = async () => respond({ detail: "Word bank is full" }, 409);
+    const session = await renderSession();
+    await waitFor(() => expect(session.current.vocabulary).toHaveLength(1));
+    act(() => session.current.startReview());
+    expect(session.current.isReviewActive).toBe(true);
+    await recordTake(session);
+
+    await act(async () => {
+      await session.current.submitRecording();
+    });
+    expect(session.current.result).toEqual(weakResult);
+    expect(session.current.reviewWordScoredRef.current).toBe(true);
+    expect(session.current.reviewJustScored).toBe(true);
+    expect(session.current.status).toBe("Score complete");
+    expect(session.current.error).toBe("Score saved, but the word bank could not be updated: Word bank is full");
+    expect(session.current.isScoring).toBe(false);
+  });
+
+  it("late_response_and_finally_cannot_modify_new_context", async () => {
+    const first = deferred<FetchResponse>();
+    const second = deferred<FetchResponse>();
+    const scores = [first, second];
+    overrides["/api/score"] = () => scores.shift()!.promise;
+    const session = await renderSession();
+    await recordTake(session);
+    act(() => {
+      void session.current.submitRecording();
+    });
+
+    // Move on and score a new take while the first request is still out.
+    act(() => session.current.resetPractice());
+    await recordTake(session);
+    act(() => {
+      void session.current.submitRecording();
+    });
+    expect(session.current.isScoring).toBe(true);
+
+    await act(async () => {
+      first.resolve(scoreResponse(weakResult, "s-old"));
+    });
+    expect(session.current.result).toBeNull();
+    expect(session.current.isScoring).toBe(true);
+    expect(fetchCalls("/api/words/from-session/s-old")).toHaveLength(0);
+
+    const collection = deferred<FetchResponse>();
+    overrides["/api/words/from-session/s-new"] = () => collection.promise;
+    await act(async () => {
+      second.resolve(scoreResponse(otherResult, "s-new"));
+    });
+    await waitFor(() => expect(session.current.result).toEqual(otherResult));
+    expect(session.current.isScoring).toBe(false);
+
+    // A collection failure that lands after the context moved on changes nothing.
+    act(() => session.current.resetPractice());
+    await act(async () => {
+      collection.resolve(respond({ detail: "Word bank is full" }, 409));
+    });
+    expect(session.current.error).toBe("");
+    expect(session.current.result).toBeNull();
+    expect(session.current.status).toBe("Score complete");
   });
 });
