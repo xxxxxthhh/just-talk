@@ -72,9 +72,13 @@ type NodeState = { className: string; label: string };
 
 function nodeState(item: RunItem, index: number, current: number): NodeState {
   const lit = item.attempts.some((attempt) => validAccuracy(attempt) !== null);
-  const parts = [lit ? "lit" : item.resolution === "skipped" ? "skipped" : "unlit"];
-  const labels = [lit ? "practiced" : item.resolution === "skipped" ? "skipped" : "not practiced"];
-  if (item.resolution === "pending") {
+  // A skipped rescue keeps its valid first reading, so lit and skipped can combine.
+  const parts = [lit ? "lit" : "unlit"];
+  const labels = [lit ? "practiced" : "not practiced"];
+  if (item.resolution === "skipped") {
+    parts.push("skipped");
+    labels.push("skipped");
+  } else if (item.resolution === "pending") {
     parts.push("pending");
     labels.push("score pending");
   } else if (item.resolution === "unjudged") {
@@ -96,7 +100,6 @@ type PracticeRunProps = {
   onRecordNext: () => void;
   onFinish: () => void;
   onSkip: () => void;
-  onCannotConfirm: () => void;
   onPlayReference: () => void;
   onQuit: () => void;
   onResume: () => void;
@@ -112,7 +115,6 @@ export function PracticeRun({
   onRecordNext,
   onFinish,
   onSkip,
-  onCannotConfirm,
   onPlayReference,
   onQuit,
   onResume,
@@ -187,7 +189,6 @@ export function PracticeRun({
             onRecord={onRecord}
             onStop={onStop}
             onSkip={onSkip}
-            onCannotConfirm={onCannotConfirm}
             onPlayReference={onPlayReference}
           />
           {run.phase === "feedback" || run.phase === "rescue" ? (
@@ -223,11 +224,10 @@ type CurrentItemProps = {
   onRecord: () => void;
   onStop: () => void;
   onSkip: () => void;
-  onCannotConfirm: () => void;
   onPlayReference: () => void;
 };
 
-function CurrentItem({ run, item, onRecord, onStop, onSkip, onCannotConfirm, onPlayReference }: CurrentItemProps) {
+function CurrentItem({ run, item, onRecord, onStop, onSkip, onPlayReference }: CurrentItemProps) {
   const best = latestValid(item);
   const recordable = canRecord(run);
   const prompt = (
@@ -324,8 +324,8 @@ function CurrentItem({ run, item, onRecord, onStop, onSkip, onCannotConfirm, onP
           <button type="button" className="run-primary" disabled={!recordable} onClick={onRecord}>
             Record again
           </button>
-          <button type="button" className="m-small-button" onClick={onCannotConfirm}>
-            Move on
+          <button type="button" className="m-small-button" onClick={onSkip}>
+            Skip rescue
           </button>
         </div>
       ) : recordable ? (

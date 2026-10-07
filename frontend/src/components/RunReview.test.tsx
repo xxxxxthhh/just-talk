@@ -206,7 +206,6 @@ describe("RunReview", () => {
       onRecordNext: vi.fn(),
       onFinish: vi.fn(),
       onSkip: vi.fn(),
-      onCannotConfirm: vi.fn(),
       onPlayReference: vi.fn(),
       onQuit: vi.fn(),
       onResume: vi.fn(),

@@ -74,6 +74,10 @@
   border-style: dashed;
 }
 
+.run-node.lit.skipped {
+  background: var(--accent-glow);
+}
+
 .run-node.pending {
   border-color: var(--color-watch);
 }

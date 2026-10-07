@@ -195,7 +195,6 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             onRecordNext={run.recordNext}
             onFinish={run.finish}
             onSkip={run.skip}
-            onCannotConfirm={run.cannotConfirm}
             onPlayReference={() => run.playReference()}
             onQuit={run.quit}
             onResume={run.resume}

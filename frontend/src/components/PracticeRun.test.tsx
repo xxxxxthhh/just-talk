@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextCapture, runReducer } from "../game/runModel";
 import type { RunMode, RunPrompt, RunState, ScoreFailure, ScoreResponse } from "../types";
 import { PracticeRun } from "./PracticeRun";
+import { RunReview } from "./RunReview";
 
 const PROMPTS: RunPrompt[] = [
   ["warmup-1", "warmup", "word", "water"],
@@ -87,7 +88,6 @@ function handlers() {
     onRecordNext: vi.fn(),
     onFinish: vi.fn(),
     onSkip: vi.fn(),
-    onCannotConfirm: vi.fn(),
     onPlayReference: vi.fn(),
     onQuit: vi.fn(),
     onResume: vi.fn(),
@@ -191,6 +191,37 @@ describe("PracticeRun", () => {
 
     view.rerender(<PracticeRun run={score(rejected, 90)} {...callbacks} />);
     expect(screen.queryByText(/Recording too short/)).not.toBeInTheDocument();
+  });
+
+  it("deliberately_skipping_rescue_is_reported_as_a_skip", () => {
+    const callbacks = handlers();
+    const rescue = loadReference(score(start("challenge"), 40));
+    const view = render(<PracticeRun run={rescue} {...callbacks} />);
+    fireEvent.click(screen.getByRole("button", { name: "Skip rescue" }));
+    expect(callbacks.onSkip).toHaveBeenCalledTimes(1);
+
+    const skipped = runReducer(rescue, { type: "SKIP", runId: rescue.runId, itemId: "warmup-1" }) as RunState;
+    expect(skipped.hearts).toBe(2);
+    expect(skipped.extraUsed).toBe(0);
+    view.rerender(<PracticeRun run={skipped} {...callbacks} />);
+    expect(screen.getByLabelText("Item 1: practiced, skipped")).toHaveClass("lit", "skipped");
+    view.unmount();
+
+    const quit = runReducer(skipped, { type: "QUIT", runId: skipped.runId }) as RunState;
+    render(
+      <RunReview
+        run={quit}
+        attemptAudioUrls={{}}
+        publicMode={false}
+        drillsEnabled={false}
+        onPlayReference={vi.fn()}
+        onPlayAgain={vi.fn()}
+        onExit={vi.fn()}
+      />
+    );
+    expect(screen.getByText("Practiced 1 of 6")).toBeInTheDocument();
+    expect(screen.getByText("Skipped 1")).toBeInTheDocument();
+    expect(screen.getByText("Practiced · rescue skipped")).toBeInTheDocument();
   });
 
   it("challenge_summary_requires_user_action_before_review", () => {

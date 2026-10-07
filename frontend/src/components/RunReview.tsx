@@ -80,7 +80,7 @@ export function reviewActions(run: RunState): string[] {
 function itemStatus(item: RunItem, reached: boolean): string {
   const practiced = latestValid(item) !== null;
   if (!reached) return "Not reached";
-  if (item.resolution === "skipped") return "Skipped";
+  if (item.resolution === "skipped") return practiced ? "Practiced · rescue skipped" : "Skipped";
   if (item.resolution === "pending") return practiced ? "Practiced · score pending" : "Score pending";
   if (item.resolution === "unjudged") {
     const reason = item.verdict === "cannot-confirm" ? "not confirmed" : "unscored";
