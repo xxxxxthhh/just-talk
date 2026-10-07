@@ -189,7 +189,7 @@ export function PracticeRun({
         <ChallengeSummary run={run} onOpenReview={onOpenReview} />
       ) : run.paused ? (
         <div className="run-paused">
-          <p>Paused. Your run is saved.</p>
+          <p>Paused.</p>
           <button type="button" className="run-primary" onClick={onResume}>
             Resume
           </button>
