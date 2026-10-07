@@ -205,8 +205,10 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
     );
   }
 
-  // A normal take still stopping or scoring could land inside the run.
-  const canStartRun = recorderState !== "recording" && !isScoring;
+  // A normal take still stopping or scoring, or a drill still generating,
+  // could land inside the run.
+  const { drillError, generatingPhoneme } = session.insights;
+  const canStartRun = recorderState !== "recording" && !isScoring && !generatingPhoneme;
   const currentTitle = activeMaterial?.title ?? "Free practice";
   const limitSeconds = isLongMode ? longLimitSeconds : shortLimitSeconds;
   const primaryScore = scoreValue(result?.scores.pronunciation);
@@ -317,6 +319,14 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
 
         {noMatchNotice ? (
           <p className="m-notice" role="alert">{noMatchNotice}</p>
+        ) : null}
+
+        {generatingPhoneme ? (
+          <p className="m-drill-status" role="status">
+            Generating a drill for /{generatingPhoneme}/…
+          </p>
+        ) : drillError ? (
+          <p className="m-notice" role="alert">{drillError}</p>
         ) : null}
 
         <div className="m-passage">

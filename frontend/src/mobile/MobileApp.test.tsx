@@ -242,11 +242,17 @@ function scoreReply(text: string, accuracy: number): FakeReply {
 
 type RunApiOptions = {
   score?: (text: string) => FakeReply | Promise<FakeReply>;
+  drill?: () => FakeReply | Promise<FakeReply>;
   words?: unknown[];
   extra?: Record<string, unknown>;
 };
 
-function installRunApi({ score = (text) => scoreReply(text, 90), words = [], extra = {} }: RunApiOptions = {}) {
+function installRunApi({
+  score = (text) => scoreReply(text, 90),
+  drill,
+  words = [],
+  extra = {},
+}: RunApiOptions = {}) {
   const scoredTexts: string[] = [];
   vi.stubGlobal(
     "fetch",
@@ -257,6 +263,8 @@ function installRunApi({ score = (text) => scoreReply(text, 90), words = [], ext
         const text = String((init?.body as FormData).get("reference_text"));
         scoredTexts.push(text);
         reply = await score(text);
+      } else if (url === "/api/drills/generate" && drill) {
+        reply = await drill();
       } else if (url.startsWith("/api/words/from-session/")) {
         reply = { body: [] };
       } else {
@@ -495,6 +503,68 @@ describe("MobileApp game run", () => {
     await user.click(await screen.findByRole("button", { name: "Done" }));
     expect(screen.queryByRole("button", { name: /View score/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Score" })).not.toBeInTheDocument();
+  });
+
+  async function generateDrillFromReview(user: ReturnType<typeof userEvent.setup>) {
+    await startRun(user);
+    await user.click(screen.getByRole("button", { name: "Quit" }));
+    await user.click(await screen.findByRole("button", { name: "Generate a drill for /θ/" }));
+  }
+
+  test("generate_drill_failure_from_review_is_visible_on_practice", async () => {
+    const user = userEvent.setup();
+    let fail: (reply: FakeReply) => void = () => undefined;
+    installRunApi({
+      extra: { "/api/health": { ...health, passage_check_configured: true } },
+      drill: () => new Promise<FakeReply>((resolve) => (fail = resolve)),
+    });
+    render(<MobileApp />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/health"));
+
+    await generateDrillFromReview(user);
+    expect(screen.queryByRole("region", { name: "Route run" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Generating a drill for /θ/…")).toBeInTheDocument();
+    // A drill landing mid-run would replace the run's material, so no run starts meanwhile.
+    expect(screen.getByRole("button", { name: "Start a run" })).toBeDisabled();
+
+    act(() => fail({ status: 503, body: { detail: "Drill unavailable." } }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Drill unavailable.");
+    expect(screen.queryByText(/Generating a drill/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start a run" })).toBeEnabled();
+  });
+
+  test("generate_drill_success_from_review_loads_the_drill", async () => {
+    const user = userEvent.setup();
+    let succeed: (reply: FakeReply) => void = () => undefined;
+    const material = {
+      id: "drill-1",
+      pack_id: "generated-drills",
+      pack_title: "Generated drills",
+      title: "θ drill",
+      text: "Three thin thinkers thank Thelma.",
+      book: "",
+      lesson: "",
+      tags: [],
+      source: "generated",
+      license: "",
+      created_at: "2026-10-07T00:00:00Z",
+      updated_at: "2026-10-07T00:00:00Z",
+    };
+    installRunApi({
+      extra: { "/api/health": { ...health, passage_check_configured: true } },
+      drill: () => new Promise<FakeReply>((resolve) => (succeed = resolve)),
+    });
+    render(<MobileApp />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/health"));
+
+    await generateDrillFromReview(user);
+    expect(await screen.findByText("Generating a drill for /θ/…")).toBeInTheDocument();
+    act(() => succeed({ body: material }));
+
+    expect(await screen.findByRole("textbox", { name: "Passage" })).toHaveValue("Three thin thinkers thank Thelma.");
+    expect(screen.getByTitle("θ drill")).toBeInTheDocument();
+    expect(screen.queryByText(/Generating a drill/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   test("route_and_challenge_complete_and_replay_with_budget_and_pending_rules", async () => {
