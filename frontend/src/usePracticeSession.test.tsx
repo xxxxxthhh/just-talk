@@ -454,4 +454,77 @@ describe("usePracticeSession normal scoring order", () => {
     expect(session.current.result).toBeNull();
     expect(session.current.status).toBe("Score complete");
   });
+
+  it.each([
+    ["recording", "success"],
+    ["recording", "failure"],
+    ["stopped", "success"],
+    ["stopped", "failure"],
+    ["rescoring", "success"],
+    ["rescoring", "failure"]
+  ] as const)("old_collection_settling_while_new_take_is_%s_changes_nothing (%s)", async (phase, outcome) => {
+    const collection = deferred<FetchResponse>();
+    overrides["/api/words/from-session/s1"] = () => collection.promise;
+    const rescore = deferred<FetchResponse>();
+    const scores = [async () => scoreResponse(weakResult, "s1"), () => rescore.promise];
+    overrides["/api/score"] = () => scores.shift()!();
+    const session = await renderSession();
+    await recordTake(session);
+    act(() => {
+      void session.current.submitRecording();
+    });
+    await waitFor(() => expect(session.current.result).toEqual(weakResult));
+
+    await act(async () => {
+      await session.current.startRecording();
+    });
+    if (phase !== "recording") act(() => session.current.stopRecording());
+    if (phase === "rescoring") {
+      act(() => {
+        void session.current.submitRecording();
+      });
+    }
+    const before = {
+      status: session.current.status,
+      error: session.current.error,
+      result: session.current.result,
+      isScoring: session.current.isScoring
+    };
+
+    await act(async () => {
+      collection.resolve(
+        outcome === "success" ? respond([{ id: "1", word: "thin" }]) : respond({ detail: "old word bank failure" }, 409)
+      );
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect({
+      status: session.current.status,
+      error: session.current.error,
+      result: session.current.result,
+      isScoring: session.current.isScoring
+    }).toEqual(before);
+    expect(before.isScoring).toBe(phase === "rescoring");
+  });
+
+  it("rerecord_without_rescoring_still_counts_as_practiced", async () => {
+    overrides["/api/words"] = async () => respond([dueWord]);
+    const session = await renderSession();
+    await waitFor(() => expect(session.current.vocabulary).toHaveLength(1));
+    act(() => session.current.startReview());
+    await recordTake(session);
+    await act(async () => {
+      await session.current.submitRecording();
+    });
+    expect(session.current.reviewJustScored).toBe(true);
+
+    await recordTake(session);
+    expect(session.current.reviewJustScored).toBe(false);
+    expect(session.current.reviewWordScoredRef.current).toBe(true);
+
+    act(() => session.current.showNextReviewWord());
+    expect(session.current.reviewSummaryCount).toBe(1);
+    expect(session.current.reviewScoredCount).toBe(1);
+  });
 });

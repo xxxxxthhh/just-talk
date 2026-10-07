@@ -269,6 +269,9 @@ export function usePracticeSession() {
   // screen and is dropped rather than applied.
   const practiceContextRef = useRef(0);
   const scoreRequestRef = useRef(0);
+  // Bumped when a new take starts. A request for an earlier take of the same
+  // word may still latch "practiced", but never changes what's on screen.
+  const takeRef = useRef(0);
   function bumpPracticeContext() {
     practiceContextRef.current += 1;
   }
@@ -301,6 +304,7 @@ export function usePracticeSession() {
   }, [runActive, weakWords, preloadSpeech]);
 
   async function startRecording() {
+    takeRef.current += 1;
     setError("");
     setStatus("");
     stopCurrentSpeech();
@@ -326,6 +330,9 @@ export function usePracticeSession() {
       return;
     }
     const requestContext = practiceContextRef.current;
+    const requestTake = takeRef.current;
+    const isOnScreen = () =>
+      practiceContextRef.current === requestContext && takeRef.current === requestTake;
     scoreRequestRef.current += 1;
     const requestId = scoreRequestRef.current;
     // An older request settling late must not clear a newer request's busy state.
@@ -345,6 +352,7 @@ export function usePracticeSession() {
         return;
       }
       if (response.result.recognition_status === "no_match") {
+        if (!isOnScreen()) return;
         setResult(null);
         setCurrentSessionId("");
         setNoMatchNotice(NO_MATCH_MESSAGE);
@@ -361,16 +369,22 @@ export function usePracticeSession() {
       // the ancillary work below.
       if (isReviewActive) {
         reviewWordScoredRef.current = true;
-        setReviewJustScored(true);
       }
       sessionId = response.session.id;
-      setNoMatchNotice("");
-      setResult(response.result);
-      setCurrentSessionId(sessionId);
-      setSelectedWordIndex(0);
-      setStatus("Score complete");
+      // A newer take of the same word keeps its own screen; this score is
+      // still saved and its words still collected below.
+      if (isOnScreen()) {
+        if (isReviewActive) {
+          setReviewJustScored(true);
+        }
+        setNoMatchNotice("");
+        setResult(response.result);
+        setCurrentSessionId(sessionId);
+        setSelectedWordIndex(0);
+        setStatus("Score complete");
+      }
     } catch (err) {
-      if (practiceContextRef.current === requestContext) {
+      if (isOnScreen()) {
         setError(err instanceof Error ? err.message : "Scoring failed.");
         setStatus("");
       }
@@ -385,12 +399,12 @@ export function usePracticeSession() {
       // materials and health.
       await Promise.all([refreshSessions(), refreshVocabulary()]);
       void activity.loadActivityStats();
-      if (practiceContextRef.current === requestContext && addedWords.length) {
+      if (isOnScreen() && addedWords.length) {
         setStatus(`Score complete · ${addedWords.length} weak words saved`);
       }
     } catch (err) {
       // The score stands; only the word bank or history refresh failed.
-      if (practiceContextRef.current === requestContext) {
+      if (isOnScreen()) {
         setError(
           `Score saved, but the word bank could not be updated${
             err instanceof Error ? `: ${err.message}` : "."
