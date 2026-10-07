@@ -6,10 +6,12 @@ type PracticeSessionState = ReturnType<typeof usePracticeSession>;
 type HistoryScreenProps = {
   session: PracticeSessionState;
   onOpenPractice: () => void;
+  confirmLeaveRun: () => boolean;
 };
 
-export default function HistoryScreen({ session, onOpenPractice }: HistoryScreenProps) {
+export default function HistoryScreen({ session, onOpenPractice, confirmLeaveRun }: HistoryScreenProps) {
   async function restoreSession(item: PracticeSessionState["sessions"][number]) {
+    if (!confirmLeaveRun()) return;
     await session.loadSession(item);
     onOpenPractice();
   }

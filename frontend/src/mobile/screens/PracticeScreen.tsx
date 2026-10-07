@@ -7,8 +7,12 @@ import {
   MaterialImportAction,
   MaterialLibrary,
 } from "../../components/MaterialLibrary";
+import { PracticeRun } from "../../components/PracticeRun";
+import { RunReview } from "../../components/RunReview";
 import { ScoredPassage } from "../../components/ScoredPassage";
 import { ScoreGrid } from "../../components/ScoreGrid";
+import { usePracticeRun } from "../../hooks/usePracticeRun";
+import { PUBLIC_MODE } from "../../publicMode";
 import { scoreValue } from "../../scoreUtils";
 import { usePracticeSession } from "../../usePracticeSession";
 
@@ -16,9 +20,10 @@ type PracticeSessionState = ReturnType<typeof usePracticeSession>;
 
 type PracticeScreenProps = {
   session: PracticeSessionState;
+  run: ReturnType<typeof usePracticeRun>;
 };
 
-export default function PracticeScreen({ session }: PracticeScreenProps) {
+export default function PracticeScreen({ session, run }: PracticeScreenProps) {
   const materialLibraryRef = useRef<HTMLDivElement | null>(null);
   const resultSheetRef = useRef<HTMLDialogElement | null>(null);
   const resultSheetCloseRef = useRef<HTMLButtonElement | null>(null);
@@ -164,6 +169,45 @@ export default function PracticeScreen({ session }: PracticeScreenProps) {
     void startRecording();
   }
 
+  // The run is a separate surface; its results never reach session.result.
+  if (run.state) {
+    return (
+      <section className="m-practice m-run-surface" aria-label="Practice">
+        {run.state.phase === "review" ? (
+          <RunReview
+            run={run.state}
+            attemptAudioUrls={run.attemptAudioUrls}
+            publicMode={PUBLIC_MODE}
+            drillsEnabled={Boolean(session.health?.passage_check_configured)}
+            onPlayReference={run.playReference}
+            onPlayAgain={() => void run.playAgain()}
+            onGenerateDrill={(phoneme) => {
+              run.exit();
+              void session.insights.generateDrill(phoneme);
+            }}
+            onExit={run.exit}
+          />
+        ) : (
+          <PracticeRun
+            run={run.state}
+            onRecord={() => void run.record()}
+            onStop={run.stop}
+            onRecordNext={run.recordNext}
+            onFinish={run.finish}
+            onSkip={run.skip}
+            onCannotConfirm={run.cannotConfirm}
+            onPlayReference={() => run.playReference()}
+            onQuit={run.quit}
+            onResume={run.resume}
+            onOpenReview={run.openReview}
+          />
+        )}
+      </section>
+    );
+  }
+
+  // A normal take still stopping or scoring could land inside the run.
+  const canStartRun = recorderState !== "recording" && !isScoring;
   const currentTitle = activeMaterial?.title ?? "Free practice";
   const limitSeconds = isLongMode ? longLimitSeconds : shortLimitSeconds;
   const primaryScore = scoreValue(result?.scores.pronunciation);
@@ -225,6 +269,31 @@ export default function PracticeScreen({ session }: PracticeScreenProps) {
             </button>
           </div>
         ) : null}
+
+        <div className="m-run-entry">
+          <div className="m-run-entry-info">
+            <strong>Quick run</strong>
+            <span>Six short items, one verdict each</span>
+          </div>
+          <div className="m-run-entry-actions">
+            <button
+              className="m-small-button m-run-start"
+              type="button"
+              disabled={!canStartRun}
+              onClick={() => void run.start("route")}
+            >
+              Start a run
+            </button>
+            <button
+              className="m-small-button"
+              type="button"
+              disabled={!canStartRun}
+              onClick={() => void run.start("challenge")}
+            >
+              Challenge
+            </button>
+          </div>
+        </div>
 
         <div className="m-segmented" aria-label="Practice mode">
           <button

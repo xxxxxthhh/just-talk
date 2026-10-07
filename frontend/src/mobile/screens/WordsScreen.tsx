@@ -8,9 +8,11 @@ type PracticeSessionState = ReturnType<typeof usePracticeSession>;
 type WordsScreenProps = {
   session: PracticeSessionState;
   onOpenPractice: () => void;
+  // Asked before a practice entry changes the shared session; false cancels it.
+  confirmLeaveRun: () => boolean;
 };
 
-export default function WordsScreen({ session, onOpenPractice }: WordsScreenProps) {
+export default function WordsScreen({ session, onOpenPractice, confirmLeaveRun }: WordsScreenProps) {
   const [wordTab, setWordTab] = useState<WordBankTab>("active");
 
   return (
@@ -29,11 +31,13 @@ export default function WordsScreen({ session, onOpenPractice }: WordsScreenProp
             isSaving={session.isSavingWords}
             onAddWord={session.addManualWord}
             onPracticeWord={(item) => {
+              if (!confirmLeaveRun()) return;
               session.practiceVocabularyWord(item);
               onOpenPractice();
             }}
             onDeleteWord={(wordId) => void session.removeVocabularyWord(wordId)}
             onStartReview={() => {
+              if (!confirmLeaveRun()) return;
               session.startReview();
               onOpenPractice();
             }}

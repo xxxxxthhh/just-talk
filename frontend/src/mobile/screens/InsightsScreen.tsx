@@ -13,9 +13,10 @@ type PracticeSessionState = ReturnType<typeof usePracticeSession>;
 type InsightsScreenProps = {
   session: PracticeSessionState;
   onOpenPractice: () => void;
+  confirmLeaveRun: () => boolean;
 };
 
-export default function InsightsScreen({ session, onOpenPractice }: InsightsScreenProps) {
+export default function InsightsScreen({ session, onOpenPractice, confirmLeaveRun }: InsightsScreenProps) {
   const { activity, health, insights } = session;
 
   function refreshInsights() {
@@ -39,6 +40,7 @@ export default function InsightsScreen({ session, onOpenPractice }: InsightsScre
               expandedPhoneme={insights.expandedPhoneme}
               setExpandedPhoneme={insights.setExpandedPhoneme}
               onDrill={(word) => {
+                if (!confirmLeaveRun()) return;
                 session.startDrillFromInsights(word);
                 onOpenPractice();
               }}
@@ -49,7 +51,10 @@ export default function InsightsScreen({ session, onOpenPractice }: InsightsScre
               drillsEnabled={Boolean(health?.passage_check_configured)}
               generatingPhoneme={insights.generatingPhoneme}
               drillError={insights.drillError}
-              onGenerateDrill={(phoneme) => void insights.generateDrill(phoneme)}
+              onGenerateDrill={(phoneme) => {
+                if (!confirmLeaveRun()) return;
+                void insights.generateDrill(phoneme);
+              }}
               activityStats={activity.activityStats}
               activityLoading={activity.activityLoading}
               activityError={activity.activityError}
