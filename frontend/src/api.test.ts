@@ -316,16 +316,34 @@ describe("api environment configuration", () => {
 
 test("downloads backup with fetch and a temporary blob URL", async () => {
   const { downloadBackup } = await import("./api");
-  const fetchMock = vi.fn().mockResolvedValue(new Response('{"sessions":[]}'));
+  const backup = JSON.stringify({ sessions: [{ reference_text: "你好" }] });
+  const fetchMock = vi.fn().mockResolvedValue(new Response(backup, {
+    headers: { "Content-Type": "application/json" }
+  }));
   vi.stubGlobal("fetch", fetchMock);
-  const createUrl = vi.fn().mockReturnValue("blob:backup");
+  const createUrl = vi.fn((_blob: Blob) => "blob:backup");
   const revokeUrl = vi.fn();
   vi.stubGlobal("URL", { createObjectURL: createUrl, revokeObjectURL: revokeUrl });
-  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
-  await downloadBackup();
-  expect(fetchMock).toHaveBeenCalledWith("/api/export");
-  expect(click).toHaveBeenCalledOnce();
-  expect(createUrl).toHaveBeenCalledWith(expect.any(Blob));
-  expect(revokeUrl).toHaveBeenCalledWith("blob:backup");
-  vi.unstubAllGlobals();
+  const links: { href: string; download: string }[] = [];
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+    links.push({ href: this.href, download: this.download });
+  });
+  try {
+    await downloadBackup();
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("/api/export");
+    expect(createUrl).toHaveBeenCalledOnce();
+    const [blob] = createUrl.mock.calls[0];
+    // Node Response and jsdom can produce Blobs from different constructors.
+    expect(Object.prototype.toString.call(blob)).toBe("[object Blob]");
+    expect(blob.type).toBe("application/json");
+    expect(blob.size).toBe(new TextEncoder().encode(backup).byteLength);
+    expect(await blob.text()).toBe(backup);
+    expect(click).toHaveBeenCalledOnce();
+    expect(links).toEqual([{ href: "blob:backup", download: "just-talk-export.json" }]);
+    expect(revokeUrl).toHaveBeenCalledExactlyOnceWith("blob:backup");
+    expect(createUrl.mock.invocationCallOrder[0]).toBeLessThan(click.mock.invocationCallOrder[0]);
+    expect(click.mock.invocationCallOrder[0]).toBeLessThan(revokeUrl.mock.invocationCallOrder[0]);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
