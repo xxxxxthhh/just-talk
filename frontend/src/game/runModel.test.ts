@@ -219,6 +219,17 @@ describe("run model", () => {
     expect(nextCapture(advance(state))).toEqual({ purpose: "initial", slot: "main" });
   });
 
+  it("unjudged_reading_with_empty_pool_cannot_confirm", () => {
+    let state = advance(rescue(play(start("challenge"), scored(40)), scored(80)));
+    state = advance(rescue(play(state, scored(40)), scored(80)));
+    state = play(state, noMatch);
+    expect(state.items[2].verdict).toBe("cannot-confirm");
+    expect(state.challengeIncomplete).toBe(true);
+    expect(state.hearts).toBe(2);
+    expect(canRecord(state)).toBe(false);
+    expect(canAdvance(state)).toBe(true);
+  });
+
   it("rejected_refunds_exact_slot_once_and_keeps_current_item", () => {
     let [state, key] = send(start("challenge"));
     expect(state.budgetUsed).toBe(1);

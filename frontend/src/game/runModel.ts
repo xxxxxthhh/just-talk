@@ -153,7 +153,8 @@ function scoreReceived(state: RunState, attempt: Attempt, response: ScoreRespons
       return nextCapture(next) ? next : cannotConfirm(next);
     }
     scored = { ...scored, resolution: "unjudged", verdict: judgment.kind };
-    return { ...replaceItem(next, next.index, scored), phase: "feedback" };
+    next = { ...replaceItem(next, next.index, scored), phase: "feedback" };
+    return next.mode === "route" || nextCapture(next) ? next : cannotConfirm(next);
   }
 
   if (next.mode === "route") {
