@@ -5,7 +5,8 @@ export type RecorderState = "idle" | "recording" | "recorded";
 type UseRecorderOptions = {
   maxMs: number;
   onUnsupported: () => void;
-  onRecordingReady: (blob: Blob) => void;
+  // discarded is true when the capture was abandoned with discardRecording.
+  onRecordingReady: (blob: Blob, discarded: boolean) => void;
 };
 
 export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecorderOptions) {
@@ -16,7 +17,7 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  const discardedRef = useRef(new WeakSet<MediaRecorder>());
   const timerRef = useRef<number | null>(null);
   const startedAtRef = useRef<number>(0);
 
@@ -43,7 +44,9 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
 
   // onReady is bound to this capture, so a late onstop from a cancelled
   // capture still reaches the callback it was started with.
-  async function startRecording(onReady: (blob: Blob) => void = onRecordingReady): Promise<boolean> {
+  async function startRecording(
+    onReady: (blob: Blob, discarded: boolean) => void = onRecordingReady
+  ): Promise<boolean> {
     if (!navigator.mediaDevices?.getUserMedia) {
       onUnsupported();
       return false;
@@ -65,27 +68,32 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
       ? "audio/mp4"
       : "";
     const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    chunksRef.current = [];
+    const chunks: Blob[] = [];
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) {
-        chunksRef.current.push(event.data);
+        chunks.push(event.data);
       }
     };
     recorder.onstop = () => {
       stream.getTracks().forEach((track) => track.stop());
-      const blob = new Blob(chunksRef.current, {
+      const blob = new Blob(chunks, {
         // Reflect whatever the browser actually recorded with rather than
         // hardcoding webm, which mislabels the blob on Safari.
         type: mimeType || recorder.mimeType || "audio/webm"
       });
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
+      const discarded = discardedRef.current.has(recorder);
+      // A discarded or superseded capture never republishes the shared
+      // preview, but its own callback still runs.
+      if (!discarded && mediaRecorderRef.current === recorder) {
+        if (audioUrl) {
+          URL.revokeObjectURL(audioUrl);
+        }
+        setAudioBlob(blob);
+        setAudioUrl(URL.createObjectURL(blob));
+        setRecorderState("recorded");
+        setRecordingStream(null);
       }
-      setAudioBlob(blob);
-      setAudioUrl(URL.createObjectURL(blob));
-      setRecorderState("recorded");
-      setRecordingStream(null);
-      onReady(blob);
+      onReady(blob, discarded);
     };
     recorder.start();
     mediaRecorderRef.current = recorder;
@@ -102,6 +110,17 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
       }
     }, 150);
     return true;
+  }
+
+  // Stops the current capture without keeping it: the browser's later onstop
+  // reaches only that capture's callback.
+  function discardRecording() {
+    if (mediaRecorderRef.current) {
+      discardedRef.current.add(mediaRecorderRef.current);
+    }
+    stopRecording();
+    resetRecording();
+    setRecordingStream(null);
   }
 
   function resetRecording() {
@@ -122,6 +141,7 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
     recordingStream,
     startRecording,
     stopRecording,
+    discardRecording,
     resetRecording
   };
 }

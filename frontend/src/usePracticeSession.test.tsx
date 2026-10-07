@@ -55,6 +55,9 @@ type RecorderInstance = { state: string; ondataavailable: ((e: { data: Blob }) =
 
 let permission: { resolve: () => void } | null;
 let deferPermission = false;
+// Real browsers fire onstop after stop() returns; asyncStop leaves it to fireStop.
+let asyncStop = false;
+let recorders: (RecorderInstance & { fireStop: () => void })[] = [];
 
 function installRecorder() {
   const getUserMedia = vi.fn(
@@ -77,11 +80,15 @@ function installRecorder() {
     this.start = () => {
       this.state = "recording";
     };
-    this.stop = () => {
-      this.state = "inactive";
-      this.ondataavailable?.({ data: new Blob(["audio"]) });
+    this.fireStop = () => {
+      this.ondataavailable?.({ data: new Blob([`take-${recorders.indexOf(this as never)}`]) });
       this.onstop?.();
     };
+    this.stop = () => {
+      this.state = "inactive";
+      if (!asyncStop) (this.fireStop as () => void)();
+    };
+    recorders.push(this as never);
   }) as unknown as typeof MediaRecorder & { isTypeSupported: (type: string) => boolean };
   MediaRecorderMock.isTypeSupported = vi.fn((type: string) => type === "audio/mp4");
   vi.stubGlobal("MediaRecorder", MediaRecorderMock);
@@ -109,6 +116,8 @@ function pressEnter() {
 describe("usePracticeSession run wiring", () => {
   beforeEach(() => {
     deferPermission = false;
+    asyncStop = false;
+    recorders = [];
     permission = null;
     installFetch();
   });
@@ -139,8 +148,77 @@ describe("usePracticeSession run wiring", () => {
     // The capture was stopped as soon as it opened, and its blob went to its own callback.
     expect(onReady).toHaveBeenCalledTimes(1);
     expect(onReady.mock.calls[0][0]).toBeInstanceOf(Blob);
-    expect(session.current.recorderState).toBe("recorded");
+    expect(session.current.recorderState).toBe("idle");
+    expect(session.current.audioBlob).toBeNull();
     expect(session.current.status).toBe("");
+  });
+
+  it("exit_run_does_not_restore_cancelled_audio_after_async_stop", async () => {
+    installRecorder();
+    const session = await renderSession();
+    act(() => session.current.enterRun());
+    asyncStop = true;
+    const onReady = vi.fn();
+    await act(async () => {
+      await session.current.startRunCapture(onReady);
+    });
+    act(() => session.current.exitRun());
+    expect(session.current.audioBlob).toBeNull();
+
+    act(() => recorders[0].fireStop());
+    expect(onReady).toHaveBeenCalledTimes(1);
+    expect(session.current.runActive).toBe(false);
+    expect(session.current.audioBlob).toBeNull();
+    expect(session.current.audioUrl).toBeNull();
+    expect(session.current.recorderState).toBe("idle");
+  });
+
+  it("normal_enter_does_not_score_a_cancelled_run_take", async () => {
+    const getUserMedia = installRecorder();
+    const session = await renderSession();
+    act(() => session.current.enterRun());
+    asyncStop = true;
+    await act(async () => {
+      await session.current.startRunCapture(vi.fn());
+    });
+    act(() => session.current.exitRun());
+    act(() => recorders[0].fireStop());
+    act(() => session.current.setPassage("a different passage"));
+
+    pressEnter();
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(session.current.recorderState).toBe("recording"));
+    expect(fetchCalls("/api/score")).toHaveLength(0);
+  });
+
+  it("normal_take_stopping_during_enter_run_never_reaches_the_run", async () => {
+    installRecorder();
+    const session = await renderSession();
+    asyncStop = true;
+    await act(async () => {
+      await session.current.startRecording();
+    });
+    act(() => session.current.enterRun());
+    expect(session.current.recorderState).toBe("idle");
+
+    // The run starts its own capture before the normal take's onstop arrives.
+    const onReady = vi.fn();
+    await act(async () => {
+      await session.current.startRunCapture(onReady);
+    });
+    act(() => recorders[0].fireStop());
+    expect(session.current.status).toBe("");
+    expect(session.current.audioBlob).toBeNull();
+    expect(session.current.recorderState).toBe("recording");
+    expect(onReady).not.toHaveBeenCalled();
+
+    act(() => {
+      session.current.stopRecording();
+      recorders[1].fireStop();
+    });
+    expect(onReady).toHaveBeenCalledTimes(1);
+    expect(await (onReady.mock.calls[0][0] as Blob).text()).toBe("take-1");
+    expect(session.current.audioBlob).toBe(onReady.mock.calls[0][0]);
   });
 
   it("run_uses_shared_short_recorder_and_disables_normal_shortcuts", async () => {

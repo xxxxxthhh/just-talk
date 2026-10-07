@@ -143,11 +143,14 @@ export function usePracticeSession() {
     recordingStream,
     startRecording: startRecorderCapture,
     stopRecording,
+    discardRecording,
     resetRecording
   } = useRecorder({
     maxMs,
     onUnsupported: () => setError("This browser cannot access the microphone."),
-    onRecordingReady: () => setStatus("Recording ready")
+    onRecordingReady: (_blob, discarded) => {
+      if (!discarded) setStatus("Recording ready");
+    }
   });
 
   const {
@@ -519,7 +522,8 @@ export function usePracticeSession() {
 
   function enterRun() {
     exitReviewIfActive();
-    stopRecording();
+    // A normal take still stopping must not reappear in, or after, the run.
+    discardRecording();
     resetPractice();
     setError("");
     setStatus("");
@@ -543,14 +547,16 @@ export function usePracticeSession() {
     const started = await startRecorderCapture(onReady);
     if (started && runCaptureCancelledRef.current) {
       // Permission resolved after cancellation: stop without keeping the take.
-      stopRecording();
+      discardRecording();
     }
     return started;
   }
 
+  // The take's late onstop still reaches the run's callback, but never the
+  // shared preview that normal Score and Enter read.
   function cancelRunCapture() {
     runCaptureCancelledRef.current = true;
-    stopRecording();
+    discardRecording();
   }
 
   function practiceVocabularyWord(item: VocabularyItem, options?: { fromReview?: boolean }) {
