@@ -95,6 +95,10 @@ export function usePracticeSession() {
   const [isSavingWords, setIsSavingWords] = useState(false);
   const [isImportingMaterials, setIsImportingMaterials] = useState(false);
   const [error, setError] = useState("");
+  // A game run owns the shared recorder from enterRun until exitRun, including
+  // its pause, summary, and review screens.
+  const [runActive, setRunActive] = useState(false);
+  const runCaptureCancelledRef = useRef(false);
 
   const {
     health,
@@ -129,7 +133,7 @@ export function usePracticeSession() {
   const shortLimitSeconds = health?.max_audio_seconds ?? 30;
   const longLimitSeconds = health?.max_long_audio_seconds ?? 180;
   const isLongMode = practiceMode === "long";
-  const maxMs = (isLongMode ? longLimitSeconds : shortLimitSeconds) * 1000;
+  const maxMs = (isLongMode && !runActive ? longLimitSeconds : shortLimitSeconds) * 1000;
 
   const {
     recorderState,
@@ -286,10 +290,11 @@ export function usePracticeSession() {
   }, [selectedWord?.word, preloadSpeech]);
 
   useEffect(() => {
+    if (runActive) return;
     for (const word of weakWords.slice(0, 5)) {
       void preloadSpeech(word.word, { cacheKey: wordSpeechCacheKey(word.word) });
     }
-  }, [weakWords, preloadSpeech]);
+  }, [runActive, weakWords, preloadSpeech]);
 
   async function startRecording() {
     setError("");
@@ -512,6 +517,42 @@ export function usePracticeSession() {
     setAudioDuration(0);
   }
 
+  function enterRun() {
+    exitReviewIfActive();
+    stopRecording();
+    resetPractice();
+    setError("");
+    setStatus("");
+    setRunActive(true);
+  }
+
+  function exitRun() {
+    cancelRunCapture();
+    resetPractice();
+    setRunActive(false);
+  }
+
+  // Starts one run capture on the shared recorder. The run passes a callback
+  // closed over its attempt ID; true means that callback will receive this
+  // capture's blob exactly once, even after cancellation, so the run must not
+  // start another capture until it has.
+  async function startRunCapture(onReady: (blob: Blob) => void): Promise<boolean> {
+    runCaptureCancelledRef.current = false;
+    stopCurrentSpeech();
+    stopRecordingPlayback();
+    const started = await startRecorderCapture(onReady);
+    if (started && runCaptureCancelledRef.current) {
+      // Permission resolved after cancellation: stop without keeping the take.
+      stopRecording();
+    }
+    return started;
+  }
+
+  function cancelRunCapture() {
+    runCaptureCancelledRef.current = true;
+    stopRecording();
+  }
+
   function practiceVocabularyWord(item: VocabularyItem, options?: { fromReview?: boolean }) {
     if (!options?.fromReview) {
       exitReviewIfActive();
@@ -716,6 +757,7 @@ export function usePracticeSession() {
   const shortcutHandlerRef = useRef<(event: KeyboardEvent) => void>(() => {});
   shortcutHandlerRef.current = (event: KeyboardEvent) => {
     if (event.metaKey || event.ctrlKey || event.altKey || event.repeat) return;
+    if (runActive) return;
     if (appView !== "practice" || activeCoachPhoneme) return;
     // Keep native keyboard behavior on focused interactive elements: typing in
     // fields, and Space/Enter activation of buttons and links.
@@ -926,6 +968,11 @@ export function usePracticeSession() {
     copyMaterialToFreePractice,
     toggleSidebarPanel,
     isCoachDataMatching,
+    runActive,
+    enterRun,
+    exitRun,
+    startRunCapture,
+    cancelRunCapture,
 
     // --- desktop shell navigation（移动端会另建导航，可忽略）---
     appView,
