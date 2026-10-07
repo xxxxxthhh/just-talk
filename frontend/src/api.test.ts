@@ -20,6 +20,25 @@ afterEach(() => {
 });
 
 describe("api client", () => {
+  test("adds a score cutoff to session word collection only when given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await addWordsFromSession("session-1");
+    await addWordsFromSession("session-1", 70);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/words/from-session/session-1",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/words/from-session/session-1?max_score=70",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
   test("loads backend health", async () => {
     vi.stubGlobal(
       "fetch",

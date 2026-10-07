@@ -178,9 +178,10 @@ export async function createWord(word: string): Promise<VocabularyItem> {
   );
 }
 
-export async function addWordsFromSession(sessionId: string): Promise<VocabularyItem[]> {
+export async function addWordsFromSession(sessionId: string, maxScore?: number): Promise<VocabularyItem[]> {
+  const query = maxScore === undefined ? "" : `?max_score=${maxScore}`;
   return parseResponse<VocabularyItem[]>(
-    await apiFetch(`/api/words/from-session/${encodeURIComponent(sessionId)}`, {
+    await apiFetch(`/api/words/from-session/${encodeURIComponent(sessionId)}${query}`, {
       method: "POST"
     })
   );
