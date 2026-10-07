@@ -5,24 +5,9 @@ import { canAdvance, canRecord, judge, runReducer } from "../game/runModel";
 import { scoreTone, scoreValue } from "../scoreUtils";
 import type { Attempt, RunItem, RunState, ScoreResult, Verdict } from "../types";
 
-// Per-run feedback memory, kept outside the component so a tab switch that
-// remounts it never vibrates for the same attempt twice. Rejected attempts
-// leave item.attempts, so a rejection is recorded with the attempt count it
-// was first seen at; any later attempt makes it stale.
-let memory = { runId: "", vibrated: new Set<string>(), rejectionAt: new Map<string, number>() };
-
-function runMemory(runId: string) {
-  if (memory.runId !== runId) memory = { runId, vibrated: new Set(), rejectionAt: new Map() };
-  return memory;
-}
-
-function latestRejection(runId: string, item: RunItem): string | null {
-  if (!item.lastRejection) return null;
-  const { rejectionAt } = runMemory(runId);
-  const seenAt = rejectionAt.get(item.lastRejection.attemptId) ?? item.attempts.length;
-  rejectionAt.set(item.lastRejection.attemptId, seenAt);
-  return seenAt === item.attempts.length ? item.lastRejection.message : null;
-}
+// Vibrated attempt IDs for the current run, kept outside the component so a
+// tab switch that remounts it never vibrates for the same attempt twice.
+let vibrated = { runId: "", attemptIds: new Set<string>() };
 
 function canRecordNext(run: RunState): boolean {
   const item = run.items[run.index];
@@ -134,12 +119,12 @@ export function PracticeRun({
   onOpenReview,
 }: PracticeRunProps) {
   useEffect(() => {
-    const { vibrated } = runMemory(run.runId);
+    if (vibrated.runId !== run.runId) vibrated = { runId: run.runId, attemptIds: new Set() };
     let accepted = false;
     for (const item of run.items) {
       for (const attempt of item.attempts) {
-        if (validAccuracy(attempt) === null || vibrated.has(attempt.key.attemptId)) continue;
-        vibrated.add(attempt.key.attemptId);
+        if (validAccuracy(attempt) === null || vibrated.attemptIds.has(attempt.key.attemptId)) continue;
+        vibrated.attemptIds.add(attempt.key.attemptId);
         accepted = true;
       }
     }
@@ -253,10 +238,10 @@ function CurrentItem({ run, item, onRecord, onStop, onSkip, onCannotConfirm, onP
       <p className="run-prompt-text">{item.prompt.text}</p>
     </div>
   );
-  const rejectionMessage = latestRejection(run.runId, item);
-  const rejection = rejectionMessage ? (
+  // The reducer clears lastRejection when the next capture begins.
+  const rejection = item.lastRejection ? (
     <p className="run-note" role="status">
-      That recording wasn't scored and didn't count: {rejectionMessage}
+      That recording wasn't scored and didn't count: {item.lastRejection.message}
     </p>
   ) : null;
 

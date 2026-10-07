@@ -182,6 +182,17 @@ describe("PracticeRun", () => {
     expect(screen.getByRole("button", { name: "Record next" })).toBeEnabled();
   });
 
+  it("rejection_message_shows_until_the_next_capture_begins", () => {
+    const callbacks = handlers();
+    const rejected = fail(start("challenge"), { kind: "rejected", message: "Recording too short." });
+    const view = render(<PracticeRun run={rejected} {...callbacks} />);
+    expect(screen.getByText(/didn't count: Recording too short\./)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Record" })).toBeEnabled();
+
+    view.rerender(<PracticeRun run={score(rejected, 90)} {...callbacks} />);
+    expect(screen.queryByText(/Recording too short/)).not.toBeInTheDocument();
+  });
+
   it("challenge_summary_requires_user_action_before_review", () => {
     const callbacks = handlers();
     let run = start("challenge");
