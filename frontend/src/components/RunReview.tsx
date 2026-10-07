@@ -8,72 +8,103 @@ import { latestValid, validAccuracy } from "./PracticeRun";
 const LOW = 60;
 const BORDERLINE = 80;
 const MAX_ACTIONS = 3;
+const MAX_EVIDENCE = 3;
 
-type WordScore = { word: string; accuracy: number };
+// What a suggestion rests on: the word (and phoneme) score returned for one
+// attempt, so the review can show that score beside its recording.
+export type Evidence = {
+  item: RunItem;
+  attempt: Attempt;
+  word: string;
+  phoneme: string | null;
+  accuracy: number;
+};
 
-function latestWordScores(run: RunState): WordScore[][] {
-  return run.items.map((item) => {
-    const result = latestValid(item)?.attempt.result;
-    return (result?.words ?? []).flatMap((word) =>
-      typeof word.accuracy === "number" && normalizedWord(word.word)
-        ? [{ word: word.word.trim(), accuracy: word.accuracy }]
-        : []
-    );
+export type ReviewAction = { id: "phoneme" | "low" | "borderline"; summary: string; evidence: Evidence[] };
+
+function latestWords(run: RunState) {
+  return run.items.flatMap((item) => {
+    const latest = latestValid(item);
+    if (!latest) return [];
+    return (latest.attempt.result?.words ?? [])
+      .filter((word) => normalizedWord(word.word))
+      .map((word) => ({ item, attempt: latest.attempt, word }));
   });
 }
 
-function wordsInRange(run: RunState, min: number, max: number): string[] {
-  const seen = new Set<string>();
-  return latestWordScores(run)
-    .flat()
-    .filter((score) => score.accuracy >= min && score.accuracy < max)
-    .sort((left, right) => left.accuracy - right.accuracy)
-    .flatMap((score) => {
-      const key = normalizedWord(score.word);
-      if (seen.has(key)) return [];
-      seen.add(key);
-      return [key];
-    });
+// The weakest reading of each distinct word in [min, max), weakest first.
+function wordEvidence(run: RunState, min: number, max: number): Evidence[] {
+  const weakest = new Map<string, Evidence>();
+  for (const { item, attempt, word } of latestWords(run)) {
+    if (typeof word.accuracy !== "number" || word.accuracy < min || word.accuracy >= max) continue;
+    const key = normalizedWord(word.word);
+    const existing = weakest.get(key);
+    if (!existing || word.accuracy < existing.accuracy) {
+      weakest.set(key, { item, attempt, word: word.word.trim(), phoneme: null, accuracy: word.accuracy });
+    }
+  }
+  return [...weakest.values()].sort((left, right) => left.accuracy - right.accuracy);
+}
+
+function lowAndBorderline(run: RunState): [Evidence[], Evidence[]] {
+  const low = wordEvidence(run, -Infinity, LOW);
+  const lowKeys = new Set(low.map((evidence) => normalizedWord(evidence.word)));
+  const borderline = wordEvidence(run, LOW, BORDERLINE).filter(
+    (evidence) => !lowKeys.has(normalizedWord(evidence.word))
+  );
+  return [low, borderline];
 }
 
 // Words from this run worth warming up with next time, weakest first.
 export function runWeakWords(run: RunState): string[] {
-  const low = wordsInRange(run, -Infinity, LOW);
-  return [...low, ...wordsInRange(run, LOW, BORDERLINE).filter((word) => !low.includes(word))];
+  return lowAndBorderline(run)
+    .flat()
+    .map((evidence) => normalizedWord(evidence.word));
 }
 
-function repeatedLowPhoneme(run: RunState): { phoneme: string; words: string[] } | null {
-  const byPhoneme = new Map<string, { items: Set<string>; words: string[] }>();
-  for (const item of run.items) {
-    const result = latestValid(item)?.attempt.result;
-    for (const word of result?.words ?? []) {
-      for (const phoneme of word.phonemes) {
-        if (typeof phoneme.accuracy !== "number" || phoneme.accuracy >= LOW) continue;
-        const entry = byPhoneme.get(phoneme.phoneme) ?? { items: new Set(), words: [] };
-        entry.items.add(item.prompt.itemId);
-        const key = normalizedWord(word.word);
-        if (!entry.words.includes(key)) entry.words.push(key);
-        byPhoneme.set(phoneme.phoneme, entry);
+// The low phoneme seen in the most distinct items (at least two), with the
+// weakest occurrence from each item.
+function repeatedLowPhoneme(run: RunState): { phoneme: string; evidence: Evidence[] } | null {
+  const byPhoneme = new Map<string, Map<string, Evidence>>();
+  for (const { item, attempt, word } of latestWords(run)) {
+    for (const phoneme of word.phonemes) {
+      if (typeof phoneme.accuracy !== "number" || phoneme.accuracy >= LOW) continue;
+      const perItem = byPhoneme.get(phoneme.phoneme) ?? new Map<string, Evidence>();
+      const existing = perItem.get(item.prompt.itemId);
+      if (!existing || phoneme.accuracy < existing.accuracy) {
+        perItem.set(item.prompt.itemId, {
+          item,
+          attempt,
+          word: word.word.trim(),
+          phoneme: phoneme.phoneme,
+          accuracy: phoneme.accuracy,
+        });
       }
+      byPhoneme.set(phoneme.phoneme, perItem);
     }
   }
-  let best: { phoneme: string; words: string[]; count: number } | null = null;
-  for (const [phoneme, entry] of byPhoneme) {
-    if (entry.items.size >= 2 && (!best || entry.items.size > best.count)) {
-      best = { phoneme, words: entry.words, count: entry.items.size };
+  let best: { phoneme: string; evidence: Evidence[] } | null = null;
+  for (const [phoneme, perItem] of byPhoneme) {
+    if (perItem.size >= 2 && (!best || perItem.size > best.evidence.length)) {
+      best = { phoneme, evidence: [...perItem.values()].sort((left, right) => left.accuracy - right.accuracy) };
     }
   }
   return best;
 }
 
-export function reviewActions(run: RunState): string[] {
-  const actions: string[] = [];
+export function reviewActions(run: RunState): ReviewAction[] {
+  const actions: ReviewAction[] = [];
   const phoneme = repeatedLowPhoneme(run);
-  if (phoneme) actions.push(`The /${phoneme.phoneme}/ sound was low in more than one item: ${phoneme.words.join(", ")}.`);
-  const low = wordsInRange(run, -Infinity, LOW);
-  if (low.length) actions.push(`Re-listen and repeat: ${low.join(", ")}.`);
-  const borderline = wordsInRange(run, LOW, BORDERLINE).filter((word) => !low.includes(word));
-  if (borderline.length) actions.push(`Almost there: ${borderline.join(", ")}.`);
+  if (phoneme) {
+    actions.push({
+      id: "phoneme",
+      summary: `The /${phoneme.phoneme}/ sound was low in ${phoneme.evidence.length} items.`,
+      evidence: phoneme.evidence,
+    });
+  }
+  const [low, borderline] = lowAndBorderline(run);
+  if (low.length) actions.push({ id: "low", summary: "Re-listen and repeat these words.", evidence: low });
+  if (borderline.length) actions.push({ id: "borderline", summary: "Almost there.", evidence: borderline });
   return actions.slice(0, MAX_ACTIONS);
 }
 
@@ -187,7 +218,38 @@ export function RunReview({
       {actions.length ? (
         <ol className="run-review-actions" aria-label="What to practice next">
           {actions.map((action) => (
-            <li key={action}>{action}</li>
+            <li key={action.id}>
+              <p>{action.summary}</p>
+              <ul className="run-evidence">
+                {action.evidence.slice(0, MAX_EVIDENCE).map((evidence) => {
+                  const url = attemptAudioUrls[evidence.attempt.key.attemptId];
+                  const label = evidence.phoneme
+                    ? `/${evidence.phoneme}/ in “${evidence.word}”`
+                    : `“${evidence.word}”`;
+                  return (
+                    <li key={`${evidence.attempt.key.attemptId}-${evidence.word}-${evidence.phoneme ?? ""}`}>
+                      <span>{label}</span>
+                      <strong className={`run-review-score ${scoreTone(evidence.accuracy)}`}>
+                        {scoreValue(evidence.accuracy)}
+                      </strong>
+                      {evidence.item.prompt.kind === "sentence" ? (
+                        <span className="run-note">{evidence.item.prompt.text}</span>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="m-small-button"
+                        onClick={() => onPlayReference(evidence.item.prompt)}
+                      >
+                        Hear it
+                      </button>
+                      {url ? (
+                        <audio controls preload="none" src={url} aria-label={`Your recording for ${label}`} />
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            </li>
           ))}
         </ol>
       ) : null}

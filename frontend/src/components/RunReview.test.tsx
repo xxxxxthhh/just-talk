@@ -84,6 +84,16 @@ function settle(state: RunState, key: { runId: string; itemId: string; attemptId
   return runReducer(state, { type: "SYNC_SETTLED", key, candidates, failed }) as RunState;
 }
 
+function readActions() {
+  const list = screen.getByRole("list", { name: "What to practice next" });
+  return [...list.children].map((action) => ({
+    summary: action.querySelector("p")?.textContent,
+    evidence: [...action.querySelectorAll(".run-evidence > li")].map(
+      (row) => `${row.querySelector("span")?.textContent} ${row.querySelector("strong")?.textContent}`
+    ),
+  }));
+}
+
 function renderReview(run: RunState, overrides: Partial<Parameters<typeof RunReview>[0]> = {}) {
   const props = {
     run,
@@ -107,8 +117,9 @@ describe("RunReview", () => {
     run = act(run, "QUIT");
 
     const first = renderReview(run);
-    const actions = within(screen.getByRole("list", { name: "What to practice next" })).getAllByRole("listitem");
-    expect(actions.map((item) => item.textContent)).toEqual(["Re-listen and repeat: room, late."]);
+    expect(readActions()).toEqual([
+      { summary: "Re-listen and repeat these words.", evidence: ["“room” 40", "“late” 55"] },
+    ]);
     expect(screen.getByText("Practiced 2 of 6")).toBeInTheDocument();
     expect(screen.getByText("Skipped 1")).toBeInTheDocument();
     expect(screen.getByText("Not reached 2")).toBeInTheDocument();
@@ -124,11 +135,10 @@ describe("RunReview", () => {
     evidence = advance(evidence);
     evidence = score(evidence, response(65, [word("river", 50, "ɹ", 40), word("town", 75)])).state;
     const { unmount } = renderReview(evidence);
-    const listed = within(screen.getByRole("list", { name: "What to practice next" })).getAllByRole("listitem");
-    expect(listed.map((item) => item.textContent)).toEqual([
-      "The /ɹ/ sound was low in more than one item: room, river.",
-      "Re-listen and repeat: room, river.",
-      "Almost there: late, town.",
+    expect(readActions()).toEqual([
+      { summary: "The /ɹ/ sound was low in 2 items.", evidence: ["/ɹ/ in “room” 30", "/ɹ/ in “river” 40"] },
+      { summary: "Re-listen and repeat these words.", evidence: ["“room” 45", "“river” 50"] },
+      { summary: "Almost there.", evidence: ["“late” 72", "“town” 75"] },
     ]);
     unmount();
 
@@ -147,11 +157,31 @@ describe("RunReview", () => {
     renderReview(act(rescue.state, "QUIT"), {
       attemptAudioUrls: { [low.key.attemptId]: "blob:first", [rescue.key.attemptId]: "blob:rescue" },
     });
-    const attempts = screen.getAllByText(/^(40|75)$/).map((label) => label.closest(".run-review-attempt") as HTMLElement);
+    const attempts = screen.getAllByText(/^(40|75)$/, { selector: ".run-review-attempt .run-review-score" }).map((label) => label.closest(".run-review-attempt") as HTMLElement);
     expect(within(attempts[0]).getByText("40")).toBeInTheDocument();
     expect(attempts[0].querySelector("audio")).toHaveAttribute("src", "blob:first");
     expect(within(attempts[1]).getByText("75")).toBeInTheDocument();
     expect(attempts[1].querySelector("audio")).toHaveAttribute("src", "blob:rescue");
+  });
+
+  it("low_word_action_exposes_its_returned_score_not_just_overall_accuracy", () => {
+    let run = start("route");
+    for (let i = 0; i < 4; i += 1) run = act(run, "SKIP");
+    const sentence = score(run, response(90, [word("river", 45, "ɹ", 35), word("town", 95)]));
+    const onPlayReference = vi.fn();
+    renderReview(act(sentence.state, "QUIT"), {
+      attemptAudioUrls: { [sentence.key.attemptId]: "blob:river-take" },
+      onPlayReference,
+    });
+
+    expect(readActions()).toEqual([{ summary: "Re-listen and repeat these words.", evidence: ["“river” 45"] }]);
+    const actions = screen.getByRole("list", { name: "What to practice next" });
+    expect(within(actions).getByText("A river runs beside the quiet town.")).toBeInTheDocument();
+    expect(within(actions).getByLabelText("Your recording for “river”")).toHaveAttribute("src", "blob:river-take");
+    fireEvent.click(within(actions).getByRole("button", { name: "Hear it" }));
+    expect(onPlayReference).toHaveBeenCalledWith(PROMPTS[4]);
+    // The overall score stays on the attempt row.
+    expect(screen.getByText("90", { selector: ".run-review-attempt .run-review-score" })).toBeInTheDocument();
   });
 
   it("review_shows_candidate_status_without_added_count_or_save_action", () => {
