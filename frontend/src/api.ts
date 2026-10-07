@@ -82,6 +82,44 @@ export async function fetchQuota(): Promise<QuotaStatus> {
   return parseResponse<QuotaStatus>(await apiFetch("/api/me/quota"));
 }
 
+export type AdminUsage = {
+  scored_audio_ms: number | null;
+  measured_score_requests: number;
+  unmeasured_score_requests: number;
+  score_attempts: number;
+  quota_score_seconds: number;
+  tts_characters: number;
+  tts_attempts: number;
+};
+
+export type AdminUser = {
+  account_id: string;
+  email: string | null;
+  registered_at: string | null;
+  first_seen_at: string | null;
+  last_active_at: string | null;
+  retained: AdminUsage;
+  last_7_days: AdminUsage;
+  this_month: AdminUsage;
+};
+
+export type AdminSummary = {
+  generated_at: string;
+  timezone: string;
+  retention_days: number;
+  audio_tracking_since: string;
+  oldest_usage_at: string | null;
+  users: AdminUser[];
+};
+
+export async function fetchAdminAccess(): Promise<{ admin: boolean }> {
+  return parseResponse(await apiFetch("/api/me/access"));
+}
+
+export async function fetchAdminUsers(signal?: AbortSignal): Promise<AdminSummary> {
+  return parseResponse(await apiFetch("/api/admin/users", { signal }));
+}
+
 export async function fetchTutorial(): Promise<{ completed_version: number }> {
   return parseResponse(await apiFetch("/api/me/tutorial"));
 }

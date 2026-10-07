@@ -18,13 +18,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .accounts import AccountRegistry
+from .admin import users_summary
 from .audio import (
     AudioTooLongError,
     AudioTooShortError,
     decode_to_wav_16k_mono,
     ensure_audio_duration_allowed,
 )
-from .auth import SupabaseVerifier
+from .auth import SupabaseVerifier, VerifiedIdentity
 from .azure_client import AzurePronunciationScorer
 from .config import Settings
 from .drills import generate_drill
@@ -122,7 +123,7 @@ def create_app(
     scorer: Any | None = None,
     synthesizer: Any | None = None,
     clock: Callable[[], datetime] | None = None,
-    auth_verifier: Callable[[str], str] | None = None,
+    auth_verifier: Callable[[str], str | VerifiedIdentity] | None = None,
 ) -> FastAPI:
     active_settings = settings or Settings.from_env()
     public = active_settings.public
@@ -132,9 +133,10 @@ def create_app(
     active_synthesizer = synthesizer
     if active_synthesizer is None and active_settings.azure_configured:
         active_synthesizer = AzureTextToSpeechSynthesizer(active_settings)
-    verify_user = auth_verifier or SupabaseVerifier(
-        public.supabase_url, public.supabase_publishable_key
-    ).verify
+    verify_user = (
+        auth_verifier
+        or SupabaseVerifier(public.supabase_url, public.supabase_publishable_key).verify_identity
+    )
 
     personal_store: SessionStore | None = None
     ledger: QuotaLedger | None = None
@@ -229,7 +231,12 @@ def create_app(
         scheme, _, token = authorization.partition(" ")
         if scheme.lower() != "bearer" or not token or len(token) > 16384:
             raise PublicApiError(401, "auth_required", "Sign in with Google to continue.")
-        return verify_user(token)
+        verified = verify_user(token)
+        identity = (
+            verified if isinstance(verified, VerifiedIdentity) else VerifiedIdentity(verified)
+        )
+        request.state.verified_identity = identity
+        return identity.account_id
 
     def get_actor(request: Request) -> Iterator[Actor]:
         if not public.enabled:
@@ -242,6 +249,11 @@ def create_app(
             registry.ensure_account(visitor_id)
         except VisitorLimitError as exc:
             raise PublicApiError(429, "account_limit", _VISITOR_LIMIT_MESSAGES[exc.reason]) from exc
+        assert ledger is not None
+        identity = request.state.verified_identity
+        ledger.observe_account(
+            visitor_id, email=identity.email, registered_at=identity.registered_at
+        )
         usage = registry.use(visitor_id)
         try:
             visitor_store = usage.__enter__()
@@ -284,12 +296,16 @@ def create_app(
             )
 
     @contextlib.contextmanager
-    def _billable_call(actor: Actor, kind: str, units: int) -> Iterator[None]:
+    def _billable_call(
+        actor: Actor, kind: str, units: int, *, audio_duration_ms: int | None = None
+    ) -> Iterator[None]:
         """Reserve usage, mark it sent, and never refund once Azure is called."""
         if ledger is None or actor.visitor_id is None:
             yield
             return
-        attempt_id = ledger.reserve(visitor_id=actor.visitor_id, kind=kind, units=units)
+        attempt_id = ledger.reserve(
+            visitor_id=actor.visitor_id, kind=kind, units=units, audio_duration_ms=audio_duration_ms
+        )
         try:
             ledger.mark_sent(attempt_id)
         except BaseException:
@@ -338,6 +354,25 @@ def create_app(
         def my_quota(actor: Actor = Depends(get_actor)) -> dict[str, Any]:
             assert ledger is not None and actor.visitor_id is not None
             return ledger.status(visitor_id=actor.visitor_id)
+
+        @app.get("/api/me/access")
+        def my_access(request: Request) -> JSONResponse:
+            account_id = _require_account_id(request)
+            return JSONResponse(
+                {"admin": bool(public.admin_user_id and account_id == public.admin_user_id)},
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.get("/api/admin/users")
+        def admin_users(request: Request) -> JSONResponse:
+            account_id = _require_account_id(request)
+            if not public.admin_user_id or account_id != public.admin_user_id:
+                raise PublicApiError(403, "admin_required", "Owner access is required.")
+            assert ledger is not None and registry is not None
+            return JSONResponse(
+                users_summary(ledger, registry.database_path.resolve()),
+                headers={"Cache-Control": "no-store"},
+            )
 
         @app.get("/api/me/tutorial")
         def my_tutorial(actor: Actor = Depends(get_actor)) -> dict[str, int]:
@@ -429,7 +464,12 @@ def create_app(
                         detail="Could not read the uploaded audio. Please record again.",
                     ) from exc
 
-                with _billable_call(actor, "score", billable_audio_seconds(duration_seconds)):
+                with _billable_call(
+                    actor,
+                    "score",
+                    billable_audio_seconds(duration_seconds),
+                    audio_duration_ms=max(1, round(duration_seconds * 1000)),
+                ):
                     if score_mode == "long":
                         try:
                             raw_results, scoring_warnings = continuous_score(

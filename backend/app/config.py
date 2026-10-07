@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from uuid import UUID
 
 _DEFAULT_CORS_ORIGINS = (
     "http://localhost:5173",
@@ -76,6 +77,8 @@ class PublicSettings:
     enabled: bool = False
     supabase_url: str = ""
     supabase_publishable_key: str = ""
+    # Explicit server-side owner grant; empty disables admin access.
+    admin_user_id: str = ""
     data_dir: str = "./data/public"
     allowed_origins: tuple[str, ...] = ()
     cookie_secure: bool = True
@@ -118,6 +121,10 @@ class PublicSettings:
     turnstile_site_key: str = ""
     turnstile_secret_key: str = ""
 
+    def __post_init__(self) -> None:
+        if self.admin_user_id:
+            object.__setattr__(self, "admin_user_id", UUID(self.admin_user_id).hex)
+
     @property
     def turnstile_enabled(self) -> bool:
         return bool(self.turnstile_site_key and self.turnstile_secret_key)
@@ -137,6 +144,7 @@ class PublicSettings:
             enabled=_bool_env(env, "PUBLIC_MODE", "0"),
             supabase_url=env.get("SUPABASE_URL", "").rstrip("/"),
             supabase_publishable_key=env.get("SUPABASE_PUBLISHABLE_KEY", ""),
+            admin_user_id=env.get("PUBLIC_ADMIN_USER_ID", "").strip(),
             data_dir=env.get("PUBLIC_DATA_DIR", defaults.data_dir),
             allowed_origins=allowed_origins,
             cookie_secure=_bool_env(env, "PUBLIC_COOKIE_SECURE", "1"),

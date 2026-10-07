@@ -2,12 +2,20 @@
 
 import base64
 import json
+from dataclasses import dataclass
 from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
 
 from .public import PublicApiError
+
+
+@dataclass(frozen=True)
+class VerifiedIdentity:
+    account_id: str
+    email: str | None = None
+    registered_at: str | None = None
 
 
 def public_key(key: str) -> bool:
@@ -40,6 +48,9 @@ class SupabaseVerifier:
         )
 
     def verify(self, token: str) -> str:
+        return self.verify_identity(token).account_id
+
+    def verify_identity(self, token: str) -> VerifiedIdentity:
         if not self.configured:
             raise PublicApiError(503, "auth_unavailable", "Google sign-in is not configured yet.")
         try:
@@ -68,8 +79,17 @@ class SupabaseVerifier:
         ):
             raise PublicApiError(401, "auth_required", "Sign in with a Google account to continue.")
         try:
-            return UUID(user["id"]).hex
+            account_id = UUID(user["id"]).hex
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise PublicApiError(
                 401, "auth_required", "Invalid account identity. Sign in again."
             ) from exc
+        # Minimal display fields from the online Auth response. Metadata is
+        # deliberately neither copied nor used for owner authorization.
+        email = user.get("email")
+        registered_at = user.get("created_at")
+        return VerifiedIdentity(
+            account_id,
+            email[:320] if isinstance(email, str) else None,
+            registered_at[:64] if isinstance(registered_at, str) else None,
+        )

@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, checkHealth, deleteMyData, fetchQuota } from "../api";
+import { ApiError, checkHealth, deleteMyData, fetchQuota, fetchAdminAccess } from "../api";
 import { authClient, configureAuth } from "../auth";
 import { USAGE_CHANGED_EVENT, VISITOR_REQUIRED_EVENT } from "../publicMode";
 import type { Health, QuotaStatus, QuotaWindow } from "../types";
@@ -7,7 +7,7 @@ import { TutorialProvider, TutorialHelp } from "./PracticeTutorial";
 import "./PublicGate.css";
 
 const SOURCE_URL = "https://github.com/xxxxxthhh/just-talk";
-type GateState = "checking" | "welcome" | "ready" | "unavailable";
+type GateState = "checking" | "welcome" | "ready" | "unavailable" | "restricted";
 
 export default function PublicGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<GateState>("checking");
@@ -25,7 +25,13 @@ export default function PublicGate({ children }: { children: ReactNode }) {
       if (current !== generation.current) return;
       setAccount(session?.user.id ?? null);
       if (!session) { setState("welcome"); return; }
-      await fetchQuota();
+      if (window.location.pathname === "/admin") {
+        const access = await fetchAdminAccess();
+        if (current !== generation.current) return;
+        if (!access.admin) { setState("restricted"); return; }
+      } else {
+        await fetchQuota();
+      }
       if (current === generation.current) { authRejected.current = false; setState("ready"); }
     } catch (error) {
       if (current !== generation.current) return;
@@ -85,6 +91,13 @@ export default function PublicGate({ children }: { children: ReactNode }) {
     </div></div>
   );
   if (state === "welcome") return <Welcome health={health} />;
+  if (state === "restricted") return (
+    <div className="pg-shell pg-center"><div className="pg-card" role="alert">
+      <h1>Owner access required</h1><p>This page is available to the approved owner account.</p>
+      <a href="/">Back to practice</a>
+    </div></div>
+  );
+  if (window.location.pathname === "/admin") return <div key={account}>{children}</div>;
   return <TutorialProvider key={account}><PublicBar health={health} />{children}</TutorialProvider>;
 }
 
@@ -114,6 +127,7 @@ function Welcome({ health }: { health: Health | null }) {
         <li><strong>Free practice funded by Just Talk.</strong> Sign in with Google. Your account shares the same daily allowance across browsers. Recording and listening also share site-wide daily and monthly limits, resetting in UTC.</li>
         <li><strong>Recordings.</strong> Audio and reference text are sent to Microsoft Azure AI Speech. Temporary recordings are deleted after processing; text, scores and model audio are stored.</li>
         <li><strong>Your account and data.</strong> Google and Supabase manage sign-in. Just Talk uses your Supabase account ID for history, saved words and quota. Practice data expires after {health?.public?.visitor_ttl_days ?? 7} days without use or can be deleted immediately. Account-linked usage records and tutorial preferences remain for about 70 days; deleting practice data or signing out does not reset allowance.</li>
+        <li><strong>Trial management.</strong> The owner can see your email, registration and last activity, plus aggregate scoring duration and listening use. The management page does not show recordings, practice text or scores. Identity and usage summaries are kept for about 70 days; time spent on the site is not tracked.</li>
         <li><strong>Provider logs.</strong> Google, Supabase, Cloudflare and Microsoft may retain logs including IP addresses.</li>
       </ul>
       {!configured ? <p className="pg-warning">Google sign-in is being set up. Please check back soon.</p> : null}
@@ -156,6 +170,12 @@ function formatSeconds(total: number): string {
 }
 
 function PublicBar({ health }: { health: Health | null }) {
+  const [admin, setAdmin] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetchAdminAccess().then((access) => { if (!cancelled) setAdmin(access.admin); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
   const [quota, setQuota] = useState<QuotaStatus | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -219,6 +239,7 @@ function PublicBar({ health }: { health: Health | null }) {
       ) : null}
       <span className="pg-bar-actions">
         <TutorialHelp />
+        {admin ? <a className="pg-bar-link" href="/admin">Manage trial</a> : null}
         <a className="pg-bar-link" href={SOURCE_URL} target="_blank" rel="noreferrer">
           Source
         </a>

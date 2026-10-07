@@ -19,6 +19,7 @@ vi.mock("../auth", () => {
 vi.mock("../api", () => ({
   ApiError: class ApiError extends Error {}, checkHealth: mock.health,
   fetchQuota: mock.quota, deleteMyData: vi.fn(),
+  fetchAdminAccess: vi.fn().mockResolvedValue({ admin: false }),
   fetchTutorial: vi.fn().mockResolvedValue({ completed_version: 1 }),
   finishTutorial: vi.fn().mockResolvedValue({ completed_version: 1 })
 }));
