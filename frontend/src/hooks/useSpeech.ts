@@ -12,7 +12,7 @@ type SpeechCacheEntry = {
 };
 
 export type SpeechStatus = "idle" | "loading" | "playing" | "paused";
-export type SpeechOptions = SpeakTextOptions;
+export type SpeechOptions = SpeakTextOptions & { onLoadResult?: (ok: boolean) => void };
 
 function normalizedSpeechText(text: string): string {
   return text.trim();
@@ -209,6 +209,7 @@ export function useSpeech(setError: (msg: string) => void) {
     setError("");
 
     if (speechAudioRef.current && currentSpeechKeyRef.current === cacheIdentity) {
+      options?.onLoadResult?.(true);
       setSpeakingText(spokenText);
       setSpeechStatus("playing");
       const duration = speechAudioRef.current.duration || speechDuration;
@@ -248,7 +249,16 @@ export function useSpeech(setError: (msg: string) => void) {
     setSpeakingText(spokenText);
     setSpeechStatus("loading");
     try {
-      const speechUrl = await loadSpeechUrl(spokenText, options);
+      let speechUrl: string;
+      // Reports only whether the audio loaded, before the request check, so a
+      // later stop or autoplay rejection is never mistaken for a failed load.
+      try {
+        speechUrl = await loadSpeechUrl(spokenText, options);
+        options?.onLoadResult?.(true);
+      } catch (err) {
+        options?.onLoadResult?.(false);
+        throw err;
+      }
       if (playbackRequestRef.current !== requestId) {
         return;
       }

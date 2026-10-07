@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { act, render, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, it, test, vi } from "vitest";
 
 import { useSpeech } from "./useSpeech";
 
@@ -610,5 +610,75 @@ describe("useSpeech", () => {
     expect(audioInstances[0].currentTime).toBe(0);
     expect(audioInstances[0].play).toHaveBeenCalledTimes(2);
     expect(controls.speechStatus).toBe("playing");
+  });
+
+  it("reference_load_callback_precedes_request_guard_and_ignores_play_errors", async () => {
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:pronunciation"),
+      revokeObjectURL: vi.fn(),
+    });
+    const play = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        return { play, pause: vi.fn(), currentTime: 0 };
+      })
+    );
+    const setError = vi.fn();
+    let controls!: ReturnType<typeof useSpeech>;
+    function SpeechHarness() {
+      controls = useSpeech(setError);
+      return null;
+    }
+    render(<SpeechHarness />);
+
+    // Cached success: a fresh load and a reuse of the loaded audio each report once.
+    mockSpeechApi();
+    const loaded = vi.fn();
+    await act(async () => {
+      await controls.playCorrect("quiet", { onLoadResult: loaded });
+    });
+    await act(async () => {
+      await controls.playCorrect("quiet", { onLoadResult: loaded });
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(loaded.mock.calls).toEqual([[true], [true]]);
+
+    // Cancelled playback, then load failure: still reported, without a playback error.
+    let respondSpeech!: (value: { ok: boolean; status: number; json: () => Promise<unknown> }) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            respondSpeech = resolve;
+          })
+      )
+    );
+    const failed = vi.fn();
+    let playPromise!: Promise<void>;
+    act(() => {
+      playPromise = controls.playCorrect("thin", { onLoadResult: failed });
+    });
+    act(() => {
+      controls.stopCurrentSpeech();
+    });
+    setError.mockClear();
+    await act(async () => {
+      respondSpeech({ ok: false, status: 503, json: async () => ({ detail: "TTS unavailable" }) });
+      await playPromise;
+    });
+    expect(failed.mock.calls).toEqual([[false]]);
+    expect(setError).not.toHaveBeenCalledWith("TTS unavailable");
+
+    // Autoplay rejection after a successful load is a playback error, not a failed load.
+    mockSpeechApi();
+    play.mockRejectedValueOnce(new Error("NotAllowedError"));
+    const autoplay = vi.fn();
+    await act(async () => {
+      await controls.playCorrect("path", { onLoadResult: autoplay });
+    });
+    expect(autoplay.mock.calls).toEqual([[true]]);
+    expect(setError).toHaveBeenCalledWith("NotAllowedError");
   });
 });

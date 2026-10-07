@@ -5,7 +5,7 @@ export type RecorderState = "idle" | "recording" | "recorded";
 type UseRecorderOptions = {
   maxMs: number;
   onUnsupported: () => void;
-  onRecordingReady: () => void;
+  onRecordingReady: (blob: Blob) => void;
 };
 
 export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecorderOptions) {
@@ -41,7 +41,9 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
     }
   }
 
-  async function startRecording(): Promise<boolean> {
+  // onReady is bound to this capture, so a late onstop from a cancelled
+  // capture still reaches the callback it was started with.
+  async function startRecording(onReady: (blob: Blob) => void = onRecordingReady): Promise<boolean> {
     if (!navigator.mediaDevices?.getUserMedia) {
       onUnsupported();
       return false;
@@ -83,7 +85,7 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
       setAudioUrl(URL.createObjectURL(blob));
       setRecorderState("recorded");
       setRecordingStream(null);
-      onRecordingReady();
+      onReady(blob);
     };
     recorder.start();
     mediaRecorderRef.current = recorder;
