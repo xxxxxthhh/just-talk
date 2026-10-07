@@ -230,8 +230,12 @@ describe("run model", () => {
     expect(canAdvance(state)).toBe(true);
   });
 
-  it("nomatch_then_two_valid_lows_loses_one_heart", () => {
-    let state = play(start("challenge"), noMatch);
+  it.each([
+    ["NoMatch", noMatch],
+    ["null accuracy", scored(null)],
+    ["Omission", scored(80, [word("word0", 80), word("now", 0, "Omission")])]
+  ])("nomatch_then_two_valid_lows_loses_one_heart (%s first)", (_label, firstReading) => {
+    let state = play(start("challenge"), firstReading);
     expect(state.items[0].resolution).toBe("unjudged");
     expect(nextCapture(state)).toEqual({ purpose: "rerecord", slot: "extra" });
     state = play(state, scored(50));
@@ -246,6 +250,33 @@ describe("run model", () => {
     expect(state.items[0].resolution).toBe("resolved");
     expect(state.hearts).toBe(1);
     expect(state.budgetUsed).toBe(3);
+  });
+
+  it("rerecorded_first_low_can_be_skipped", () => {
+    let state = play(play(start("challenge"), noMatch), scored(50));
+    expect(state.phase).toBe("rescue");
+    state = reduce(state, { type: "SKIP", runId: RUN, itemId: "item-0" });
+    expect(state.items[0].resolution).toBe("skipped");
+    expect(state.index).toBe(1);
+    expect(state.hearts).toBe(2);
+    expect(state.challengeIncomplete).toBe(true);
+  });
+
+  it.each([false, true])("quit_after_sixth_valid_result_is_incomplete (paused: %s)", (paused) => {
+    let state = start("challenge");
+    for (let i = 0; i < 5; i += 1) state = advance(play(state, scored(90)));
+    state = play(state, scored(90));
+    expect(state.items.every((item) => item.resolution === "resolved")).toBe(true);
+    expect(state.endReason).toBeNull();
+
+    // Advancing past the sixth item clears; quitting there does not.
+    expect(advance(state).challengeOutcome).toBe("cleared");
+    if (paused) state = reduce(state, { type: "PAUSE", runId: RUN });
+    const quit = reduce(state, { type: "QUIT", runId: RUN });
+    expect(quit.endReason).toBe("quit");
+    expect(quit.challengeOutcome).toBe("incomplete");
+    expect(quit.hearts).toBe(2);
+    expect(quit.items.every((item) => item.resolution === "resolved")).toBe(true);
   });
 
   it("lastRejection_clears_when_a_new_capture_begins", () => {

@@ -367,7 +367,7 @@ export function runReducer(state: RunState | null, action: RunAction): RunState 
         const pending = updateAttempt(item, active.key.attemptId, { status: "pending" });
         next = replaceItem(next, next.index, { ...pending, resolution: "pending", verdict: "pending" });
       }
-      return endRun(next, "quit");
+      return endRun(markIncomplete(next), "quit");
     }
     case "OPEN_REVIEW":
       return state.phase === "summary" ? { ...state, phase: "review" } : state;
