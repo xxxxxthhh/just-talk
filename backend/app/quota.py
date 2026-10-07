@@ -92,6 +92,25 @@ class QuotaLedger:
                 )
                 """
             )
+            columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(usage_attempts)")
+            }
+            if "audio_duration_ms" not in columns:
+                connection.execute(
+                    "ALTER TABLE usage_attempts ADD COLUMN audio_duration_ms INTEGER"
+                )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS account_profiles ("
+                "account_id TEXT PRIMARY KEY, email TEXT, registered_at TEXT, "
+                "first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL)"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS usage_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO usage_metadata VALUES ('audio_tracking_since', ?)",
+                (self._clock().astimezone(UTC).isoformat(),),
+            )
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_usage_attempts_kind_month
@@ -127,7 +146,7 @@ class QuotaLedger:
         now = self._clock().astimezone(UTC)
         day = now.strftime("%Y-%m-%d")
         month = now.strftime("%Y-%m")
-        next_day = (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1))
+        next_day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
         first_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         next_month = (first_of_month + timedelta(days=32)).replace(day=1)
         return now, day, month, next_day.isoformat(), next_month.isoformat()
@@ -170,7 +189,12 @@ class QuotaLedger:
         _, day, month, next_day, next_month = windows
         for limit in self._limits(kind):
             used_units, used_attempts = self._usage(
-                connection, kind=kind, scope=limit.scope, visitor_id=visitor_id, day=day, month=month
+                connection,
+                kind=kind,
+                scope=limit.scope,
+                visitor_id=visitor_id,
+                day=day,
+                month=month,
             )
             resets_at = next_month if limit.scope == "global_month" else next_day
             if used_attempts + 1 > limit.attempts:
@@ -187,9 +211,13 @@ class QuotaLedger:
                 connection, windows=self._windows(), visitor_id=visitor_id, kind=kind, units=units
             )
 
-    def reserve(self, *, visitor_id: str, kind: str, units: int) -> str:
+    def reserve(
+        self, *, visitor_id: str, kind: str, units: int, audio_duration_ms: int | None = None
+    ) -> str:
         if units < 1:
             raise ValueError("units must be positive.")
+        if audio_duration_ms is not None and (kind != "score" or audio_duration_ms < 1):
+            raise ValueError("audio_duration_ms must be positive and only applies to scoring.")
         attempt_id = uuid.uuid4().hex
         with self._transaction() as connection:
             # Sample the UTC window once, after taking the write lock, so the
@@ -200,11 +228,22 @@ class QuotaLedger:
             connection.execute(
                 """
                 INSERT INTO usage_attempts (
-                    id, visitor_id, kind, units, status, day, month, created_at, updated_at
+                    id, visitor_id, kind, units, status, day, month, created_at, updated_at,
+                    audio_duration_ms
                 )
-                VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?, ?, ?)
                 """,
-                (attempt_id, visitor_id, kind, units, day, month, now.isoformat(), now.isoformat()),
+                (
+                    attempt_id,
+                    visitor_id,
+                    kind,
+                    units,
+                    day,
+                    month,
+                    now.isoformat(),
+                    now.isoformat(),
+                    audio_duration_ms,
+                ),
             )
         return attempt_id
 
@@ -236,6 +275,20 @@ class QuotaLedger:
         return cursor.rowcount == 1
 
     # ----- reporting & maintenance ------------------------------------
+
+    def observe_account(
+        self, account_id: str, *, email: str | None, registered_at: str | None
+    ) -> None:
+        now = self._clock().astimezone(UTC).isoformat()
+        with self._transaction() as connection:
+            connection.execute(
+                "INSERT INTO account_profiles VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(account_id) DO UPDATE SET "
+                "email = COALESCE(excluded.email, email), "
+                "registered_at = COALESCE(excluded.registered_at, registered_at), "
+                "last_seen_at = excluded.last_seen_at",
+                (account_id, email, registered_at, now, now),
+            )
 
     def status(self, *, visitor_id: str) -> dict[str, Any]:
         report: dict[str, Any] = {}
@@ -273,6 +326,7 @@ class QuotaLedger:
         cutoff = (self._clock() - timedelta(days=LEDGER_RETENTION_DAYS)).strftime("%Y-%m-%d")
         with self._transaction() as connection:
             cursor = connection.execute("DELETE FROM usage_attempts WHERE day < ?", (cutoff,))
+            connection.execute("DELETE FROM account_profiles WHERE last_seen_at < ?", (cutoff,))
         return cursor.rowcount
 
     # ----- sqlite ------------------------------------------------------

@@ -116,3 +116,22 @@ describe("useRecorder", () => {
     expect(controls.audioBlob?.type).toBe("audio/ogg");
   });
 });
+
+test("stops microphone tracks and discards recording when private practice unmounts", async () => {
+  const stopTrack = vi.fn();
+  const stream = { getTracks: () => [{ stop: stopTrack }] };
+  Object.defineProperty(navigator, "mediaDevices", { configurable: true,
+    value: { getUserMedia: vi.fn().mockResolvedValue(stream) } });
+  const RecorderMock = makeMediaRecorderMock(() => true);
+  RecorderMock.isTypeSupported = () => true;
+  vi.stubGlobal("MediaRecorder", RecorderMock);
+  const ready = vi.fn();
+  let controls!: ReturnType<typeof useRecorder>;
+  function Harness() { controls = useRecorder({ maxMs: 30000, onUnsupported: vi.fn(), onRecordingReady: ready }); return null; }
+  const view = render(<Harness />);
+  await act(async () => { await controls.startRecording(); });
+  view.unmount();
+  expect(stopTrack).toHaveBeenCalledOnce();
+  expect(ready).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
+});

@@ -1,0 +1,33 @@
+.admin-shell { max-width: 1440px; margin: auto; padding: 32px clamp(16px, 4vw, 56px); }
+.admin-header, .admin-header nav, .admin-tools { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.admin-header { justify-content: space-between; }
+.admin-header h1 { font-family: var(--font-display); margin: 0; font-size: clamp(28px, 4vw, 40px); }
+.admin-eyebrow { color: var(--text-muted); margin: 0 0 8px; font-size: 13px; }
+.admin-header a { color: var(--accent-color); }
+.admin-intro { margin: 20px 0 28px; color: var(--text-muted); }
+.admin-tools { margin-bottom: 24px; font-size: 14px; }
+.admin-tools label { display: flex; align-items: center; gap: 12px; }
+.admin-tools select { background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-card); padding: 10px 12px; border-radius: 8px; font: inherit; }
+.admin-tools > span { color: var(--text-muted); }
+.admin-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+.admin-totals article { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: 16px; padding: 20px; }
+.admin-totals span, .admin-totals small { display: block; color: var(--text-muted); font-size: 13px; }
+.admin-totals strong { display: block; font-size: 26px; margin: 10px 0; }
+.admin-table-wrap { overflow-x: auto; background: var(--bg-card); border: 1px solid var(--border-card); border-radius: 16px; }
+.admin-table { border-collapse: collapse; width: 100%; font-size: 13px; text-align: left; }
+.admin-table caption { text-align: left; padding: 18px; color: var(--text-muted); }
+.admin-table th, .admin-table td { padding: 16px; border-top: 1px solid var(--border-card); vertical-align: top; }
+.admin-table thead th { font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.admin-table tbody th { font-weight: 500; overflow-wrap: anywhere; min-width: 190px; }
+.admin-table td { min-width: 120px; }
+.admin-table small { display: block; font-size: 11px; color: var(--text-muted); margin-top: 8px; overflow-wrap: anywhere; }
+.admin-notes { margin-top: 24px; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+.admin-notes p { margin: 12px 0; }
+.admin-error { margin: 24px 0; }
+.admin-empty { padding: 0 18px 18px; }
+@media (max-width: 600px) {
+  .admin-shell { padding-top: 20px; }
+  .admin-totals { grid-template-columns: 1fr; gap: 10px; }
+  .admin-totals article { padding: 14px 18px; }
+  .admin-totals strong { margin: 8px 0; }
+}

@@ -22,35 +22,53 @@ The public trial never enables LLM features.
   database.
 - **Practice data.** Reference text, scores, word- and sound-level results,
   saved words, and imported materials are stored in a database file that
-  belongs to your anonymous visitor ID.
+  belongs to your verified Supabase account ID.
 
 ## Identity
 
-- No account, email address, or name is collected.
-- Starting a session sets an HttpOnly cookie with a random token. The server
-  stores only a hash of that token.
-- The app does not save your IP address to the practice databases. It keeps
-  an in-memory counter per network address, for up to an hour, to limit how
-  many new sessions one address can start. The counter is not used to
-  identify people and is lost on restart.
+- The hosted trial requires Google sign-in through Supabase Auth. Google and
+  Supabase process account details (including email/name) for authentication.
+- Just Talk's server verifies the Supabase access token on every private API
+  request and uses the stable Supabase user ID to isolate practice data and
+  enforce account quotas. It does not store your Google email or name locally.
+- The browser stores Supabase authentication/session tokens so you stay signed
+  in, and sends an access token in an Authorization header to Just Talk. Tokens
+  are never put in export URLs. Sign out removes this browser's session and
+  clears the practice interface, microphone recording and cached model audio.
+- A new browser or clearing cookies does not give an existing account a new
+  allowance. Anonymous visitor cookies are no longer accepted.
 
 ## Retention and deletion
 
-- **Delete my data** in the app deletes your practice database and clears
-  the cookie immediately.
-- Visitor data is deleted automatically after 7 days without use. Cleanup
-  runs about every 10 minutes.
-- Usage counters are kept for about 70 days to enforce daily and monthly
-  limits. When you delete your data, your counters are detached from your
-  visitor ID. They still count toward site-wide totals.
+- **Delete my data** deletes history, saved words, imported materials and
+  private model audio after active practice requests finish. It does not
+  delete your Google/Supabase account or reset your allowance.
+- Practice data expires after 7 days without use (deployment configurable).
+  Cleanup runs about every 10 minutes.
+- Tutorial completion or dismissal is saved by account and guide version so it
+  does not repeat in another browser. This preference lasts about 70 days
+  without use, remains after deleting practice data, and can be reopened with
+  “Tutorial”. It contains no audio or practice text.
+- Account-linked usage records are retained for about 70 days to enforce
+  daily/monthly limits even after practice deletion, logout, or expiry. Records
+  contain account ID, timestamps, units and request outcome, not practice text
+  or recordings. After retention, cleanup removes them.
+- Existing anonymous data is not transferred to a Google account; it continues
+  to expire under its original inactivity policy. Historical usage still counts
+  toward the shared limits.
+- Supabase account deletion is not offered in the practice-data control. Account
+  deletion by an administrator and re-creation can produce a new user ID;
+  shared site caps continue to apply. Do not treat practice deletion as account
+  deletion or use account deletion as a quota-reset mechanism.
 
 ## Third parties
 
 - **Microsoft Azure AI Speech** processes recordings and text for scoring and
   speech synthesis under Microsoft's terms.
 - **Cloudflare** carries traffic to the server.
+- **Google and Supabase Auth** provide account authentication.
 
-Both providers may keep their own logs, including IP addresses and request
+These providers may keep their own logs, including IP addresses and request
 metadata. Just Talk cannot control or delete those logs.
 
 ## Limits

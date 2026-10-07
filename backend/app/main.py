@@ -10,19 +10,22 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .accounts import AccountRegistry
+from .admin import users_summary
 from .audio import (
     AudioTooLongError,
     AudioTooShortError,
     decode_to_wav_16k_mono,
     ensure_audio_duration_allowed,
 )
+from .auth import SupabaseVerifier, VerifiedIdentity
 from .azure_client import AzurePronunciationScorer
 from .config import Settings
 from .drills import generate_drill
@@ -30,9 +33,7 @@ from .passage import check_passage
 from .public import (
     PublicApiError,
     PublicGuardMiddleware,
-    client_address,
     mount_static,
-    verify_turnstile,
 )
 from .quota import (
     QuotaExceededError,
@@ -43,12 +44,16 @@ from .quota import (
 from .scoring import normalize_azure_result, normalize_continuous_azure_results
 from .storage import BUILTIN_MATERIAL_PACK, DRILL_PACK_ID, SessionStore
 from .tts import AzureTextToSpeechSynthesizer
-from .visitors import VISITOR_COOKIE, VisitorLimitError, VisitorRegistry
+from .visitors import VisitorLimitError, VisitorRegistry
 
 
 class WordCreateRequest(BaseModel):
     word: str
     notes: str = ""
+
+
+class TutorialRequest(BaseModel):
+    version: Literal[1]
 
 
 class SpeakRequest(BaseModel):
@@ -82,13 +87,9 @@ class DrillGenerateRequest(BaseModel):
     phoneme: str
 
 
-class VisitorCreateRequest(BaseModel):
-    turnstile_token: str = Field(default="", max_length=2048)
-
-
 @dataclass(frozen=True)
 class Actor:
-    """Who a request acts for: the single local user, or a public visitor."""
+    """Who a request acts for: the single local user, or a verified Google account."""
 
     visitor_id: str | None
     store: SessionStore
@@ -122,7 +123,7 @@ def create_app(
     scorer: Any | None = None,
     synthesizer: Any | None = None,
     clock: Callable[[], datetime] | None = None,
-    turnstile_verifier: Callable[[str, str, str | None], bool] | None = None,
+    auth_verifier: Callable[[str], str | VerifiedIdentity] | None = None,
 ) -> FastAPI:
     active_settings = settings or Settings.from_env()
     public = active_settings.public
@@ -132,11 +133,15 @@ def create_app(
     active_synthesizer = synthesizer
     if active_synthesizer is None and active_settings.azure_configured:
         active_synthesizer = AzureTextToSpeechSynthesizer(active_settings)
-    verify_turnstile_token = turnstile_verifier or verify_turnstile
+    verify_user = (
+        auth_verifier
+        or SupabaseVerifier(public.supabase_url, public.supabase_publishable_key).verify_identity
+    )
 
     personal_store: SessionStore | None = None
     ledger: QuotaLedger | None = None
-    registry: VisitorRegistry | None = None
+    registry: AccountRegistry | None = None
+    legacy_registry: VisitorRegistry | None = None
     shared_speech_cache: SessionStore | None = None
     azure_slots: threading.BoundedSemaphore | None = None
     if public.enabled:
@@ -144,10 +149,15 @@ def create_app(
         ledger = QuotaLedger(data_dir / "usage.db", public, clock=clock)
         ledger.initialize()
         ledger.prune()
-        registry = VisitorRegistry(
-            data_dir, public, clock=clock, on_delete=ledger.anonymize_visitor
-        )
+        registry = AccountRegistry(data_dir, public, clock=clock)
         registry.initialize()
+        # Existing anonymous data keeps its original expiry policy; it is
+        # never linked to a Google account or accepted for authentication.
+        if (data_dir / "visitors.db").exists():
+            legacy_registry = VisitorRegistry(
+                data_dir, public, clock=clock, on_delete=ledger.anonymize_visitor
+            )
+            legacy_registry.initialize()
         # Built-in material audio only; see BUILTIN_TEXTS.
         shared_speech_cache = SessionStore(f"sqlite:///{data_dir / 'speech_cache.db'}")
         shared_speech_cache.initialize(seed_builtin_materials=False)
@@ -168,6 +178,8 @@ def create_app(
                     await asyncio.sleep(MAINTENANCE_INTERVAL_SECONDS)
                     with contextlib.suppress(Exception):
                         await asyncio.to_thread(registry.cleanup_expired)
+                        if legacy_registry is not None:
+                            await asyncio.to_thread(legacy_registry.cleanup_expired)
                         await asyncio.to_thread(ledger.prune)
 
             maintenance = asyncio.create_task(maintain())
@@ -214,14 +226,17 @@ def create_app(
             },
         )
 
-    def _require_visitor_id(request: Request) -> str:
-        assert registry is not None
-        visitor_id = registry.resolve(request.cookies.get(VISITOR_COOKIE))
-        if visitor_id is None:
-            raise PublicApiError(
-                401, "visitor_required", "Start a practice session to continue."
-            )
-        return visitor_id
+    def _require_account_id(request: Request) -> str:
+        authorization = request.headers.get("authorization", "")
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not token or len(token) > 16384:
+            raise PublicApiError(401, "auth_required", "Sign in with Google to continue.")
+        verified = verify_user(token)
+        identity = (
+            verified if isinstance(verified, VerifiedIdentity) else VerifiedIdentity(verified)
+        )
+        request.state.verified_identity = identity
+        return identity.account_id
 
     def get_actor(request: Request) -> Iterator[Actor]:
         if not public.enabled:
@@ -229,13 +244,22 @@ def create_app(
             yield Actor(visitor_id=None, store=personal_store)
             return
         assert registry is not None
-        visitor_id = _require_visitor_id(request)
+        visitor_id = _require_account_id(request)
+        try:
+            registry.ensure_account(visitor_id)
+        except VisitorLimitError as exc:
+            raise PublicApiError(429, "account_limit", _VISITOR_LIMIT_MESSAGES[exc.reason]) from exc
+        assert ledger is not None
+        identity = request.state.verified_identity
+        ledger.observe_account(
+            visitor_id, email=identity.email, registered_at=identity.registered_at
+        )
         usage = registry.use(visitor_id)
         try:
             visitor_store = usage.__enter__()
         except KeyError as exc:
             raise PublicApiError(
-                401, "visitor_required", "Start a practice session to continue."
+                401, "auth_required", "Sign in with Google to continue."
             ) from exc
         try:
             yield Actor(
@@ -272,12 +296,16 @@ def create_app(
             )
 
     @contextlib.contextmanager
-    def _billable_call(actor: Actor, kind: str, units: int) -> Iterator[None]:
+    def _billable_call(
+        actor: Actor, kind: str, units: int, *, audio_duration_ms: int | None = None
+    ) -> Iterator[None]:
         """Reserve usage, mark it sent, and never refund once Azure is called."""
         if ledger is None or actor.visitor_id is None:
             yield
             return
-        attempt_id = ledger.reserve(visitor_id=actor.visitor_id, kind=kind, units=units)
+        attempt_id = ledger.reserve(
+            visitor_id=actor.visitor_id, kind=kind, units=units, audio_duration_ms=audio_duration_ms
+        )
         try:
             ledger.mark_sent(attempt_id)
         except BaseException:
@@ -304,7 +332,12 @@ def create_app(
         if public.enabled:
             payload["public"] = {
                 "scoring_enabled": public.scoring_enabled,
-                "turnstile_site_key": public.turnstile_site_key if public.turnstile_enabled else "",
+                "auth": {
+                    "provider": "google",
+                    "url": public.supabase_url,
+                    "publishable_key": public.supabase_publishable_key,
+                } if SupabaseVerifier(public.supabase_url, public.supabase_publishable_key).configured else None,
+                "turnstile_site_key": "",
                 "max_tts_chars_per_request": public.max_tts_chars_per_request,
                 "max_reference_chars": public.max_reference_chars,
                 "visitor_ttl_days": public.visitor_ttl_days,
@@ -314,57 +347,52 @@ def create_app(
     if public.enabled:
 
         @app.post("/api/visitor")
-        def create_visitor(
-            request: Request,
-            response: Response,
-            body: VisitorCreateRequest | None = None,
-        ) -> dict[str, Any]:
-            assert registry is not None
-            if registry.resolve(request.cookies.get(VISITOR_COOKIE)) is not None:
-                return {"created": False}
-            remote = client_address(request, public.client_ip_header)
-            if public.turnstile_enabled:
-                token = body.turnstile_token if body else ""
-                if not verify_turnstile_token(public.turnstile_secret_key, token, remote):
-                    raise PublicApiError(
-                        403, "challenge_failed", "Please complete the verification and try again."
-                    )
-            try:
-                _, token = registry.issue(client_key=remote)
-            except VisitorLimitError as exc:
-                raise PublicApiError(
-                    429, "visitor_limit", _VISITOR_LIMIT_MESSAGES[exc.reason]
-                ) from exc
-            response.set_cookie(
-                VISITOR_COOKIE,
-                token,
-                max_age=public.visitor_ttl_days * 86400,
-                path="/api",
-                secure=public.cookie_secure,
-                httponly=True,
-                samesite="lax",
-            )
-            response.status_code = 201
-            return {"created": True}
+        def legacy_visitor() -> None:
+            raise PublicApiError(410, "auth_required", "Anonymous practice has ended. Sign in with Google.")
 
         @app.get("/api/me/quota")
         def my_quota(actor: Actor = Depends(get_actor)) -> dict[str, Any]:
             assert ledger is not None and actor.visitor_id is not None
             return ledger.status(visitor_id=actor.visitor_id)
 
-        @app.delete("/api/me")
-        def delete_me(request: Request, response: Response) -> dict[str, bool]:
-            assert registry is not None
-            visitor_id = _require_visitor_id(request)
-            registry.delete(visitor_id)
-            response.delete_cookie(
-                VISITOR_COOKIE,
-                path="/api",
-                secure=public.cookie_secure,
-                httponly=True,
-                samesite="lax",
+        @app.get("/api/me/access")
+        def my_access(request: Request) -> JSONResponse:
+            account_id = _require_account_id(request)
+            return JSONResponse(
+                {"admin": bool(public.admin_user_id and account_id == public.admin_user_id)},
+                headers={"Cache-Control": "no-store"},
             )
-            return {"deleted": True}
+
+        @app.get("/api/admin/users")
+        def admin_users(request: Request) -> JSONResponse:
+            account_id = _require_account_id(request)
+            if not public.admin_user_id or account_id != public.admin_user_id:
+                raise PublicApiError(403, "admin_required", "Owner access is required.")
+            assert ledger is not None and registry is not None
+            return JSONResponse(
+                users_summary(ledger, registry.database_path.resolve()),
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.get("/api/me/tutorial")
+        def my_tutorial(actor: Actor = Depends(get_actor)) -> dict[str, int]:
+            assert registry is not None and actor.visitor_id is not None
+            return {"completed_version": registry.tutorial_version(actor.visitor_id)}
+
+        @app.put("/api/me/tutorial")
+        def finish_tutorial(
+            payload: TutorialRequest, actor: Actor = Depends(get_actor)
+        ) -> dict[str, int]:
+            assert registry is not None and actor.visitor_id is not None
+            registry.finish_tutorial(actor.visitor_id, payload.version)
+            return {"completed_version": registry.tutorial_version(actor.visitor_id)}
+
+        @app.delete("/api/me")
+        def delete_me(request: Request) -> dict[str, bool]:
+            assert registry is not None
+            account_id = _require_account_id(request)
+            registry.delete(account_id)
+            return {"deleted": True, "quota_retained": True}
 
     def _score_uploaded_recording(
         *,
@@ -436,7 +464,12 @@ def create_app(
                         detail="Could not read the uploaded audio. Please record again.",
                     ) from exc
 
-                with _billable_call(actor, "score", billable_audio_seconds(duration_seconds)):
+                with _billable_call(
+                    actor,
+                    "score",
+                    billable_audio_seconds(duration_seconds),
+                    audio_duration_ms=max(1, round(duration_seconds * 1000)),
+                ):
                     if score_mode == "long":
                         try:
                             raw_results, scoring_warnings = continuous_score(
@@ -788,7 +821,9 @@ def create_app(
         )
 
     if active_settings.static_dir:
-        mount_static(app, active_settings.static_dir, turnstile=public.turnstile_enabled)
+        auth = SupabaseVerifier(public.supabase_url, public.supabase_publishable_key)
+        mount_static(app, active_settings.static_dir, turnstile=False,
+                     auth_origin=public.supabase_url if public.enabled and auth.configured else "")
 
     return app
 

@@ -1,43 +1,42 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-
-import { ApiError, checkHealth, createVisitor, deleteMyData, fetchQuota } from "../api";
+import { ApiError, checkHealth, deleteMyData, fetchQuota, fetchAdminAccess } from "../api";
+import { authClient, configureAuth } from "../auth";
 import { USAGE_CHANGED_EVENT, VISITOR_REQUIRED_EVENT } from "../publicMode";
 import type { Health, QuotaStatus, QuotaWindow } from "../types";
+import { TutorialProvider, TutorialHelp } from "./PracticeTutorial";
 import "./PublicGate.css";
 
 const SOURCE_URL = "https://github.com/xxxxxthhh/just-talk";
+type GateState = "checking" | "welcome" | "ready" | "unavailable" | "restricted";
 
-type GateState = "checking" | "welcome" | "ready" | "unavailable";
-
-declare global {
-  interface Window {
-    turnstile?: {
-      render: (element: HTMLElement, options: Record<string, unknown>) => string;
-      reset: (widgetId?: string) => void;
-    };
-  }
-}
-
-const TURNSTILE_SCRIPT = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-
-/**
- * Wraps the app on the hosted public trial: explains what happens to a
- * recording, creates the anonymous visitor only after the user chooses to
- * start, shows remaining free usage, and offers data deletion.
- */
 export default function PublicGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<GateState>("checking");
   const [health, setHealth] = useState<Health | null>(null);
+  const [account, setAccount] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const generation = useRef(0);
+  const authRejected = useRef(false);
 
   const probe = useCallback(async () => {
+    const current = ++generation.current;
+    setState("checking");
     try {
-      const nextHealth = await checkHealth();
-      setHealth(nextHealth);
-      await fetchQuota();
-      setState("ready");
+      const session = (await authClient()?.auth.getSession())?.data.session;
+      if (current !== generation.current) return;
+      setAccount(session?.user.id ?? null);
+      if (!session) { setState("welcome"); return; }
+      if (window.location.pathname === "/admin") {
+        const access = await fetchAdminAccess();
+        if (current !== generation.current) return;
+        if (!access.admin) { setState("restricted"); return; }
+      } else {
+        await fetchQuota();
+      }
+      if (current === generation.current) { authRejected.current = false; setState("ready"); }
     } catch (error) {
-      if (error instanceof ApiError && error.code === "visitor_required") {
+      if (current !== generation.current) return;
+      if (error instanceof ApiError && error.code === "auth_required") {
+        authRejected.current = true;
         setState("welcome");
       } else {
         setMessage(error instanceof Error ? error.message : "The service is unavailable.");
@@ -47,143 +46,96 @@ export default function PublicGate({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void probe();
-    const onVisitorRequired = () => setState("welcome");
-    window.addEventListener(VISITOR_REQUIRED_EVENT, onVisitorRequired);
-    return () => window.removeEventListener(VISITOR_REQUIRED_EVENT, onVisitorRequired);
-  }, [probe]);
-
-  if (state === "checking") {
-    return <div className="pg-shell pg-center" aria-busy="true">Loading…</div>;
-  }
-  if (state === "unavailable") {
-    return (
-      <div className="pg-shell pg-center">
-        <div className="pg-card" role="alert">
-          <h1>Just Talk is unavailable</h1>
-          <p>{message}</p>
-          <button type="button" className="primary-button" onClick={() => void probe()}>
-            Try again
-          </button>
-        </div>
-      </div>
-    );
-  }
-  if (state === "welcome") {
-    return <Welcome health={health} onReady={() => setState("ready")} />;
-  }
-  return (
-    <>
-      <PublicBar health={health} />
-      {children}
-    </>
-  );
-}
-
-function Welcome({ health, onReady }: { health: Health | null; onReady: () => void }) {
-  const siteKey = health?.public?.turnstile_site_key ?? "";
-  const ttlDays = health?.public?.visitor_ttl_days ?? 7;
-  const scoringEnabled = health?.public?.scoring_enabled ?? true;
-  const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const widgetRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!siteKey || !widgetRef.current) return;
-    const element = widgetRef.current;
     let cancelled = false;
-    const render = () => {
-      if (cancelled || !window.turnstile || element.childElementCount > 0) return;
-      window.turnstile.render(element, {
-        sitekey: siteKey,
-        callback: (value: string) => setToken(value),
-        "expired-callback": () => setToken(""),
-      });
-    };
-    if (window.turnstile) {
-      render();
-    } else {
-      const script = document.createElement("script");
-      script.src = TURNSTILE_SCRIPT;
-      script.async = true;
-      script.onload = render;
-      document.head.appendChild(script);
-    }
+    let unsubscribe: (() => void) | undefined;
+    checkHealth().then((nextHealth) => {
+      if (cancelled) return;
+      setHealth(nextHealth);
+      if (!nextHealth.public?.auth) { setState("welcome"); return; }
+      const client = configureAuth(nextHealth.public.auth.url, nextHealth.public.auth.publishable_key);
+      let previousAccount: string | null | undefined;
+      const subscription = client.auth.onAuthStateChange((event, session) => {
+        // The callback is synchronous: defer SDK calls to avoid its auth lock.
+        const nextAccount = session?.user.id ?? null;
+        if (event === "SIGNED_OUT" || nextAccount !== previousAccount ||
+            (authRejected.current && (event === "TOKEN_REFRESHED" || event === "SIGNED_IN"))) {
+          previousAccount = nextAccount;
+          generation.current += 1;
+          setState("checking");
+          window.setTimeout(() => { if (!cancelled) void probe(); }, 0);
+        }
+      }).data.subscription;
+      unsubscribe = () => subscription.unsubscribe();
+      void probe();
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        setMessage(error instanceof Error ? error.message : "The service is unavailable.");
+        setState("unavailable");
+      }
+    });
+    const onAuthRequired = () => { authRejected.current = true; generation.current += 1; setState("welcome"); };
+    window.addEventListener(VISITOR_REQUIRED_EVENT, onAuthRequired);
     return () => {
       cancelled = true;
+      generation.current += 1;
+      unsubscribe?.();
+      window.removeEventListener(VISITOR_REQUIRED_EVENT, onAuthRequired);
     };
-  }, [siteKey]);
+  }, [probe]);
 
-  async function start() {
+  if (state === "checking") return <div className="pg-shell pg-center" aria-busy="true">Loading…</div>;
+  if (state === "unavailable") return (
+    <div className="pg-shell pg-center"><div className="pg-card" role="alert">
+      <h1>Just Talk is unavailable</h1><p>{message}</p>
+      <button type="button" className="primary-button" onClick={() => window.location.reload()}>Try again</button>
+    </div></div>
+  );
+  if (state === "welcome") return <Welcome health={health} />;
+  if (state === "restricted") return (
+    <div className="pg-shell pg-center"><div className="pg-card" role="alert">
+      <h1>Owner access required</h1><p>This page is available to the approved owner account.</p>
+      <a href="/">Back to practice</a>
+    </div></div>
+  );
+  if (window.location.pathname === "/admin") return <div key={account}>{children}</div>;
+  return <TutorialProvider key={account}><PublicBar health={health} />{children}</TutorialProvider>;
+}
+
+function Welcome({ health }: { health: Health | null }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.has("error") ? "Google sign-in was cancelled or could not finish. Please try again." : "";
+  });
+  const configured = Boolean(health?.public?.auth);
+  async function signIn() {
     setBusy(true);
     setError("");
     try {
-      await createVisitor(token);
-      onReady();
-    } catch (startError) {
-      setError(startError instanceof Error ? startError.message : "Could not start a session.");
-      if (siteKey) {
-        window.turnstile?.reset();
-        setToken("");
-      }
-    } finally {
-      setBusy(false);
-    }
+    const result = await authClient()?.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${window.location.origin}/`, queryParams: { prompt: "select_account" } }
+    });
+    if (result?.error) { setError(result.error.message); setBusy(false); }
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not open Google sign-in."); setBusy(false); }
   }
-
   return (
-    <div className="pg-shell pg-center">
-      <div className="pg-card pg-welcome">
-        <h1>Just Talk</h1>
-        <p className="pg-lede">
-          Practice English pronunciation: read a passage aloud and get word- and sound-level
-          feedback, then drill the words you missed.
-        </p>
-        <ul className="pg-points">
-          <li>
-            <strong>Free trial with daily limits.</strong> Each visitor gets a few minutes of
-            recording and listening per day, and the whole site shares a daily and monthly
-            allowance. When it runs out, scoring pauses until it resets (UTC).
-          </li>
-          <li>
-            <strong>How your recording is used.</strong> The audio is uploaded to this server,
-            converted, and sent to Microsoft Azure AI Speech for scoring. The server deletes its
-            temporary audio files after processing; it keeps your text, scores, and the generated
-            model audio.
-          </li>
-          <li>
-            <strong>Your practice data.</strong> History and saved words are tied to an anonymous
-            cookie in this browser, removed after {ttlDays} days without use, and you can delete
-            them at any time. No account, email, or name is collected.
-          </li>
-          <li>
-            <strong>Logs you should know about.</strong> The hosting network (Cloudflare) and
-            Microsoft Azure may keep their own logs, which can include IP addresses.
-          </li>
-        </ul>
-        {!scoringEnabled ? (
-          <p className="pg-warning">Scoring and playback are paused on this trial right now.</p>
-        ) : null}
-        {siteKey ? <div ref={widgetRef} className="pg-turnstile" /> : null}
-        {error ? <p className="pg-error" role="alert">{error}</p> : null}
-        <button
-          type="button"
-          className="primary-button"
-          disabled={busy || (Boolean(siteKey) && !token)}
-          onClick={() => void start()}
-        >
-          {busy ? "Starting…" : "Start practicing"}
-        </button>
-        <p className="pg-fineprint">
-          Microphone access is requested only when you press record. Just Talk is open source
-          (MIT): you can run it yourself with your own Azure key.{" "}
-          <a href={SOURCE_URL} target="_blank" rel="noreferrer">
-            Source code
-          </a>
-        </p>
-      </div>
-    </div>
+    <div className="pg-shell pg-center"><div className="pg-card pg-welcome">
+      <h1>Just Talk</h1>
+      <p className="pg-lede">Practice English pronunciation with word- and sound-level feedback.</p>
+      <ul className="pg-points">
+        <li><strong>Free practice funded by Just Talk.</strong> Sign in with Google. Your account shares the same daily allowance across browsers. Recording and listening also share site-wide daily and monthly limits, resetting in UTC.</li>
+        <li><strong>Recordings.</strong> Audio and reference text are sent to Microsoft Azure AI Speech. Temporary recordings are deleted after processing; text, scores and model audio are stored.</li>
+        <li><strong>Your account and data.</strong> Google and Supabase manage sign-in. Just Talk uses your Supabase account ID for history, saved words and quota. Practice data expires after {health?.public?.visitor_ttl_days ?? 7} days without use or can be deleted immediately. Account-linked usage records and tutorial preferences remain for about 70 days; deleting practice data or signing out does not reset allowance.</li>
+        <li><strong>Trial management.</strong> The owner can see your email, registration and last activity, plus aggregate scoring duration and listening use. The management page does not show recordings, practice text or scores. Identity and usage summaries are kept for about 70 days; time spent on the site is not tracked.</li>
+        <li><strong>Provider logs.</strong> Google, Supabase, Cloudflare and Microsoft may retain logs including IP addresses.</li>
+      </ul>
+      {!configured ? <p className="pg-warning">Google sign-in is being set up. Please check back soon.</p> : null}
+      {health?.public?.scoring_enabled === false ? <p className="pg-warning">Scoring and playback are paused right now.</p> : null}
+      {error ? <p className="pg-error" role="alert">{error}</p> : null}
+      <button type="button" className="primary-button" disabled={busy || !configured} onClick={() => void signIn()}>{busy ? "Opening Google…" : "Continue with Google"}</button>
+      <p className="pg-fineprint">Microphone access is requested when you press record. <a href={SOURCE_URL} target="_blank" rel="noreferrer">Open source (MIT)</a></p>
+    </div></div>
   );
 }
 
@@ -191,7 +143,7 @@ function isExhausted(window: QuotaWindow): boolean {
   return window.used >= window.limit || window.attempts_used >= window.attempts_limit;
 }
 
-// What this visitor can still use: the smallest amount left across their own
+// What this account can still use: the smallest amount left across their own
 // and the shared windows, and nothing once any window runs out of requests.
 function remaining(windows: QuotaWindow[]): { left: number; limit: number } {
   const personal = windows[0];
@@ -218,6 +170,12 @@ function formatSeconds(total: number): string {
 }
 
 function PublicBar({ health }: { health: Health | null }) {
+  const [admin, setAdmin] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetchAdminAccess().then((access) => { if (!cancelled) setAdmin(access.admin); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
   const [quota, setQuota] = useState<QuotaStatus | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -280,12 +238,15 @@ function PublicBar({ health }: { health: Health | null }) {
         </span>
       ) : null}
       <span className="pg-bar-actions">
+        <TutorialHelp />
+        {admin ? <a className="pg-bar-link" href="/admin">Manage trial</a> : null}
         <a className="pg-bar-link" href={SOURCE_URL} target="_blank" rel="noreferrer">
           Source
         </a>
+        <button type="button" className="secondary-button compact" onClick={() => { void authClient()?.auth.signOut({ scope: "local" }).then((result) => { if (result.error) setError(result.error.message); }); }}>Sign out</button>
         {confirming ? (
           <>
-            <span>Delete all your history and words from this server?</span>
+            <span>Delete practice data? Your account and used allowance are retained.</span>
             <button
               type="button"
               className="secondary-button compact pg-danger"

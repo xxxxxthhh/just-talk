@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { useTutorial } from "../components/PracticeTutorial";
 import { usePracticeSession } from "../usePracticeSession";
 import MobileTabBar from "./MobileTabBar";
 import "./mobile.css";
@@ -13,6 +14,11 @@ export type MobileTab = "practice" | "words" | "history" | "insights";
 export default function MobileApp() {
   const session = usePracticeSession();
   const [tab, setTab] = useState<MobileTab>("practice");
+
+  const tutorial = useTutorial();
+  const setTutorialBusy = tutorial.setBusy;
+  useEffect(() => { setTutorialBusy(session.recorderState === "recording" || session.isScoring); }, [session.recorderState, session.isScoring, setTutorialBusy]);
+  useEffect(() => { if (tutorial.open) setTab("practice"); }, [tutorial.open]);
 
   function selectTab(nextTab: MobileTab) {
     setTab(nextTab);

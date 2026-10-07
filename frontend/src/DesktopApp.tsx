@@ -17,9 +17,10 @@ import {
   UploadCloud,
   Volume2
 } from "lucide-react";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 
-import { apiUrl } from "./api";
+import { useTutorial } from "./components/PracticeTutorial";
+import { downloadBackup } from "./api";
 import { AudioPlayer } from "./components/AudioPlayer";
 import { AudioVisualizer } from "./components/AudioVisualizer";
 import { BrandMark } from "./components/BrandMark";
@@ -83,6 +84,7 @@ export default function DesktopApp() {
     isSavingWords,
     isImportingMaterials,
     error,
+    setError,
     health,
     sessions,
     vocabulary,
@@ -171,6 +173,13 @@ export default function DesktopApp() {
     isCoachDataMatching
   } = usePracticeSession();
 
+  const tutorial = useTutorial();
+  const setTutorialBusy = tutorial.setBusy;
+  useEffect(() => { setTutorialBusy(recorderState === "recording" || isScoring); }, [recorderState, isScoring, setTutorialBusy]);
+  useEffect(() => {
+    if (tutorial.open) setAppView("practice");
+  }, [tutorial.open, setAppView]);
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -207,9 +216,9 @@ export default function DesktopApp() {
         </nav>
         <div className="topbar-actions">
           <StatusPill health={health} />
-          <a className="icon-button" href={apiUrl("/api/export")} download title="Download backup (JSON)">
+          <button className="icon-button" type="button" onClick={() => void downloadBackup().catch((error: unknown) => setError(error instanceof Error ? error.message : "Could not download backup."))} title="Download backup (JSON)">
             <Download size={18} />
-          </a>
+          </button>
           <button
             className="icon-button"
             onClick={toggleTheme}
@@ -317,7 +326,7 @@ export default function DesktopApp() {
           </SidebarSection>
         </aside>
 
-        <section className="practice-panel" hidden={appView === "insights"}>
+        <section data-tutorial="practice" className="practice-panel" hidden={appView === "insights"}>
           {isReviewActive ? (
             <div className="review-banner" role="status">
               <div className="review-banner-info">
@@ -399,6 +408,7 @@ export default function DesktopApp() {
             <div className="heading-actions">
               <button
                 className="secondary-button"
+                data-tutorial="listen"
                 onClick={togglePassageSpeech}
                 disabled={!trimmedPassage || (isSpeechBusy && !isPassageSpeechActive)}
                 title={isPassageSpeechPlaying ? "Pause passage audio (Space)" : "Play passage audio (Space)"}
@@ -539,6 +549,7 @@ export default function DesktopApp() {
               {recorderState === "recording" ? (
                 <button
                   className="danger-button recording-pulse"
+                  data-tutorial="record"
                   onClick={stopRecording}
                   title="Stop recording (Enter)"
                 >
@@ -548,6 +559,7 @@ export default function DesktopApp() {
               ) : (
                 <button
                   className="primary-button"
+                  data-tutorial="record"
                   onClick={startRecording}
                   title="Start recording (Enter; Shift+Enter to re-record without scoring)"
                 >
@@ -558,6 +570,7 @@ export default function DesktopApp() {
               <button
                 className="secondary-button"
                 disabled={!audioBlob || isScoring}
+                data-tutorial="score"
                 onClick={submitRecording}
                 title="Score recording (Enter)"
               >

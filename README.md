@@ -10,7 +10,7 @@ It runs in three ways:
 
 - **Personal / local** (default): one user, your own Azure key, data in a local SQLite file. See [Run](#run).
 - **iPhone app**: the same frontend packaged with Capacitor, talking to your own backend. See [iOS](#ios).
-- **Public trial** (`PUBLIC_MODE=1`): anonymous visitors use a server-held Azure key under per-visitor and site-wide usage caps, with per-visitor data they can delete. See [Public trial](#public-trial).
+- **Public trial** (`PUBLIC_MODE=1`): Google accounts use a server-held Azure key under per-account and site-wide usage caps, with per-account data they can delete. See [Public trial](#public-trial).
 
 ## Features
 
@@ -92,10 +92,10 @@ Hosted trial: **https://justtalk.randomnessk.com** (launched September 24, 2026)
 
 Public mode lets people try Just Talk without setting anything up, while keeping Azure usage bounded:
 
-- Visitors start with one click. The server issues an anonymous HttpOnly cookie and stores only a hash of the token. There are no accounts.
-- Each visitor's history, words, and imported materials live in their own SQLite file. **Delete my data** removes it, and idle visitors are removed after 7 days.
+- Sign in with Google through Supabase Auth. The server verifies every private request and binds practice data and quotas to the stable account ID.
+- Each account's history, words, and imported materials live in its own SQLite file. **Delete my data** removes practice data; unused practice stores expire after 7 days. Account-linked quota records remain for about 70 days.
 - Billable calls go through a persistent usage ledger:
-  - per-visitor daily caps, plus site-wide daily and monthly caps (UTC windows) on audio seconds, TTS characters, and request counts;
+  - per-account daily caps, plus site-wide daily and monthly caps (UTC windows) on audio seconds, TTS characters, and request counts;
   - audio is measured by decoding it, not from container metadata;
   - a call counts once it reaches Azure, even if it then fails.
 - Uploads and request bodies are size-capped while they stream. State-changing requests must come from an allowed `Origin`, and API responses are not cached.
@@ -103,7 +103,7 @@ Public mode lets people try Just Talk without setting anything up, while keeping
 
 Deployment, defaults, cost estimate, and known limits are in [docs/deploy-public.md](docs/deploy-public.md). What happens to user data is described in [PRIVACY.md](PRIVACY.md).
 
-Anonymous cookies can be reset, so per-visitor caps only share the allowance fairly. The site-wide caps are what bound usage, and a determined client can still use up the shared daily allowance.
+Account allowances are shared across browsers and survive logout and practice-data deletion. Multiple Google accounts can still consume multiple account allowances; site-wide caps bound total app-funded usage. See [Google Auth and preview setup](docs/auth-preview.md).
 
 ## Material Import
 
@@ -198,3 +198,14 @@ deploy/              Personal backend compose (Tailscale) and deploy/public/ pub
 ## License
 
 MIT, see [LICENSE](LICENSE). Where the bundled sample content comes from, and what has not been verified, is listed in [docs/CONTENT-PROVENANCE.md](docs/CONTENT-PROVENANCE.md).
+
+### First-login practice guide
+
+The Google account preview shows a six-step guide on first sign-in: choose a
+passage, listen to the example, record and stop, submit for scoring, and inspect
+word/phoneme feedback. “Tutorial” reopens it from the free-trial bar. Skip, close,
+and finish save guide version 1 against the verified account, including across
+browsers. Practice-data deletion does not reset this preference. The guide
+never starts playback, microphone capture, or scoring, and cannot interrupt an
+active recording or scoring request. Preferences expire after about 70 days
+without access; see [PRIVACY.md](PRIVACY.md).

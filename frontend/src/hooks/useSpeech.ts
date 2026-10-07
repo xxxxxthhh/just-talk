@@ -61,6 +61,7 @@ export function useSpeech(setError: (msg: string) => void) {
   const currentSpeechWordBoundariesRef = useRef<SpeechWordBoundary[]>([]);
   const playbackRequestRef = useRef(0);
   const cacheRef = useRef<Map<string, SpeechCacheEntry>>(new Map());
+  const mountedRef = useRef(true);
 
   const resetCurrentSpeechAudio = useCallback(() => {
     if (speechAudioRef.current) {
@@ -147,6 +148,7 @@ export function useSpeech(setError: (msg: string) => void) {
       const entry: SpeechCacheEntry = cached ?? { lastUsed: Date.now() };
       const promise = speakText(spokenText, options)
         .then((response) => {
+          if (!mountedRef.current) throw new DOMException("Practice closed", "AbortError");
           const speechUrl = responseToObjectUrl(response);
           entry.url = speechUrl;
           entry.wordBoundaries = response.word_boundaries ?? [];
@@ -183,7 +185,9 @@ export function useSpeech(setError: (msg: string) => void) {
   );
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       playbackRequestRef.current += 1;
       resetCurrentSpeechAudio();
       for (const entry of cacheRef.current.values()) {

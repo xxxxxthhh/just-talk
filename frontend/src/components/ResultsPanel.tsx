@@ -39,7 +39,7 @@ export function ResultsPanel({
   onSelectPhoneme
 }: ResultsPanelProps) {
   return (
-    <section className="results-panel" hidden={hidden}>
+    <section data-tutorial="feedback" className="results-panel" hidden={hidden}>
       <div className="panel-heading split">
         <div>
           <h2>Score</h2>

@@ -153,9 +153,8 @@ describe("App", () => {
 
     render(<App />);
 
-    const exportLink = await screen.findByRole("link", { name: /Download backup/i });
-    expect(exportLink).toHaveAttribute("href", "/api/export");
-    expect(exportLink).toHaveAttribute("download");
+    const exportButton = await screen.findByRole("button", { name: /Download backup/i });
+    expect(exportButton).toBeEnabled();
   });
 
   test("fetches and renders activity stats when the Insights tab opens", async () => {
@@ -1046,6 +1045,27 @@ describe("App", () => {
     expect(passageInput).toHaveStyle({ overflowY: "hidden" });
 
     scrollHeightSpy.mockRestore();
+  });
+
+  test("opening tutorial does not preload paid audio through passage blur", async () => {
+    mockApi({ "/api/health": health, "/api/sessions": [], "/api/words": [],
+      "/api/speak": { audio_base64: "YXVkaW8=", content_type: "audio/mpeg" } });
+    render(<App />);
+    await screen.findByRole("button", { name: /^Play$/ });
+    const input = screen.getByDisplayValue(/The weather changed quickly/);
+    const help = document.createElement("button");
+    help.className = "tutorial-help";
+    document.body.append(help);
+    fireEvent.blur(input, { relatedTarget: help });
+    help.remove();
+    const tour = document.createElement("dialog");
+    tour.className = "practice-tutorial";
+    document.body.append(tour);
+    fireEvent.blur(input);
+    tour.remove();
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/speak")).toHaveLength(0);
+    fireEvent.blur(input);
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/speak")).toHaveLength(1));
   });
 
   test("preloads passage speech only after the passage input loses focus", async () => {
