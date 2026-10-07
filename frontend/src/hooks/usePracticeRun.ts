@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecording } from "../api";
 import { runWeakWords } from "../components/RunReview";
 import { buildRunDeck } from "../game/runDeck";
-import { canRecord, nextCapture, runReducer } from "../game/runModel";
+import { canRecord, nextCapture, runReducer, SENTENCE_COLLECT_MAX } from "../game/runModel";
 import { weakWordsFromResult } from "../scoreUtils";
 import type {
   AttemptKey,
@@ -17,9 +17,6 @@ import type {
   VocabularyItem
 } from "../types";
 import type { usePracticeSession } from "../usePracticeSession";
-
-// Sentence words at or under this accuracy are collected; 71–85 stay review hints.
-const SENTENCE_COLLECT_MAX = 70;
 
 export type RunSession = Pick<
   ReturnType<typeof usePracticeSession>,

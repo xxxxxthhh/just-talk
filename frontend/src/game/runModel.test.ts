@@ -415,8 +415,9 @@ describe("run model", () => {
     let state = start("route");
     for (let i = 0; i < 4; i += 1) state = advance(play(state, scored(90)));
     const [sent, key] = send(state);
-    state = reduce(sent, { type: "SCORE_RECEIVED", key, response: scored(65) });
+    state = reduce(sent, { type: "SCORE_RECEIVED", key, response: scored(65, [word("path", 50), word("now", 75)]) });
     expect(state.items[4].attempts[0].sync).toBe("pending");
+    expect(state.items[4].attempts[0].candidates).toEqual([{ word: "path", status: "unconfirmed" }]);
     expect(canAdvance(state)).toBe(false);
     state = reduce(state, {
       type: "SYNC_SETTLED",

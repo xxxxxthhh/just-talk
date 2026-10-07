@@ -10,9 +10,12 @@ import type {
   ScoreResult,
   Verdict
 } from "../types";
+import { weakWordsFromResult } from "../scoreUtils";
 
 export const PASS_ACCURACY = 60;
 export const MAX_EXTRA_ATTEMPTS = 2;
+// Sentence words at or under this accuracy are collected; 71–85 stay review hints.
+export const SENTENCE_COLLECT_MAX = 70;
 
 export type Judgment = { kind: "valid"; accuracy: number } | { kind: "no-match" | "unjudged" };
 
@@ -137,11 +140,17 @@ function cannotConfirm(state: RunState): RunState {
 function scoreReceived(state: RunState, attempt: Attempt, response: ScoreResponse): RunState {
   const item = currentItem(state) as RunItem;
   const sync = item.prompt.kind === "sentence" && response.session ? "pending" : "not-needed";
+  // Listed as unconfirmed until collection settles, so an early end still shows them.
+  const candidates =
+    sync === "pending"
+      ? weakWordsFromResult(response.result, SENTENCE_COLLECT_MAX).map((word) => ({ word: word.word, status: "unconfirmed" as const }))
+      : [];
   let scored = updateAttempt(item, attempt.key.attemptId, {
     status: "scored",
     result: response.result,
     sessionId: response.session?.id ?? null,
-    sync
+    sync,
+    candidates
   });
   let next: RunState = { ...state, activeAttemptId: null };
   const judgment = judge(response.result);

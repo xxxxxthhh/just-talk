@@ -210,6 +210,7 @@ describe("usePracticeRun", () => {
     const shown = current(h);
     expect(shown.attempts[0].result).toEqual(sentence.result);
     expect(shown.attempts[0].sync).toBe("pending");
+    expect(shown.attempts[0].candidates).toEqual([{ word: "path", status: "unconfirmed" }]);
     expect(addWordsFromSession).toHaveBeenCalledWith(sentence.session?.id, 70);
 
     const captures = h.session.startRunCapture.mock.calls.length;
