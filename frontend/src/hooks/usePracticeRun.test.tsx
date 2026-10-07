@@ -431,6 +431,17 @@ describe("usePracticeRun", () => {
       ["string accuracy", { ...valid, result: { ...valid.result, scores: { ...valid.result.scores, accuracy: "90" } } }],
       ["word without phonemes", { ...valid, result: { ...valid.result, words: [{ word: "thin", accuracy: 90 }] } }],
       ["null word", { ...valid, result: { ...valid.result, words: [null] } }],
+      ["null phoneme", { ...valid, result: { ...valid.result, words: [{ ...word("thin", 90), phonemes: [null] }] } }],
+      [
+        "string phoneme accuracy",
+        {
+          ...valid,
+          result: {
+            ...valid.result,
+            words: [{ ...word("thin", 90), phonemes: [{ phoneme: "θ", accuracy: "40", bucket: "", offset_ms: 0, duration_ms: 0, n_best: [] }] }]
+          }
+        }
+      ],
       ["array result", { ...valid, result: [] }],
       ["session without id", { ...valid, session: { created_at: "" } }]
     ];
@@ -457,5 +468,14 @@ describe("usePracticeRun", () => {
       h.hook.unmount();
     }
     expect(addWordsFromSession).not.toHaveBeenCalled();
+
+    // Well-formed phonemes, including a null score, are still judged normally.
+    const phonemes = [
+      { phoneme: "θ", accuracy: 40, bucket: "needs-work", offset_ms: 0, duration_ms: 50, n_best: [] },
+      { phoneme: "ɪ", accuracy: null, bucket: "unknown", offset_ms: 50, duration_ms: 50, n_best: [] }
+    ];
+    const h = await setup("route");
+    await attempt(h, scored(90, [{ ...word("thin", 90), phonemes }]));
+    expect(current(h).verdict).toBe("practiced");
   });
 });

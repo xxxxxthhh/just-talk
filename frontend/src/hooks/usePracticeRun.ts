@@ -50,19 +50,26 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function isScore(value: unknown): boolean {
+  return value === null || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isWordResult(word: unknown): boolean {
+  if (!isObject(word) || typeof word.word !== "string" || !Array.isArray(word.phonemes)) return false;
+  return word.phonemes.every(
+    (phoneme) => isObject(phoneme) && typeof phoneme.phoneme === "string" && isScore(phoneme.accuracy)
+  );
+}
+
 // parseResponse trusts the payload, so a malformed 2xx would otherwise look
 // scored. Checks only the fields the run and review read; a well-formed
 // NoMatch, null accuracy, or Omission still goes on to be judged.
 function isScoreResponse(value: unknown): value is ScoreResponse {
   if (!isObject(value) || !isObject(value.result) || !isObject(value.result.scores)) return false;
   const { result, session } = value as Partial<ScoreResponse> & { result: ScoreResponse["result"] };
-  const accuracy: unknown = result.scores.accuracy;
-  if (accuracy !== null && !(typeof accuracy === "number" && Number.isFinite(accuracy))) return false;
+  if (!isScore(result.scores.accuracy)) return false;
   const words: unknown = result.words;
-  if (!Array.isArray(words)) return false;
-  if (!words.every((word) => isObject(word) && typeof word.word === "string" && Array.isArray(word.phonemes))) {
-    return false;
-  }
+  if (!Array.isArray(words) || !words.every(isWordResult)) return false;
   if (result.recognition_status === "no_match") return session === null || session === undefined;
   return isObject(session) && typeof session.id === "string" && session.id !== "";
 }
