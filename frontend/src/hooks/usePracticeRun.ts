@@ -4,7 +4,7 @@ import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecor
 import { runWeakWords } from "../components/RunReview";
 import { buildRunDeck } from "../game/runDeck";
 import { canRecord, nextCapture, runReducer, SENTENCE_COLLECT_MAX } from "../game/runModel";
-import { weakWordsFromResult } from "../scoreUtils";
+import { normalizedWord, weakWordsFromResult } from "../scoreUtils";
 import type {
   AttemptKey,
   PhonemeStat,
@@ -46,14 +46,25 @@ function classifyScoreError(err: unknown): ScoreFailure {
   return { kind: "unknown", message };
 }
 
-// parseResponse trusts the payload, so a malformed 2xx would otherwise look scored.
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+// parseResponse trusts the payload, so a malformed 2xx would otherwise look
+// scored. Checks only the fields the run and review read; a well-formed
+// NoMatch, null accuracy, or Omission still goes on to be judged.
 function isScoreResponse(value: unknown): value is ScoreResponse {
-  if (!value || typeof value !== "object") return false;
-  const { result, session } = value as Partial<ScoreResponse>;
-  if (!result || typeof result !== "object") return false;
-  if (!result.scores || typeof result.scores !== "object" || !Array.isArray(result.words)) return false;
+  if (!isObject(value) || !isObject(value.result) || !isObject(value.result.scores)) return false;
+  const { result, session } = value as Partial<ScoreResponse> & { result: ScoreResponse["result"] };
+  const accuracy: unknown = result.scores.accuracy;
+  if (accuracy !== null && !(typeof accuracy === "number" && Number.isFinite(accuracy))) return false;
+  const words: unknown = result.words;
+  if (!Array.isArray(words)) return false;
+  if (!words.every((word) => isObject(word) && typeof word.word === "string" && Array.isArray(word.phonemes))) {
+    return false;
+  }
   if (result.recognition_status === "no_match") return session === null || session === undefined;
-  return Boolean(session && typeof session === "object" && typeof session.id === "string" && session.id);
+  return isObject(session) && typeof session.id === "string" && session.id !== "";
 }
 
 function referenceCacheKey(prompt: RunPrompt): string {
@@ -69,7 +80,9 @@ export function usePracticeRun(session: RunSession) {
   // Held from startRunCapture until that capture's blob arrives, even after cancellation.
   const captureRef = useRef<AttemptKey | null>(null);
   const urlsRef = useRef<Map<string, string>>(new Map());
-  const startingRef = useRef(false);
+  // Bumped by every start and exit; a start whose token moved on while it
+  // fetched deck data is abandoned.
+  const startTokenRef = useRef(0);
 
   function dispatch(action: RunAction): RunState | null {
     const previous = stateRef.current;
@@ -103,20 +116,17 @@ export function usePracticeRun(session: RunSession) {
   }
 
   async function start(mode: RunMode, previousWeakWords: readonly string[] = []) {
-    if (startingRef.current) return;
-    startingRef.current = true;
-    try {
-      const [phonemeStats, vocabulary] = await Promise.all([
-        fetchPhonemeStats().catch((): PhonemeStat[] => []),
-        listWords().catch((): VocabularyItem[] => [])
-      ]);
-      const prompts = buildRunDeck({ phonemeStats, vocabulary, previousWeakWords });
-      if (stateRef.current) exit();
-      session.enterRun();
-      dispatch({ type: "START", runId: newId("run"), mode, prompts });
-    } finally {
-      startingRef.current = false;
-    }
+    startTokenRef.current += 1;
+    const token = startTokenRef.current;
+    const [phonemeStats, vocabulary] = await Promise.all([
+      fetchPhonemeStats().catch((): PhonemeStat[] => []),
+      listWords().catch((): VocabularyItem[] => [])
+    ]);
+    if (startTokenRef.current !== token) return;
+    const prompts = buildRunDeck({ phonemeStats, vocabulary, previousWeakWords });
+    if (stateRef.current) teardown();
+    session.enterRun();
+    dispatch({ type: "START", runId: newId("run"), mode, prompts });
   }
 
   async function record() {
@@ -173,11 +183,16 @@ export function usePracticeRun(session: RunSession) {
 
     const words = weakWordsFromResult(response.result, SENTENCE_COLLECT_MAX).map((word) => word.word);
     try {
-      await addWordsFromSession(response.session.id, SENTENCE_COLLECT_MAX);
+      const rows = await addWordsFromSession(response.session.id, SENTENCE_COLLECT_MAX);
+      // A full word bank can skip candidates while the call still succeeds.
+      const returned = new Set((Array.isArray(rows) ? rows : []).map((row) => normalizedWord(String(row?.word ?? ""))));
       dispatch({
         type: "SYNC_SETTLED",
         key,
-        candidates: words.map((word) => ({ word, status: "processed" })),
+        candidates: words.map((word) => ({
+          word,
+          status: returned.has(normalizedWord(word)) ? "processed" : "unconfirmed"
+        })),
         failed: false
       });
     } catch {
@@ -247,12 +262,17 @@ export function usePracticeRun(session: RunSession) {
     cancelCapture();
   }
 
-  function exit() {
+  function teardown() {
     const current = stateRef.current;
     if (current) dispatch({ type: "EXIT", runId: current.runId });
     cancelCapture();
     releaseAllUrls();
     session.exitRun();
+  }
+
+  function exit() {
+    startTokenRef.current += 1;
+    teardown();
   }
 
   async function playAgain() {

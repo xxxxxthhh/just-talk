@@ -219,9 +219,10 @@ describe("usePracticeRun", () => {
     expect(h.session.startRunCapture).toHaveBeenCalledTimes(captures);
     expect(h.run().state?.index).toBe(4);
 
+    // A successful call that returns no rows has not confirmed any candidate.
     collection.resolve([]);
     await flush();
-    expect(current(h).attempts[0].candidates).toEqual([{ word: "path", status: "processed" }]);
+    expect(current(h).attempts[0].candidates).toEqual([{ word: "path", status: "unconfirmed" }]);
     act(() => h.run().finish());
 
     vi.mocked(addWordsFromSession).mockRejectedValueOnce(new Error("Word bank is full"));
@@ -357,5 +358,104 @@ describe("usePracticeRun", () => {
     expect(h.session.enterRun).toHaveBeenCalledTimes(2);
     expect(h.run().state?.items[0].prompt.text).toBe("narrow");
     expect(h.run().state?.items[0].prompt.source).toBe("previous-run");
+  });
+
+  it("collection_marks_only_returned_rows_processed", async () => {
+    const h = await setup("route");
+    for (let i = 0; i < 4; i += 1) {
+      await attempt(h, scored(90));
+      act(() => h.run().finish());
+    }
+    // The bank filled after PATH: river was skipped, town is only a hint.
+    vi.mocked(addWordsFromSession).mockResolvedValueOnce([{ id: "1", word: "PATH" }] as never);
+    await attempt(h, scored(60, [word("path", 50), word("river", 55), word("town", 75)]));
+    expect(current(h).attempts[0].sync).toBe("done");
+    expect(current(h).attempts[0].candidates).toEqual([
+      { word: "path", status: "processed" },
+      { word: "river", status: "unconfirmed" }
+    ]);
+  });
+
+  it("start_abandoned_by_exit_does_not_take_over_practice", async () => {
+    const fake = fakeSession();
+    const hook = renderHook(() => usePracticeRun(fake.session));
+    const stats = deferred<never[]>();
+    vi.mocked(fetchPhonemeStats).mockReturnValueOnce(stats.promise);
+    let starting!: Promise<void>;
+    act(() => {
+      starting = hook.result.current.start("route");
+    });
+    act(() => hook.result.current.exit());
+    await act(async () => {
+      stats.resolve([]);
+      await starting;
+    });
+    expect(hook.result.current.state).toBeNull();
+    expect(fake.session.enterRun).not.toHaveBeenCalled();
+  });
+
+  it("play_again_abandoned_by_exit_does_not_take_over_practice", async () => {
+    const h = await setup("route");
+    for (let i = 0; i < 6; i += 1) {
+      await attempt(h, scored(90));
+      act(() => h.run().finish());
+    }
+    expect(h.run().state?.phase).toBe("review");
+    const stats = deferred<never[]>();
+    vi.mocked(fetchPhonemeStats).mockReturnValueOnce(stats.promise);
+    let again!: Promise<void>;
+    act(() => {
+      again = h.run().playAgain();
+    });
+    act(() => h.run().exit());
+    expect(h.run().state).toBeNull();
+    await act(async () => {
+      stats.resolve([]);
+      await again;
+    });
+    expect(h.run().state).toBeNull();
+    expect(h.session.enterRun).toHaveBeenCalledTimes(1);
+    expect(h.session.exitRun).toHaveBeenCalledTimes(1);
+
+    // A later start still works.
+    await act(async () => {
+      await h.run().start("challenge");
+    });
+    expect(h.run().state?.mode).toBe("challenge");
+  });
+
+  it("malformed_nested_score_is_unknown_but_legitimate_unjudged_is_not", async () => {
+    const valid = scored(90);
+    const malformed: [string, unknown][] = [
+      ["empty scores", { ...valid, result: { ...valid.result, scores: {} } }],
+      ["string accuracy", { ...valid, result: { ...valid.result, scores: { ...valid.result.scores, accuracy: "90" } } }],
+      ["word without phonemes", { ...valid, result: { ...valid.result, words: [{ word: "thin", accuracy: 90 }] } }],
+      ["null word", { ...valid, result: { ...valid.result, words: [null] } }],
+      ["array result", { ...valid, result: [] }],
+      ["session without id", { ...valid, session: { created_at: "" } }]
+    ];
+    for (const [label, response] of malformed) {
+      const h = await setup("route");
+      await attempt(h, response);
+      expect(current(h).resolution, label).toBe("pending");
+      expect(h.run().state?.budgetUsed, label).toBe(1);
+      h.hook.unmount();
+    }
+
+    const noMatch = { result: { ...valid.result, recognition_status: "no_match", words: [] }, session: null };
+    const nullAccuracy = scored(90);
+    (nullAccuracy.result.scores as { accuracy: number | null }).accuracy = null;
+    const omission = scored(90, [word("thin", 90), { ...word("path", 0), error_type: "Omission" }]);
+    for (const [label, response] of [
+      ["NoMatch", noMatch],
+      ["null accuracy", nullAccuracy],
+      ["Omission", omission]
+    ] as const) {
+      const h = await setup("route");
+      await attempt(h, response);
+      expect(current(h).resolution, label).toBe("unjudged");
+      h.hook.unmount();
+    }
+    expect(addWordsFromSession).not.toHaveBeenCalled();
   });
 });
