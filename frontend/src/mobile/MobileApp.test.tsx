@@ -435,6 +435,12 @@ describe("MobileApp game run", () => {
     expect(screen.getByRole("heading", { name: "Word Bank" })).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Practice" }));
     expect(screen.getByRole("region", { name: "Route run" })).toBeInTheDocument();
+    // Cancelling also left the session alone: leaving the run shows no "water" drill.
+    await user.click(screen.getByRole("button", { name: "Resume" }));
+    await user.click(screen.getByRole("button", { name: "Quit" }));
+    await user.click(await screen.findByRole("button", { name: "Done" }));
+    expect(screen.getByRole("textbox", { name: "Passage" })).not.toHaveValue("water");
+    await startRun(user);
 
     confirm.mockReturnValue(true);
     await user.click(screen.getByRole("tab", { name: /Words/ }));
