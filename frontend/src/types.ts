@@ -231,3 +231,86 @@ export type MaterialPackImportResponse = {
   pack: MaterialPack;
   materials: MaterialItem[];
 };
+
+export type RunMode = "route" | "challenge";
+export type RunPhase = "ready" | "recording" | "scoring" | "feedback" | "rescue" | "summary" | "review";
+export type AttemptKey = { runId: string; itemId: string; attemptId: string };
+export type AttemptPurpose = "initial" | "rerecord" | "rescue";
+export type ScoreFailure = { kind: "rejected" | "quota" | "unknown"; message: string };
+export type Verdict =
+  | "practiced"
+  | "passed"
+  | "relisten"
+  | "saved"
+  | "heart-lost"
+  | "no-match"
+  | "unjudged"
+  | "cannot-confirm"
+  | "rejected"
+  | "skipped"
+  | "pending"
+  | "quota-ended";
+export type WordCandidate = { word: string; status: "processed" | "unconfirmed" | "save-manually" };
+
+export type Attempt = {
+  key: AttemptKey;
+  purpose: AttemptPurpose;
+  slot: "main" | "extra";
+  status: "capturing" | "submitted" | "scored" | "pending";
+  recording: Blob | null;
+  sessionId: string | null;
+  result: ScoreResult | null;
+  sync: "not-needed" | "pending" | "done" | "manual";
+  candidates: readonly WordCandidate[];
+};
+
+export type RunPrompt = {
+  itemId: string;
+  stage: "warmup" | "focus" | "context";
+  kind: "word" | "sentence";
+  text: string;
+  targetPhoneme: string | null;
+  targetWord: string | null;
+  source: "due-word" | "starter" | "previous-run";
+};
+
+export type RunItem = {
+  prompt: Readonly<RunPrompt>;
+  attempts: readonly Attempt[];
+  resolution: "open" | "resolved" | "skipped" | "unjudged" | "pending";
+  verdict: Verdict | null;
+  firstLowAttemptId: string | null;
+  referenceLoad: "idle" | "pending" | "ready" | "failed";
+  lastRejection: { attemptId: string; message: string } | null;
+};
+
+export type RunState = {
+  runId: string;
+  mode: RunMode;
+  phase: RunPhase;
+  paused: boolean;
+  items: readonly RunItem[];
+  index: number;
+  activeAttemptId: string | null;
+  hearts: 0 | 1 | 2 | null;
+  budgetUsed: number; // Reserved on send; refunded for rejected, not total HTTP requests.
+  mainItemIdsUsed: readonly string[];
+  extraUsed: 0 | 1 | 2;
+  challengeIncomplete: boolean;
+  endReason: "completed" | "hearts-exhausted" | "quit" | "quota" | null;
+  challengeOutcome: "cleared" | "failed" | "incomplete" | null;
+};
+
+export type RunAction =
+  | { type: "START"; runId: string; mode: RunMode; prompts: readonly RunPrompt[] }
+  | { type: "BEGIN_CAPTURE"; key: AttemptKey; purpose: AttemptPurpose; slot: "main" | "extra" }
+  | { type: "BLOB_READY"; key: AttemptKey; blob: Blob }
+  | { type: "CANCEL_CAPTURE"; key: AttemptKey }
+  | { type: "SCORE_SENT"; key: AttemptKey }
+  | { type: "SCORE_RECEIVED"; key: AttemptKey; response: ScoreResponse }
+  | { type: "SCORE_FAILED"; key: AttemptKey; failure: ScoreFailure }
+  | { type: "SYNC_SETTLED"; key: AttemptKey; candidates: readonly WordCandidate[]; failed: boolean }
+  | { type: "REFERENCE_CLICKED"; runId: string; itemId: string }
+  | { type: "REFERENCE_LOADED"; runId: string; itemId: string; ok: boolean }
+  | { type: "SKIP" | "ADVANCE" | "CANNOT_CONFIRM"; runId: string; itemId: string }
+  | { type: "PAUSE" | "RESUME" | "QUIT" | "OPEN_REVIEW" | "EXIT"; runId: string };
