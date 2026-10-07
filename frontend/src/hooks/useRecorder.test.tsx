@@ -167,7 +167,7 @@ describe("useRecorder", () => {
     expect(blob.type).toBe("audio/mp4");
   });
 
-  it("cancelled_capture_keeps_old_identity_until_late_onstop", async () => {
+  it("late_onstop_reaches_its_own_capture_callback", async () => {
     installMediaDevices();
     stubUrl();
     const { MediaRecorderMock, instances } = makeDeferredStopRecorderMock();
