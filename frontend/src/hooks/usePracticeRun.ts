@@ -1,0 +1,284 @@
+import { useRef, useState } from "react";
+
+import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecording } from "../api";
+import { runWeakWords } from "../components/RunReview";
+import { buildRunDeck } from "../game/runDeck";
+import { canRecord, nextCapture, runReducer } from "../game/runModel";
+import { weakWordsFromResult } from "../scoreUtils";
+import type {
+  AttemptKey,
+  PhonemeStat,
+  RunAction,
+  RunMode,
+  RunPrompt,
+  RunState,
+  ScoreFailure,
+  ScoreResponse,
+  VocabularyItem
+} from "../types";
+import type { usePracticeSession } from "../usePracticeSession";
+
+// Sentence words at or under this accuracy are collected; 71–85 stay review hints.
+const SENTENCE_COLLECT_MAX = 70;
+
+export type RunSession = Pick<
+  ReturnType<typeof usePracticeSession>,
+  | "enterRun"
+  | "exitRun"
+  | "startRunCapture"
+  | "cancelRunCapture"
+  | "stopRecording"
+  | "playCorrect"
+  | "refreshVocabulary"
+  | "setError"
+>;
+
+let idCounter = 0;
+function newId(prefix: string): string {
+  idCounter += 1;
+  return `${prefix}-${Date.now().toString(36)}-${idCounter}`;
+}
+
+// Status alone decides: 400/413/503 are refused before the billable Azure call.
+function classifyScoreError(err: unknown): ScoreFailure {
+  const message = err instanceof Error ? err.message : "Scoring failed.";
+  if (err instanceof ApiError) {
+    if (err.status === 400 || err.status === 413 || err.status === 503) return { kind: "rejected", message };
+    if (err.status === 429) return { kind: "quota", message };
+  }
+  return { kind: "unknown", message };
+}
+
+// parseResponse trusts the payload, so a malformed 2xx would otherwise look scored.
+function isScoreResponse(value: unknown): value is ScoreResponse {
+  if (!value || typeof value !== "object") return false;
+  const { result, session } = value as Partial<ScoreResponse>;
+  if (!result || typeof result !== "object") return false;
+  if (!result.scores || typeof result.scores !== "object" || !Array.isArray(result.words)) return false;
+  if (result.recognition_status === "no_match") return session === null || session === undefined;
+  return Boolean(session && typeof session === "object" && typeof session.id === "string" && session.id);
+}
+
+function referenceCacheKey(prompt: RunPrompt): string {
+  const text = prompt.text.trim().toLowerCase();
+  return prompt.kind === "word" ? `word:${text}` : `game:${text}`;
+}
+
+export function usePracticeRun(session: RunSession) {
+  const [state, setState] = useState<RunState | null>(null);
+  const [attemptAudioUrls, setAttemptAudioUrls] = useState<Readonly<Record<string, string>>>({});
+  // Mirrors state synchronously so double taps and racing callbacks see the latest run.
+  const stateRef = useRef<RunState | null>(null);
+  // Held from startRunCapture until that capture's blob arrives, even after cancellation.
+  const captureRef = useRef<AttemptKey | null>(null);
+  const urlsRef = useRef<Map<string, string>>(new Map());
+  const startingRef = useRef(false);
+
+  function dispatch(action: RunAction): RunState | null {
+    const previous = stateRef.current;
+    const next = runReducer(previous, action);
+    if (next === previous) return next;
+    stateRef.current = next;
+    setState(next);
+    if (next?.phase === "review" && previous?.phase !== "review") {
+      // History, insights, and activity refresh when their own screens open.
+      session.refreshVocabulary().catch(() => undefined);
+    }
+    return next;
+  }
+
+  function releaseUrl(attemptId: string) {
+    const url = urlsRef.current.get(attemptId);
+    if (!url) return;
+    URL.revokeObjectURL(url);
+    urlsRef.current.delete(attemptId);
+    setAttemptAudioUrls(Object.fromEntries(urlsRef.current));
+  }
+
+  function releaseAllUrls() {
+    for (const url of urlsRef.current.values()) URL.revokeObjectURL(url);
+    urlsRef.current.clear();
+    setAttemptAudioUrls({});
+  }
+
+  function cancelCapture() {
+    if (captureRef.current) session.cancelRunCapture();
+  }
+
+  async function start(mode: RunMode, previousWeakWords: readonly string[] = []) {
+    if (startingRef.current) return;
+    startingRef.current = true;
+    try {
+      const [phonemeStats, vocabulary] = await Promise.all([
+        fetchPhonemeStats().catch((): PhonemeStat[] => []),
+        listWords().catch((): VocabularyItem[] => [])
+      ]);
+      const prompts = buildRunDeck({ phonemeStats, vocabulary, previousWeakWords });
+      if (stateRef.current) exit();
+      session.enterRun();
+      dispatch({ type: "START", runId: newId("run"), mode, prompts });
+    } finally {
+      startingRef.current = false;
+    }
+  }
+
+  async function record() {
+    const current = stateRef.current;
+    if (!current || captureRef.current || !canRecord(current)) return;
+    const capture = nextCapture(current);
+    if (!capture) return;
+    const key = { runId: current.runId, itemId: current.items[current.index].prompt.itemId, attemptId: newId("attempt") };
+    if (dispatch({ type: "BEGIN_CAPTURE", key, ...capture }) === current) return;
+    captureRef.current = key;
+    let started = false;
+    try {
+      started = await session.startRunCapture((blob) => handleBlob(key, blob));
+    } catch (err) {
+      session.setError(err instanceof Error ? err.message : "Could not start the microphone.");
+    }
+    if (!started) {
+      if (captureRef.current === key) captureRef.current = null;
+      dispatch({ type: "CANCEL_CAPTURE", key });
+    }
+  }
+
+  function handleBlob(key: AttemptKey, blob: Blob) {
+    if (captureRef.current?.attemptId === key.attemptId) captureRef.current = null;
+    // Cancelled, stale, or repeated blobs leave the run unchanged and are discarded.
+    const before = stateRef.current;
+    const ready = dispatch({ type: "BLOB_READY", key, blob });
+    if (ready === before || dispatch({ type: "SCORE_SENT", key }) === ready) return;
+    const prompt = ready?.items.find((item) => item.prompt.itemId === key.itemId)?.prompt;
+    if (!prompt) return;
+    urlsRef.current.set(key.attemptId, URL.createObjectURL(blob));
+    setAttemptAudioUrls(Object.fromEntries(urlsRef.current));
+    void submit(key, blob, prompt);
+  }
+
+  async function submit(key: AttemptKey, blob: Blob, prompt: RunPrompt) {
+    let response: unknown;
+    try {
+      response = await scoreRecording(prompt.text, blob, "short");
+    } catch (err) {
+      const failure = classifyScoreError(err);
+      dispatch({ type: "SCORE_FAILED", key, failure });
+      if (failure.kind !== "unknown") releaseUrl(key.attemptId);
+      return;
+    }
+    if (!isScoreResponse(response)) {
+      dispatch({ type: "SCORE_FAILED", key, failure: { kind: "unknown", message: "Scoring returned an unexpected response." } });
+      return;
+    }
+    const before = stateRef.current;
+    if (dispatch({ type: "SCORE_RECEIVED", key, response }) === before) return;
+    // Word attempts update SRS inside /api/score; only sentences collect words.
+    if (prompt.kind !== "sentence" || !response.session) return;
+
+    const words = weakWordsFromResult(response.result, SENTENCE_COLLECT_MAX).map((word) => word.word);
+    try {
+      await addWordsFromSession(response.session.id, SENTENCE_COLLECT_MAX);
+      dispatch({
+        type: "SYNC_SETTLED",
+        key,
+        candidates: words.map((word) => ({ word, status: "processed" })),
+        failed: false
+      });
+    } catch {
+      dispatch({
+        type: "SYNC_SETTLED",
+        key,
+        candidates: words.map((word) => ({ word, status: "save-manually" })),
+        failed: true
+      });
+    }
+  }
+
+  function stop() {
+    if (captureRef.current) session.stopRecording();
+  }
+
+  function itemAction(type: "SKIP" | "ADVANCE" | "CANNOT_CONFIRM") {
+    const current = stateRef.current;
+    if (!current) return null;
+    return dispatch({ type, runId: current.runId, itemId: current.items[current.index].prompt.itemId });
+  }
+
+  function recordNext() {
+    const before = stateRef.current;
+    if (itemAction("ADVANCE") === before) return;
+    void record();
+  }
+
+  function playReference(prompt?: RunPrompt) {
+    const current = stateRef.current;
+    if (!current) return;
+    const item = current.items[current.index];
+    const target = prompt ?? item.prompt;
+    const options = { cacheKey: referenceCacheKey(target) };
+    if (current.endReason !== null || target.itemId !== item.prompt.itemId) {
+      void session.playCorrect(target.text, options);
+      return;
+    }
+    if (item.referenceLoad === "pending") return;
+    if (item.referenceLoad === "ready") {
+      void session.playCorrect(target.text, options);
+      return;
+    }
+    const { runId } = current;
+    const { itemId } = target;
+    dispatch({ type: "REFERENCE_CLICKED", runId, itemId });
+    void session.playCorrect(target.text, {
+      ...options,
+      onLoadResult: (ok) => dispatch({ type: "REFERENCE_LOADED", runId, itemId, ok })
+    });
+  }
+
+  function runAction(type: "PAUSE" | "RESUME" | "QUIT" | "OPEN_REVIEW") {
+    const current = stateRef.current;
+    if (current) dispatch({ type, runId: current.runId });
+  }
+
+  // Each ends the attempt first, so a blob that arrives while the capture
+  // stops is discarded.
+  function pause() {
+    runAction("PAUSE");
+    cancelCapture();
+  }
+
+  function quit() {
+    runAction("QUIT");
+    cancelCapture();
+  }
+
+  function exit() {
+    const current = stateRef.current;
+    if (current) dispatch({ type: "EXIT", runId: current.runId });
+    cancelCapture();
+    releaseAllUrls();
+    session.exitRun();
+  }
+
+  async function playAgain() {
+    const current = stateRef.current;
+    if (current) await start(current.mode, runWeakWords(current));
+  }
+
+  return {
+    state,
+    attemptAudioUrls,
+    start,
+    record,
+    stop,
+    recordNext,
+    finish: () => void itemAction("ADVANCE"),
+    skip: () => void itemAction("SKIP"),
+    cannotConfirm: () => void itemAction("CANNOT_CONFIRM"),
+    playReference,
+    pause,
+    resume: () => runAction("RESUME"),
+    quit,
+    openReview: () => runAction("OPEN_REVIEW"),
+    exit,
+    playAgain
+  };
+}
