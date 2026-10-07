@@ -8,6 +8,7 @@ been independently verified instead of claiming more than is known.
 | --- | --- | --- | --- |
 | Three starter passages ("Quiet Streets", "Clear Morning", "Small Project") | `backend/app/storage.py` (`BUILTIN_MATERIAL_PACK`) | Bundled in this repository, labeled "Just Talk original" in the data | Authorship not independently verified |
 | Phoneme guide descriptions and coaching tips | `frontend/src/components/PhonemeGuideData.ts` | Added in this repository | Authorship and third-party overlap not verified |
+| Game mode starter pack (30 words and sentences, 5 target sounds) | `frontend/src/game/starterPack.json`; same texts in `backend/app/main.py` (`GAME_STARTER_TEXTS`) | Project-original, drafted with AI assistance | Awaiting owner review of wording and target sounds |
 | Example import pack | `docs/materials/custom-pack.example.json` | Project example | Same as the starter passages |
 | Favicon | `frontend/public/favicon.svg` | Project asset | Origin not recorded |
 | iOS app icon and splash images | `frontend/ios/App/App/Assets.xcassets/` | Capacitor-generated or project assets | Origin not recorded |

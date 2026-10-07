@@ -97,9 +97,33 @@ class Actor:
 
 
 RESERVED_PACK_IDS = frozenset({BUILTIN_MATERIAL_PACK["pack"]["id"], DRILL_PACK_ID})
+# Game mode starter pack; must match frontend/src/game/starterPack.json exactly
+# (checked by tests/test_game_starter_cache.py).
+GAME_STARTER_TEXTS = frozenset(
+    {
+        "thin", "thick", "think", "thank",
+        "I think we can walk home now.",
+        "The narrow path leads to our house.",
+        "this", "that", "these", "those",
+        "These little birds wait by the window.",
+        "My brother walks home after the rain.",
+        "rain", "red", "room", "road",
+        "This room feels warm in the morning.",
+        "A river runs beside the quiet town.",
+        "light", "leaf", "late", "long",
+        "We stayed late to finish our work.",
+        "The lake looks calm in the morning.",
+        "vine", "van", "voice", "visit",
+        "Her voice sounds clear across the room.",
+        "We save fresh bread for the morning.",
+    }
+)
 # Only these published built-in texts may share synthesized audio across
 # visitors; anything a visitor typed is cached in their own database.
-BUILTIN_TEXTS = frozenset(lesson["text"] for lesson in BUILTIN_MATERIAL_PACK["lessons"])
+BUILTIN_TEXTS = (
+    frozenset(lesson["text"] for lesson in BUILTIN_MATERIAL_PACK["lessons"])
+    | GAME_STARTER_TEXTS
+)
 MAINTENANCE_INTERVAL_SECONDS = 600
 MAX_MATERIAL_META_CHARS = 200
 

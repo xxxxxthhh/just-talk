@@ -1,0 +1,242 @@
+[
+  {
+    "id": "theta-warmup-1",
+    "group": "theta",
+    "stage": "warmup",
+    "text": "thin",
+    "phoneme": "θ",
+    "targetWord": "thin"
+  },
+  {
+    "id": "theta-warmup-2",
+    "group": "theta",
+    "stage": "warmup",
+    "text": "thick",
+    "phoneme": "θ",
+    "targetWord": "thick"
+  },
+  {
+    "id": "theta-focus-1",
+    "group": "theta",
+    "stage": "focus",
+    "text": "think",
+    "phoneme": "θ",
+    "targetWord": "think"
+  },
+  {
+    "id": "theta-focus-2",
+    "group": "theta",
+    "stage": "focus",
+    "text": "thank",
+    "phoneme": "θ",
+    "targetWord": "thank"
+  },
+  {
+    "id": "theta-context-1",
+    "group": "theta",
+    "stage": "context",
+    "text": "I think we can walk home now.",
+    "phoneme": "θ",
+    "targetWord": "think"
+  },
+  {
+    "id": "theta-context-2",
+    "group": "theta",
+    "stage": "context",
+    "text": "The narrow path leads to our house.",
+    "phoneme": "θ",
+    "targetWord": "path"
+  },
+  {
+    "id": "eth-warmup-1",
+    "group": "eth",
+    "stage": "warmup",
+    "text": "this",
+    "phoneme": "ð",
+    "targetWord": "this"
+  },
+  {
+    "id": "eth-warmup-2",
+    "group": "eth",
+    "stage": "warmup",
+    "text": "that",
+    "phoneme": "ð",
+    "targetWord": "that"
+  },
+  {
+    "id": "eth-focus-1",
+    "group": "eth",
+    "stage": "focus",
+    "text": "these",
+    "phoneme": "ð",
+    "targetWord": "these"
+  },
+  {
+    "id": "eth-focus-2",
+    "group": "eth",
+    "stage": "focus",
+    "text": "those",
+    "phoneme": "ð",
+    "targetWord": "those"
+  },
+  {
+    "id": "eth-context-1",
+    "group": "eth",
+    "stage": "context",
+    "text": "These little birds wait by the window.",
+    "phoneme": "ð",
+    "targetWord": "these"
+  },
+  {
+    "id": "eth-context-2",
+    "group": "eth",
+    "stage": "context",
+    "text": "My brother walks home after the rain.",
+    "phoneme": "ð",
+    "targetWord": "brother"
+  },
+  {
+    "id": "r-warmup-1",
+    "group": "r",
+    "stage": "warmup",
+    "text": "rain",
+    "phoneme": "ɹ",
+    "targetWord": "rain"
+  },
+  {
+    "id": "r-warmup-2",
+    "group": "r",
+    "stage": "warmup",
+    "text": "red",
+    "phoneme": "ɹ",
+    "targetWord": "red"
+  },
+  {
+    "id": "r-focus-1",
+    "group": "r",
+    "stage": "focus",
+    "text": "room",
+    "phoneme": "ɹ",
+    "targetWord": "room"
+  },
+  {
+    "id": "r-focus-2",
+    "group": "r",
+    "stage": "focus",
+    "text": "road",
+    "phoneme": "ɹ",
+    "targetWord": "road"
+  },
+  {
+    "id": "r-context-1",
+    "group": "r",
+    "stage": "context",
+    "text": "This room feels warm in the morning.",
+    "phoneme": "ɹ",
+    "targetWord": "room"
+  },
+  {
+    "id": "r-context-2",
+    "group": "r",
+    "stage": "context",
+    "text": "A river runs beside the quiet town.",
+    "phoneme": "ɹ",
+    "targetWord": "river"
+  },
+  {
+    "id": "l-warmup-1",
+    "group": "l",
+    "stage": "warmup",
+    "text": "light",
+    "phoneme": "l",
+    "targetWord": "light"
+  },
+  {
+    "id": "l-warmup-2",
+    "group": "l",
+    "stage": "warmup",
+    "text": "leaf",
+    "phoneme": "l",
+    "targetWord": "leaf"
+  },
+  {
+    "id": "l-focus-1",
+    "group": "l",
+    "stage": "focus",
+    "text": "late",
+    "phoneme": "l",
+    "targetWord": "late"
+  },
+  {
+    "id": "l-focus-2",
+    "group": "l",
+    "stage": "focus",
+    "text": "long",
+    "phoneme": "l",
+    "targetWord": "long"
+  },
+  {
+    "id": "l-context-1",
+    "group": "l",
+    "stage": "context",
+    "text": "We stayed late to finish our work.",
+    "phoneme": "l",
+    "targetWord": "late"
+  },
+  {
+    "id": "l-context-2",
+    "group": "l",
+    "stage": "context",
+    "text": "The lake looks calm in the morning.",
+    "phoneme": "l",
+    "targetWord": "lake"
+  },
+  {
+    "id": "v-warmup-1",
+    "group": "v",
+    "stage": "warmup",
+    "text": "vine",
+    "phoneme": "v",
+    "targetWord": "vine"
+  },
+  {
+    "id": "v-warmup-2",
+    "group": "v",
+    "stage": "warmup",
+    "text": "van",
+    "phoneme": "v",
+    "targetWord": "van"
+  },
+  {
+    "id": "v-focus-1",
+    "group": "v",
+    "stage": "focus",
+    "text": "voice",
+    "phoneme": "v",
+    "targetWord": "voice"
+  },
+  {
+    "id": "v-focus-2",
+    "group": "v",
+    "stage": "focus",
+    "text": "visit",
+    "phoneme": "v",
+    "targetWord": "visit"
+  },
+  {
+    "id": "v-context-1",
+    "group": "v",
+    "stage": "context",
+    "text": "Her voice sounds clear across the room.",
+    "phoneme": "v",
+    "targetWord": "voice"
+  },
+  {
+    "id": "v-context-2",
+    "group": "v",
+    "stage": "context",
+    "text": "We save fresh bread for the morning.",
+    "phoneme": "v",
+    "targetWord": "save"
+  }
+]
