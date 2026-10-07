@@ -239,7 +239,7 @@ export function RunReview({
           Done
         </button>
       </div>
-      {weakWords.length ? <p className="run-note">Play again warms up with: {weakWords.slice(0, 2).join(", ")}</p> : null}
+      {weakWords.length ? <p className="run-note">Lowest words this run: {weakWords.slice(0, 2).join(", ")}</p> : null}
     </section>
   );
 }
