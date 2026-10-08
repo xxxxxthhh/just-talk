@@ -15,16 +15,10 @@ import type {
 } from "../types";
 import { RunMiniPlayer, useYouPlayer, type CoachPlayback, type YouPlayer, type YouTake } from "./RunMiniPlayer";
 import { formatRunScore, TIER_LABELS } from "./RunRing";
-import { nextSoundFailed, REPLAY_FAILED, type RestartKind } from "./useReplay";
+import { stageLabel } from "./PracticeRun";
+import { nextSoundFailed, REPLAY_FAILED, revisitWordsFailed, type RestartKind } from "./useReplay";
 
 const MAX_EVIDENCE = 3;
-
-const STAGE_LABELS: Record<RunPrompt["stage"], string> = {
-  warmup: "Warm-up",
-  focus: "Focus",
-  context: "In context",
-  words: "My words"
-};
 
 function itemStatus(item: RunItem): string | null {
   const practiced = latestValid(item) !== null;
@@ -192,7 +186,7 @@ function ReadingRow({
       <div className="run-reading-head">
         <span className="run-reading-stone" data-tier={itemScore?.tier ?? undefined} aria-hidden="true" />
         <span className="run-reading-text">
-          <span className="run-reading-stage">{STAGE_LABELS[item.prompt.stage]}</span>
+          <span className="run-reading-stage">{stageLabel(item.prompt)}</span>
           <span className="run-prompt-text">{item.prompt.text}</span>
         </span>
         {itemScore?.tier && itemScore.firstAccuracy !== null ? (
@@ -262,6 +256,8 @@ type RunReviewProps = {
   nextSoundPhoneme: string | null;
   // Repeats the failed restart with the same destination.
   onRetryRestart: () => void;
+  // The controller's reason for the failed restart, if it gave one.
+  restartMessage: string | null;
   // Counted scores a new run of this configuration may use.
   maxScores: number;
   onGenerateDrill?: (phoneme: string) => void;
@@ -284,6 +280,7 @@ export function RunReview({
   restartFailed,
   nextSoundPhoneme,
   onRetryRestart,
+  restartMessage,
   maxScores,
   onGenerateDrill,
   onExit
@@ -394,7 +391,7 @@ export function RunReview({
               <ol className="run-reading-list">
                 {unreached.map((item) => (
                   <li key={item.prompt.itemId} className="run-reading is-unreached" id={`run-reading-${item.prompt.itemId}`}>
-                    <span className="run-reading-stage">{STAGE_LABELS[item.prompt.stage]}</span>
+                    <span className="run-reading-stage">{stageLabel(item.prompt)}</span>
                     <span className="run-prompt-text">{item.prompt.text}</span>
                   </li>
                 ))}
@@ -408,6 +405,13 @@ export function RunReview({
         {restartFailed === "next-sound" && nextSoundPhoneme ? (
           <p className="run-replay-error" role="alert">
             {nextSoundFailed(nextSoundPhoneme)}{" "}
+            <button type="button" className="run-link-button" onClick={leave(onRetryRestart)}>
+              Try again
+            </button>
+          </p>
+        ) : restartFailed === "revisit-words" ? (
+          <p className="run-replay-error" role="alert">
+            {revisitWordsFailed(restartMessage)}{" "}
             <button type="button" className="run-link-button" onClick={leave(onRetryRestart)}>
               Try again
             </button>
@@ -427,7 +431,7 @@ export function RunReview({
             Done
           </button>
           <button type="button" className="run-primary-v2" disabled={starting} onClick={leave(onPlayAgain)}>
-            {starting && pendingRestart !== "next-sound" ? "Starting…" : "Play again"}
+            {starting && pendingRestart === "play-again" ? "Starting…" : "Play again"}
           </button>
         </div>
         <p className="run-summary-note">Play again uses up to {maxScores} new scores</p>

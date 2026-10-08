@@ -54,7 +54,7 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
   const runChoice = useRunChoice();
   // Owned here, above Summary and Review, so a replay failure survives switching between them.
   const replay = useReplay(
-    { "play-again": run.playAgain, "next-sound": run.nextSound },
+    { "play-again": run.playAgain, "next-sound": run.nextSound, "revisit-words": run.runWithRevisitWords },
     run.state?.runId ?? null
   );
   const leaveRun = () => {
@@ -221,6 +221,7 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             restartFailed={replay.failedAction}
             nextSoundPhoneme={run.nextSoundPhoneme}
             onRetryRestart={replay.retry}
+            restartMessage={replay.failureMessage}
             // Null only without a run, which this branch excludes.
             maxScores={run.maxScores ?? 0}
             onGenerateDrill={(phoneme) => {
@@ -263,6 +264,9 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             pendingRestart={replay.pendingAction}
             restartFailed={replay.failedAction}
             onRetryRestart={replay.retry}
+            restartMessage={replay.failureMessage}
+            onRunWithRevisitWords={() => replay.restart("revisit-words")}
+            revisitWords={run.revisitWords}
             maxScores={run.maxScores ?? 0}
             practisedCount={run.practisedCount}
             onDone={leaveRun}

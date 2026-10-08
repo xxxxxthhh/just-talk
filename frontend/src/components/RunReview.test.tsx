@@ -121,6 +121,7 @@ function renderReview(run: RunState, overrides: Partial<Parameters<typeof RunRev
     restartFailed: null,
     nextSoundPhoneme: null,
     onRetryRestart: vi.fn(),
+    restartMessage: null,
     maxScores: maxCountedScores(run.config),
     onExit: vi.fn(),
     ...overrides,

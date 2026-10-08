@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { usePracticeRun } from "../hooks/usePracticeRun";
+import type { RunLength } from "../types";
 import { usePracticeSession } from "../usePracticeSession";
 import MobileTabBar from "./MobileTabBar";
 import "./mobile.css";
@@ -47,6 +48,30 @@ export default function MobileApp() {
 
   const openPractice = () => setTab("practice");
 
+  // My words entry: its length, pending start and error live here, above Words and Practice, so they
+  // survive tab changes. An accepted start opens Practice; Cancel abandons it and any late result.
+  const [wordsLength, setWordsLength] = useState<RunLength>(6);
+  const [wordsError, setWordsError] = useState<string | null>(null);
+  const wordsAttempt = useRef(0);
+  function startWords(length: RunLength) {
+    const id = ++wordsAttempt.current;
+    setWordsError(null);
+    // Called within the tap, so the controller unlocks run audio inside the gesture.
+    run.startWords(length).then(
+      () => {
+        if (wordsAttempt.current === id) setTab("practice");
+      },
+      (error: unknown) => {
+        if (wordsAttempt.current !== id) return;
+        setWordsError(error instanceof Error && error.message ? error.message : "Couldn't start the run. Try again.");
+      }
+    );
+  }
+  function cancelWords() {
+    wordsAttempt.current += 1;
+    run.exit();
+  }
+
   // Practice entries on other tabs ask before touching the shared session; a
   // plain tab switch never ends a run.
   function confirmLeaveRun(): boolean {
@@ -61,7 +86,20 @@ export default function MobileApp() {
       <div className="m-screen-slot">
         {tab === "practice" ? <PracticeScreen session={session} run={run} /> : null}
         {tab === "words" ? (
-          <WordsScreen session={session} onOpenPractice={openPractice} confirmLeaveRun={confirmLeaveRun} />
+          <WordsScreen
+            session={session}
+            onOpenPractice={openPractice}
+            confirmLeaveRun={confirmLeaveRun}
+            wordsRun={{
+              availability: run.wordsEntry,
+              length: wordsLength,
+              onLengthChange: setWordsLength,
+              starting: run.starting,
+              error: wordsError,
+              onStart: startWords,
+              onCancel: cancelWords
+            }}
+          />
         ) : null}
         {tab === "history" ? (
           <HistoryScreen session={session} onOpenPractice={openPractice} confirmLeaveRun={confirmLeaveRun} />

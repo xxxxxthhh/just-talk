@@ -6,6 +6,7 @@ import { nextCapture, runReducer } from "../game/runModel";
 import {
   selectPractisedCount,
   selectReviewSuggestions,
+  selectRevisitWordSeeds,
   selectRunScore,
   selectTopRevisit,
   tierForAccuracy
@@ -329,6 +330,12 @@ export const runV2Fixtures = {
   review
 } satisfies Record<string, RunV2Fixture>;
 
+// The controller's revisit facts from the run's own seeds; the cached bank is empty in fixtures.
+function revisitWordsFor(run: RunState): PracticeRunProps["revisitWords"] {
+  const seedCount = selectRevisitWordSeeds(run).length;
+  return { seedCount, eligibleCount: 0, canStart: run.endReason !== null && seedCount > 0, reason: seedCount ? null : "no-seeds" };
+}
+
 // PracticeRun props for a run with no-op actions; tests override what they observe. A plain
 // telemetry value becomes a store, as the controller provides.
 export function practiceRunProps(
@@ -370,6 +377,9 @@ export function practiceRunProps(
     pendingRestart: null,
     restartFailed: null,
     onRetryRestart: noop,
+    restartMessage: null,
+    onRunWithRevisitWords: noop,
+    revisitWords: revisitWordsFor(run),
     maxScores: maxCountedScores(run.config),
     practisedCount: selectPractisedCount(run),
     onDone: noop,

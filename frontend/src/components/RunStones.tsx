@@ -10,11 +10,19 @@ export type RunStonesProps = {
   reducedMotion: boolean;
 };
 
+// A starter run has three stage groups; a My words run has one group of its own, never fake stages.
 const STAGES: readonly { stage: RunPrompt["stage"]; label: string }[] = [
   { stage: "warmup", label: "Warm-up" },
   { stage: "focus", label: "Focus" },
-  { stage: "context", label: "In context" }
+  { stage: "context", label: "In context" },
+  { stage: "words", label: "My words" }
 ];
+
+function groupClass(stage: RunPrompt["stage"], count: number): string | undefined {
+  // My words wraps six to a row; four stones per stage (Route 12) sit two by two.
+  if (stage === "words") return "is-words";
+  return count > 2 ? "is-grid" : undefined;
+}
 
 const TIER_LABELS: Record<RunTier, string> = {
   perfect: "Perfect",
@@ -78,10 +86,9 @@ export function RunStones({ items, scores, currentIndex, reducedMotion }: RunSto
         </defs>
       </svg>
       <ol className="run-stones-groups" aria-label="Run progress">
-        {STAGES.map(({ stage, label }) => (
+        {STAGES.filter(({ stage }) => items.some((item) => item.prompt.stage === stage)).map(({ stage, label }) => (
           <li key={stage} className="run-stones-group">
-            {/* Four stones per stage (Route 12) sit two by two; six-item runs keep one row. */}
-            <ol aria-label={label} className={items.filter((item) => item.prompt.stage === stage).length > 2 ? "is-grid" : undefined}>
+            <ol aria-label={label} className={groupClass(stage, items.filter((item) => item.prompt.stage === stage).length)}>
               {items.map((item, index) => {
                 if (item.prompt.stage !== stage) return null;
                 const score = scores.find((candidate) => candidate.itemId === item.prompt.itemId);

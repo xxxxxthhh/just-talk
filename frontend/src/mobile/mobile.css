@@ -676,3 +676,94 @@ body[data-theme="dark"] .m-result-sheet::backdrop {
     display: none;
   }
 }
+
+/* Words: start a My words run. Light like the rest of the Words screen. */
+.m-words-run {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--border-card-focus);
+  border-radius: var(--radius-md);
+  background: var(--accent-glow);
+}
+
+.m-words-run-head h2 {
+  margin: 0;
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 17px;
+}
+
+.m-words-run-head p,
+.m-words-run-count,
+.m-words-run-usage {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.m-words-run-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.m-words-run-lengths {
+  display: flex;
+  gap: 6px;
+}
+
+.m-words-run-length {
+  min-width: 48px;
+  min-height: 44px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 750;
+}
+
+.m-words-run-length[aria-checked="true"] {
+  border-color: var(--accent-color);
+  color: var(--text-main);
+}
+
+.m-words-run-length:disabled {
+  opacity: 0.45;
+}
+
+.m-words-run-hint {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.m-words-run-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.m-words-run-start {
+  flex: 1;
+  min-height: 48px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--accent-color);
+  color: var(--text-inverse);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.m-words-run-start:disabled {
+  opacity: 0.5;
+}
+
+.m-words-run-error {
+  margin: 0;
+  color: var(--color-needs-work);
+  font-size: 13px;
+}

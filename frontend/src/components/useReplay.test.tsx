@@ -24,7 +24,7 @@ describe("useReplay", () => {
     const nextSound = vi.fn(async () => {
       throw new Error("no deck");
     });
-    const hook = owner({ "play-again": playAgain, "next-sound": nextSound });
+    const hook = owner({ "play-again": playAgain, "next-sound": nextSound, "revisit-words": async () => {} });
 
     await act(async () => hook.result.current.restart("next-sound"));
     expect(hook.result.current.failedAction).toBe("next-sound");
@@ -39,7 +39,7 @@ describe("useReplay", () => {
 
   it("restart_failure_survives_summary_to_review", async () => {
     const gate = deferred();
-    const hook = owner({ "play-again": () => gate.promise, "next-sound": async () => {} });
+    const hook = owner({ "play-again": () => gate.promise, "next-sound": async () => {}, "revisit-words": async () => {} });
 
     act(() => hook.result.current.restart("play-again"));
     expect(hook.result.current.pendingAction).toBe("play-again");
@@ -60,7 +60,11 @@ describe("useReplay", () => {
     const first = deferred();
     const second = deferred();
     const calls = [first, second];
-    const hook = owner({ "play-again": () => calls.shift()!.promise, "next-sound": async () => {} });
+    const hook = owner({
+      "play-again": () => calls.shift()!.promise,
+      "next-sound": async () => {},
+      "revisit-words": async () => {}
+    });
 
     act(() => hook.result.current.restart("play-again"));
     act(() => hook.result.current.restart("play-again"));
@@ -75,5 +79,24 @@ describe("useReplay", () => {
     await act(async () => second.reject(new Error("late")));
     expect(hook.result.current.failed).toBe(false);
     expect(hook.result.current.failedAction).toBeNull();
+  });
+
+  it("revisit_failure_keeps_its_reason_and_retry_keeps_action", async () => {
+    const revisit = vi.fn(async () => {
+      throw new Error("Need 12 active words · 9 available");
+    });
+    const playAgain = vi.fn(async () => {});
+    const hook = owner({ "play-again": playAgain, "next-sound": async () => {}, "revisit-words": revisit });
+
+    await act(async () => hook.result.current.restart("revisit-words"));
+    expect(hook.result.current.failedAction).toBe("revisit-words");
+    expect(hook.result.current.failureMessage).toBe("Need 12 active words · 9 available");
+    await act(async () => hook.result.current.retry());
+    expect(revisit).toHaveBeenCalledTimes(2);
+    expect(playAgain).not.toHaveBeenCalled();
+    // A newer action replaces the old error.
+    await act(async () => hook.result.current.restart("play-again"));
+    expect(hook.result.current.failedAction).toBeNull();
+    expect(hook.result.current.failureMessage).toBeNull();
   });
 });

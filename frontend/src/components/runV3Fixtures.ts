@@ -46,6 +46,22 @@ function start(config: StarterRunConfig): RunState {
   return step(null, { type: "START", runId: `v3-fixture-${++runs}`, config, prompts });
 }
 
+// My words prompts: single words, no stage split or target sound; the first two come from the run
+// being revisited, the rest from the word bank, case preserved.
+function bankWord(index: number, text: string, source: "word-bank" | "run-review" = "word-bank"): RunPrompt {
+  return { itemId: `words-${index}`, stage: "words", kind: "word", text, targetPhoneme: null, targetWord: text, source };
+}
+const WORDS = ["through", "path", "Garden", "window", "coffee", "yellow", "river", "basket", "Monday", "candle", "orange", "pocket"];
+export const WORDS_PROMPTS_12: readonly RunPrompt[] = WORDS.map((text, index) =>
+  bankWord(index + 1, text, index < 2 ? "run-review" : "word-bank")
+);
+export const WORDS_PROMPTS_6: readonly RunPrompt[] = WORDS_PROMPTS_12.slice(0, 6);
+
+function startWords(config: WordsRunConfig): RunState {
+  const prompts = config.length === 12 ? WORDS_PROMPTS_12 : WORDS_PROMPTS_6;
+  return step(null, { type: "START", runId: `v3-fixture-${++runs}`, config, prompts });
+}
+
 function scored(state: RunState, accuracy: number): RunState {
   const sent = send(state);
   const prompt = state.items[state.index].prompt;
@@ -122,8 +138,16 @@ const target60HeartLost = fixture(scored(loadReference(scored(start(TARGET_60), 
 
 const route6Ready = fixture(start(STARTER_ROUTE_6));
 
+// My words: Ready on the first word, and a finished six with two words below 85 to revisit.
+const words6Ready = fixture(startWords(WORDS_ROUTE_6));
+const words12Ready = fixture(readings(startWords(WORDS_ROUTE_12), [90, 95]));
+const words6Complete = fixture(readings(startWords(WORDS_ROUTE_6), [92, 70, 88, 95, 64, 100]));
+
 export const runV3Fixtures = {
   route6Ready,
+  words6Ready,
+  words12Ready,
+  words6Complete,
   route12Ready,
   route12Complete,
   route12Feedback,

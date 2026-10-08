@@ -20,7 +20,7 @@ import type {
 } from "../types";
 import { formatRunScore, LiveRunRing, TIER_LABELS, useRolledNumber, type RunRingProps } from "./RunRing";
 import { RunStones } from "./RunStones";
-import { nextSoundFailed, REPLAY_FAILED, type RestartKind } from "./useReplay";
+import { nextSoundFailed, REPLAY_FAILED, revisitWordsFailed, type RestartKind } from "./useReplay";
 
 export const SLOW_SCORE_MS = 5000;
 const SUMMARY_ROLL_DELAY_MS = 350;
@@ -45,6 +45,12 @@ const STAGE_LABELS: Record<RunItem["prompt"]["stage"], string> = {
   context: "In context",
   words: "My words"
 };
+
+// Where a prompt came from, where that helps: a My words prompt names its source instead of a stage.
+export function stageLabel(prompt: RunPrompt): string {
+  if (prompt.stage !== "words") return STAGE_LABELS[prompt.stage];
+  return prompt.source === "run-review" ? "From this run" : "Word bank";
+}
 
 export type PracticeRunProps = {
   run: RunState;
@@ -91,6 +97,12 @@ export type PracticeRunProps = {
   restartFailed: RestartKind | null;
   // Repeats the failed restart with the same destination.
   onRetryRestart: () => void;
+  // The controller's reason for the failed restart (a word-bank shortage, say), if it gave one.
+  restartMessage: string | null;
+  // Starts My words from this run's first readings below 85, at this run's length.
+  onRunWithRevisitWords: () => void;
+  // The controller's run-local seeds; only no-seeds disables the action, never the cached bank.
+  revisitWords: Readonly<{ seedCount: number; eligibleCount: number; canStart: boolean; reason: "no-seeds" | null }>;
   // Counted scores a new run of this configuration may use.
   maxScores: number;
   // Planned items with a first valid reading.
@@ -205,7 +217,12 @@ export function PracticeRun(props: PracticeRunProps) {
   if (run.phase === "review" || !item) return null;
 
   const focusSound = run.items.find((candidate) => candidate.prompt.stage === "focus")?.prompt.targetPhoneme ?? null;
-  const shape = run.config.target === null ? `Route · ${run.config.length} items` : `Challenge · Target ${run.config.target}`;
+  const shape =
+    run.config.source === "words"
+      ? `My words · ${run.config.length} words`
+      : run.config.target === null
+        ? `Route · ${run.config.length} items`
+        : `Challenge · Target ${run.config.target}`;
   const title = `${shape}${focusSound ? ` · /${focusSound}/` : ""}`;
   const summary = run.phase === "summary";
 
@@ -344,7 +361,7 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean; autoSto
   const last = item.attempts[item.attempts.length - 1];
   const syncing = item.attempts.some((attempt) => attempt.sync === "pending");
   const reviewing = run.phase === "feedback" || run.phase === "rescue";
-  const stage = `${run.index + 1} / ${run.items.length} · ${STAGE_LABELS[item.prompt.stage]}`;
+  const stage = `${run.index + 1} / ${run.items.length} · ${stageLabel(item.prompt)}`;
 
   let ring: RingFace;
   let status: ReactNode;
@@ -514,7 +531,7 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean; autoSto
       <footer className="run-thumb">
         {reviewing && next ? (
           <div className={`run-next-v2${run.phase === "rescue" ? " is-dim" : ""}`}>
-            <span className="run-next-label">Next · {STAGE_LABELS[next.prompt.stage]}</span>
+            <span className="run-next-label">Next · {stageLabel(next.prompt)}</span>
             <span className="run-next-text">{next.prompt.text}</span>
           </div>
         ) : null}
@@ -732,6 +749,7 @@ function cannotConfirmLine(item: RunItem): string {
 }
 
 function summaryKicker(run: RunState): string {
+  if (run.config.source === "words") return run.endReason === "completed" ? "My words complete" : "My words ended";
   if (run.mode === "route") return run.endReason === "completed" ? "Route complete" : "Run ended";
   if (run.challengeOutcome === "cleared") return "Challenge cleared";
   if (run.challengeOutcome === "failed") return "Out of hearts";
@@ -817,14 +835,46 @@ function RunSummary(props: ScreenProps) {
           Try again
         </button>
       </p>
+    ) : props.restartFailed === "revisit-words" ? (
+      <p className="run-replay-error" role="alert">
+        {revisitWordsFailed(props.restartMessage)}{" "}
+        <button type="button" className="run-link-button" onClick={act(props.onRetryRestart)}>
+          Try again
+        </button>
+      </p>
     ) : props.restartFailed === "play-again" ? (
       <p className="run-replay-error" role="alert">
         {REPLAY_FAILED}
       </p>
     ) : null;
+  // Every Summary can start My words from this run's first readings below 85 (a Challenge gives six).
+  const { revisitWords } = props;
+  const revisitLength = run.config.length;
+  const revisitAction = (
+    <div className="run-revisit-words">
+      <span className="run-tile-label">Words from first readings below 85</span>
+      <span className="run-revisit-words-count">
+        {revisitWords.reason === "no-seeds"
+          ? "No words from first readings below 85."
+          : `${revisitWords.seedCount} ${revisitWords.seedCount === 1 ? "word" : "words"} first, then your word bank · ${revisitLength} words`}
+      </span>
+      {revisitWords.reason === null && revisitWords.seedCount + revisitWords.eligibleCount < revisitLength ? (
+        // A hint from the cached bank only; Start checks the fresh bank.
+        <span className="run-status-sub">Your word bank may be short: {revisitWords.eligibleCount} active words</span>
+      ) : null}
+      <button
+        type="button"
+        className="run-revisit-words-start"
+        disabled={!revisitWords.canStart || props.starting}
+        onClick={act(props.onRunWithRevisitWords)}
+      >
+        {props.starting && props.pendingRestart === "revisit-words" ? "Starting…" : "Run with words to revisit"}
+      </button>
+    </div>
+  );
   const playAgain = (
     <button type="button" className="run-primary-v2" disabled={props.starting} onClick={act(props.onPlayAgain)}>
-      {props.starting && props.pendingRestart !== "next-sound" ? "Starting…" : "Play again"}
+      {props.starting && props.pendingRestart === "play-again" ? "Starting…" : "Play again"}
     </button>
   );
   const seeReview = (
@@ -876,6 +926,7 @@ function RunSummary(props: ScreenProps) {
                   </span>
                 </div>
               ) : null)}
+            {revisitAction}
             <div className="run-summary-facts">
               <div className="run-tile">
                 <span className="run-tile-label">Points</span>
@@ -938,6 +989,7 @@ function RunSummary(props: ScreenProps) {
               ) : null}
             </div>
             {revisitCard}
+            {revisitAction}
           </>
         )}
       </div>

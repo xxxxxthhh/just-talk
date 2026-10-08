@@ -105,6 +105,7 @@ function handlers() {
     onHearNextFirst: vi.fn(),
     onNextSound: vi.fn(),
     onRetryRestart: vi.fn(),
+    onRunWithRevisitWords: vi.fn(),
     onFinish: vi.fn(),
     onSkip: vi.fn(),
     onPlayReference: vi.fn(),
@@ -1100,4 +1101,98 @@ describe("PracticeRun", () => {
       expect(screen.getByRole("button", { name: "Next sound /ð/" })).toBeEnabled();
     });
   });
+  describe("My words runs", () => {
+    it("words_header_stones_have_no_ipa_or_fake_stages", () => {
+      const view = renderRun(runV3Fixtures.words6Ready.run);
+      expect(view.container.querySelector(".run-bar-title")).toHaveTextContent("My words · 6 words");
+      expect(view.container.querySelector(".run-bar-title")?.textContent).not.toMatch(/\//);
+      // One named My words group; no Warm-up / Focus / In context.
+      expect(screen.getByRole("list", { name: "My words" })).toBeInTheDocument();
+      expect(view.container.querySelectorAll(".run-stones-group")).toHaveLength(1);
+      expect(view.container).not.toHaveTextContent(/Warm-up|In context/);
+      // Provenance replaces the stage: the first words come from the run being revisited.
+      expect(view.container.querySelector(".run-stage-label")).toHaveTextContent("1 / 6 · From this run");
+      expect(screen.getByRole("button", { name: "Hear it first" })).toBeInTheDocument();
+      view.unmount();
+
+      const twelve = renderRun(runV3Fixtures.words12Ready.run);
+      expect(twelve.container.querySelector(".run-bar-title")).toHaveTextContent("My words · 12 words");
+      expect(twelve.container.querySelectorAll(".run-stones-group > ol.is-words .run-stone")).toHaveLength(12);
+      expect(twelve.container.querySelector(".run-stage-label")).toHaveTextContent("3 / 12 · Word bank");
+    });
+
+    it("words_summary_shows_rating_without_pb_or_next_sound", () => {
+      const fixture = runV3Fixtures.words6Complete;
+      const view = renderRun(fixture.run, { reducedMotion: true });
+      expect(screen.getByRole("heading", { name: "My words complete" })).toBeInTheDocument();
+      expect(view.container.querySelector(".run-summary-practised")).toHaveTextContent("6 / 6Practised");
+      expect(tileOf("Rating")).toHaveTextContent(fixture.score.rating ?? "—");
+      expect(tileOf("Points")).toHaveTextContent(String(fixture.score.points));
+      expect(screen.queryByText(/First record|New best|Best ·/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Next sound/ })).not.toBeInTheDocument();
+      expect(view.container.querySelector("footer")).toHaveTextContent("Play again uses up to 8 new scores");
+    });
+
+    it("summary_no_local_seeds_disables_revisit", () => {
+      renderRun(runV3Fixtures.route12BrokenChain.run, {
+        reducedMotion: true,
+        nextSoundPhoneme: "ð",
+        revisitWords: { seedCount: 0, eligibleCount: 30, canStart: false, reason: "no-seeds" }
+      });
+      expect(screen.getByText("No words from first readings below 85.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Run with words to revisit" })).toBeDisabled();
+      // The approved starter footer keeps its four actions; revisit lives above it.
+      expect(Array.from(document.querySelectorAll("footer button")).map((button) => button.textContent)).toEqual([
+        "See review",
+        "Play again",
+        "Next sound /ð/",
+        "Done"
+      ]);
+    });
+
+    it("summary_cached_shortage_does_not_disable_revisit", () => {
+      const callbacks = handlers();
+      renderRun(runV3Fixtures.target85Cleared.run, {
+        ...callbacks,
+        reducedMotion: true,
+        revisitWords: { seedCount: 1, eligibleCount: 2, canStart: true, reason: null }
+      });
+      expect(screen.getByText("Words from first readings below 85")).toBeInTheDocument();
+      expect(screen.getByText("1 word first, then your word bank · 6 words")).toBeInTheDocument();
+      expect(screen.getByText("Your word bank may be short: 2 active words")).toBeInTheDocument();
+      const action = screen.getByRole("button", { name: "Run with words to revisit" });
+      expect(action).toBeEnabled();
+      fireEvent.click(action);
+      expect(callbacks.onRunWithRevisitWords).toHaveBeenCalledTimes(1);
+      expect(callbacks.onPlayAgain).not.toHaveBeenCalled();
+      // The copy never calls a reading wrong.
+      expect(document.body).not.toHaveTextContent(/wrong|mistake/i);
+    });
+
+    it("revisit_failure_names_its_reason_and_retries_it", () => {
+      const callbacks = handlers();
+      renderRun(runV3Fixtures.words6Complete.run, {
+        ...callbacks,
+        reducedMotion: true,
+        restartFailed: "revisit-words",
+        restartMessage: "Need 12 active words · 9 available",
+        revisitWords: { seedCount: 2, eligibleCount: 9, canStart: true, reason: null }
+      });
+      const alert = screen.getByRole("alert");
+      expect(alert).toHaveTextContent("Couldn't start the revisit run. Need 12 active words · 9 available Your results are still here.");
+      fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+      expect(callbacks.onRetryRestart).toHaveBeenCalledTimes(1);
+    });
+
+    it("full_bank_copy_never_promises_unknown_word_saved", () => {
+      // The run cannot know whether a new word was stored, so nothing claims it was.
+      for (const run of [runV3Fixtures.words6Ready.run, runV3Fixtures.words6Complete.run]) {
+        const view = renderRun(run, { reducedMotion: true });
+        expect(view.container).not.toHaveTextContent(/added to|saved to|word bank updated|SRS/i);
+        view.unmount();
+      }
+    });
+  });
+
+  const tileOf = (label: string) => screen.getByText(label, { selector: ".run-tile-label" }).closest(".run-tile");
 });

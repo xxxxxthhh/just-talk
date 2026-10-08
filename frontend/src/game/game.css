@@ -370,6 +370,16 @@
   list-style: none;
 }
 
+.run-stones-groups:has(> .run-stones-group:only-child) {
+  justify-content: center;
+}
+
+.run-stones-group > ol.is-words {
+  display: grid;
+  grid-template-columns: repeat(6, var(--g-stone-size));
+  gap: 4px 8px;
+}
+
 .run-stones-group > ol.is-grid {
   display: grid;
   grid-template-columns: repeat(2, var(--g-stone-size));
@@ -1241,6 +1251,39 @@
   padding: 0 4px;
   color: var(--g-text-soft);
   font-size: 14px;
+}
+
+/* Every Summary: a My words run from this run's first readings below 85, in the scrollable area. */
+.run-revisit-words {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--g-line);
+  border-radius: var(--g-radius-card);
+  background: var(--g-surface);
+}
+
+.run-revisit-words-count {
+  color: var(--g-text-soft);
+  font-size: 14px;
+}
+
+.run-revisit-words-start {
+  min-height: 44px;
+  margin-top: 2px;
+  border: 1px solid var(--g-line-strong);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--g-text);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.run-revisit-words-start:disabled {
+  color: var(--g-text-faint);
 }
 
 .run-summary-buttons {

@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 
-// The restarts a finished run's Summary and Review offer. Next sound is starter Route only.
-export type RestartKind = "play-again" | "next-sound";
+// The restarts a finished run's Summary and Review offer. Next sound is starter Route only;
+// revisit-words starts My words from the finished run's first readings below 85.
+export type RestartKind = "play-again" | "next-sound" | "revisit-words";
 export type RestartActions = Readonly<Record<RestartKind, () => Promise<void>>>;
 
 // A restart from a finished run's Summary or Review. It lives in the screen that owns both
@@ -13,7 +14,7 @@ export function useReplay(actions: RestartActions, runId: string | null) {
   // The latest restart still in flight, so its own button can say Starting….
   const [pending, setPending] = useState<{ id: number; kind: RestartKind } | null>(null);
   // The run whose restart failed, and which restart it was; cleared by a new restart or by leaving.
-  const [failure, setFailure] = useState<{ runId: string | null; kind: RestartKind } | null>(null);
+  const [failure, setFailure] = useState<{ runId: string | null; kind: RestartKind; message: string } | null>(null);
 
   const restart = (kind: RestartKind) => {
     const id = ++attempt.current;
@@ -25,11 +26,11 @@ export function useReplay(actions: RestartActions, runId: string | null) {
       () => {
         if (attempt.current === id) setPending(null);
       },
-      () => {
+      (error: unknown) => {
         // An abandoned or superseded restart's late failure says nothing.
         if (attempt.current !== id) return;
         setPending(null);
-        setFailure({ runId: failedFor, kind });
+        setFailure({ runId: failedFor, kind, message: error instanceof Error ? error.message : "" });
       }
     );
   };
@@ -42,10 +43,13 @@ export function useReplay(actions: RestartActions, runId: string | null) {
   };
 
   // A successful replacement is a different run, so the old error no longer applies.
-  const failedAction = failure !== null && failure.runId === runId ? failure.kind : null;
+  const current = failure !== null && failure.runId === runId ? failure : null;
+  const failedAction = current?.kind ?? null;
   return {
     failed: failedAction !== null,
     failedAction,
+    // The controller's own reason, such as a word-bank shortage; empty when it gave none.
+    failureMessage: current?.message ?? null,
     pendingAction: pending?.kind ?? null,
     restart,
     // Repeats the failed action; Next sound keeps its destination because the finished run does.
@@ -60,4 +64,8 @@ export const REPLAY_FAILED = "Couldn't start a new run. Your results are still h
 
 export function nextSoundFailed(phoneme: string): string {
   return `Couldn't start /${phoneme}/. Your results are still here.`;
+}
+
+export function revisitWordsFailed(reason: string | null): string {
+  return `Couldn't start the revisit run.${reason ? ` ${reason}` : ""} Your results are still here.`;
 }

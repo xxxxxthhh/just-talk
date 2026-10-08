@@ -554,6 +554,191 @@ describe("MobileApp game run", () => {
     expect(screen.getByRole("radio", { name: "Route" })).toBeInTheDocument();
   });
 
+  // Active single words in the bank, all due, with a known low latest score.
+  function bankRows(words: readonly string[], status: "active" | "graduated" = "active") {
+    return words.map((word, index) => ({
+      id: `${status}-${index + 1}`,
+      word,
+      source: "manual",
+      notes: "",
+      latest_score: 60,
+      practice_count: 1,
+      last_practiced_at: null,
+      status,
+      consecutive_successes: 0,
+      graduated_at: null,
+      interval_days: 0,
+      due_at: "2026-10-01T00:00:00Z",
+      created_at: "2026-10-01T00:00:00Z",
+      updated_at: "2026-10-01T00:00:00Z"
+    }));
+  }
+  const BANK = ["river", "Garden", "window", "coffee", "yellow", "basket", "Monday", "candle", "orange", "pocket", "ladder", "silver"];
+
+  async function openWords(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole("tab", { name: /^Words/ }));
+    return screen.findByRole("region", { name: "Start a run with my words" });
+  }
+
+  test("words_entry_counts_5_6_11_12_and_never_silently_shrinks", async () => {
+    for (const [count, start6, start12, hint] of [
+      [5, false, false, "Add more active single words to start a 6-word run."],
+      [6, true, false, "Need 12 active words · 6 available"],
+      [11, true, false, "Need 12 active words · 11 available"],
+      [12, true, true, null]
+    ] as const) {
+      const user = userEvent.setup();
+      installRunApi({ words: bankRows(BANK.slice(0, count)) });
+      const view = render(<MobileApp />);
+      const card = await openWords(user);
+      await within(card).findByText(`${count} active words`);
+      expect(within(card).getByText("Due words first · no hearts")).toBeInTheDocument();
+      expect(within(card).getByRole("radio", { name: "6 words" })).toHaveProperty("disabled", !start6);
+      expect(within(card).getByRole("radio", { name: "12 words" })).toHaveProperty("disabled", !start12);
+      expect(within(card).getByRole("button", { name: "Start 6 words" })).toHaveProperty("disabled", !start6);
+      if (hint) expect(within(card).getByText(hint)).toBeInTheDocument();
+      else expect(card.querySelector(".m-words-run-hint")).toBeNull();
+      if (count === 12) {
+        // Twelve is chosen explicitly and starts twelve, never six.
+        await user.click(within(card).getByRole("radio", { name: "12 words" }));
+        await user.click(within(card).getByRole("button", { name: "Start 12 words" }));
+        expect(await screen.findByText("My words · 12 words", { selector: ".run-bar-title" })).toBeInTheDocument();
+        expect(screen.getByText("1 / 12 · Word bank", { selector: ".run-stage-label" })).toBeInTheDocument();
+      }
+      view.unmount();
+    }
+  });
+
+  test("words_entry_pending_cancel_and_late_failure_say_nothing", async () => {
+    const user = userEvent.setup();
+    const gate = deckGate("/api/words");
+    let fresh = BANK.slice(0, 6);
+    installRunApi({ hold: gate.hold, words: () => bankRows(fresh) });
+    render(<MobileApp />);
+    const card = await openWords(user);
+    await within(card).findByText("6 active words");
+
+    gate.close();
+    await user.click(within(card).getByRole("button", { name: "Start 6 words" }));
+    // Pending: tabs hidden, choices locked, the bank inert, Cancel available.
+    expect(within(card).getByRole("button", { name: "Starting…" })).toBeDisabled();
+    expect(within(card).getByRole("radio", { name: "6 words" })).toBeDisabled();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(document.querySelector(".m-words-content")).toHaveAttribute("inert");
+    await user.click(within(card).getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByRole("tablist")).toBeInTheDocument();
+    // The abandoned start fails late (the bank shrank): no error, no navigation.
+    fresh = BANK.slice(0, 2);
+    await act(async () => gate.open());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Start a run with my words" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Route run" })).not.toBeInTheDocument();
+  });
+
+  test("words_entry_pending_error_survives_navigation", async () => {
+    const user = userEvent.setup();
+    let fresh = BANK.slice(0, 6);
+    installRunApi({ words: () => bankRows(fresh) });
+    render(<MobileApp />);
+    const card = await openWords(user);
+    await within(card).findByText("6 active words");
+    // The cached preview said six; the fresh bank at Start has three.
+    fresh = BANK.slice(0, 3);
+    await user.click(within(card).getByRole("button", { name: "Start 6 words" }));
+    expect(await within(card).findByRole("alert")).toHaveTextContent("Add more active single words to start a 6-word run.");
+    await user.click(screen.getByRole("tab", { name: "Practice" }));
+    const again = await openWords(user);
+    expect(within(again).getByRole("alert")).toHaveTextContent("Add more active single words to start a 6-word run.");
+  });
+
+  test("start_review_still_uses_ordinary_explicit_score", async () => {
+    const user = userEvent.setup();
+    installRunApi({ words: bankRows(BANK.slice(0, 6)) });
+    render(<MobileApp />);
+    await openWords(user);
+    await user.click(await screen.findByRole("button", { name: /^Start review \(6\)$/ }));
+    // The ordinary queue: Review 1/6 with explicit Score, not a game run.
+    expect(await screen.findByText("Review 1/6")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Score" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Route run" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tablist")).toBeInTheDocument();
+  });
+
+  // One take of the first item at 70 (below 85), then quit: one word to revisit. With bank words
+  // present the first warm-up is a due bank word, so the word is read from the screen.
+  async function finishWithALowWord(user: ReturnType<typeof userEvent.setup>) {
+    await startRun(user);
+    const word = document.querySelector(".run-prompt-v2")?.textContent ?? "";
+    await recordAndStop(user);
+    expect(await screen.findByText("Solid.", { selector: ".run-status-main" })).toBeInTheDocument();
+    await quitRun(user);
+    expect(await screen.findByRole("heading", { name: /^Run ended/ })).toBeInTheDocument();
+    return word;
+  }
+
+  test("each_summary_revisit_preserves_original_until_start_succeeds", async () => {
+    const user = userEvent.setup();
+    const gate = deckGate("/api/words");
+    installRunApi({ hold: gate.hold, score: (text) => scoreReply(text, 70), words: () => bankRows(BANK.slice(0, 6)) });
+    render(<MobileApp />);
+    const word = await finishWithALowWord(user);
+    expect(screen.getByText("1 word first, then your word bank · 6 words")).toBeInTheDocument();
+
+    gate.close();
+    await user.click(screen.getByRole("button", { name: "Run with words to revisit" }));
+    // Pending: the finished run stays, only this action says Starting…, the tabs stay hidden.
+    expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    expect(screen.getByRole("heading", { name: /^Run ended/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Play again" })).toBeDisabled();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    await act(async () => gate.open());
+    // The new words run leads with the word from this run, then the bank.
+    expect(await screen.findByText("My words · 6 words", { selector: ".run-bar-title" })).toBeInTheDocument();
+    expect(screen.getByText(word, { selector: ".run-prompt-v2" })).toBeInTheDocument();
+    expect(screen.getByText("1 / 6 · From this run", { selector: ".run-stage-label" })).toBeInTheDocument();
+  });
+
+  test("revisit_failure_survives_review_and_retry_keeps_action", async () => {
+    const user = userEvent.setup();
+    const gate = deckGate("/api/words");
+    let fresh = BANK.slice(0, 2);
+    installRunApi({ hold: gate.hold, score: (text) => scoreReply(text, 70), words: () => bankRows(fresh) });
+    render(<MobileApp />);
+    const word = await finishWithALowWord(user);
+
+    gate.close();
+    await user.click(screen.getByRole("button", { name: "Run with words to revisit" }));
+    await user.click(screen.getByRole("button", { name: "See review" }));
+    await act(async () => gate.open());
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Couldn't start the revisit run. Add more active single words to start a 6-word run. Your results are still here."
+    );
+
+    // The bank has grown: Try again from Review repeats the revisit run, with the same seed first.
+    fresh = BANK.slice(0, 6);
+    await user.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("My words · 6 words", { selector: ".run-bar-title" })).toBeInTheDocument();
+    expect(screen.getByText(word, { selector: ".run-prompt-v2" })).toBeInTheDocument();
+    expect(screen.getByText("1 / 6 · From this run", { selector: ".run-stage-label" })).toBeInTheDocument();
+  });
+
+  test("words_done_drops_late_entry_or_revisit_error", async () => {
+    const user = userEvent.setup();
+    const gate = deckGate("/api/words");
+    installRunApi({ hold: gate.hold, score: (text) => scoreReply(text, 70), words: () => bankRows(BANK.slice(0, 2)) });
+    render(<MobileApp />);
+    await finishWithALowWord(user);
+
+    gate.close();
+    await user.click(screen.getByRole("button", { name: "Run with words to revisit" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(await screen.findByRole("tablist")).toBeInTheDocument();
+    await act(async () => gate.open());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Route run" })).not.toBeInTheDocument();
+  });
+
   test("production_has_no_interim_fixture_wiring", () => {
     const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
     const screenSource = read("src/mobile/screens/PracticeScreen.tsx");
