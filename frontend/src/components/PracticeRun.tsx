@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 
 import "../game/game.css";
 import type { RunPreferences } from "../game/preferences";
@@ -304,6 +304,13 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean; autoSto
   const { run, item, score, autoStopState, preferences, slow } = props;
   const [confirmingQuit, setConfirmingQuit] = useState(false);
   const secondaryRef = useRef<HTMLButtonElement | null>(null);
+  // Focus returns to Quit run only after the dialog has gone and the background is no longer inert.
+  const returnFocus = useRef(false);
+  useEffect(() => {
+    if (confirmingQuit || !returnFocus.current) return;
+    returnFocus.current = false;
+    secondaryRef.current?.focus();
+  }, [confirmingQuit]);
   const recordable = canRecord(run);
   const next = run.items[run.index + 1] ?? null;
   const itemScore = score.items[run.index];
@@ -497,8 +504,8 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean; autoSto
       {confirmingQuit && run.paused ? (
         <QuitDialog
           onCancel={() => {
+            returnFocus.current = true;
             setConfirmingQuit(false);
-            secondaryRef.current?.focus();
           }}
           onConfirm={() => {
             setConfirmingQuit(false);
@@ -510,22 +517,54 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean; autoSto
   );
 }
 
-// Only reachable while paused, so no capture is open to be submitted while it waits.
+// Only reachable while paused, so no capture is open to be submitted while it waits. Modal in
+// full: the rest of the run is inert and Tab wraps inside, so nothing behind it can be reached.
 function QuitDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
   const id = useId();
+  const backdropRef = useRef<HTMLDivElement | null>(null);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => cancelRef.current?.focus(), []);
+
+  useEffect(() => {
+    const backdrop = backdropRef.current;
+    const background = backdrop?.parentElement
+      ? [...backdrop.parentElement.children].filter(
+          (element) => element !== backdrop && !element.hasAttribute("inert") && !element.hasAttribute("aria-live")
+        )
+      : [];
+    background.forEach((element) => element.setAttribute("inert", ""));
+    cancelRef.current?.focus();
+    return () => background.forEach((element) => element.removeAttribute("inert"));
+  }, []);
+
+  const keepFocusInside = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onCancel();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+    const first = buttons[0];
+    const last = buttons[buttons.length - 1];
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   return (
-    <div className="run-dialog-backdrop">
+    <div className="run-dialog-backdrop" ref={backdropRef}>
       <div
         className="run-dialog"
         role="alertdialog"
         aria-modal="true"
         aria-labelledby={`${id}-title`}
         aria-describedby={`${id}-body`}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") onCancel();
-        }}
+        onKeyDown={keepFocusInside}
       >
         <h2 id={`${id}-title`} className="run-dialog-title">
           End this run?

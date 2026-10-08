@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { nextCapture, runReducer } from "../game/runModel";
@@ -445,6 +446,44 @@ describe("PracticeRun", () => {
 
     renderRun(rated.run, { receipt: rated.receipt, reducedMotion: true });
     expect(screen.getByText("Play again uses up to 8 new scores")).toBeInTheDocument();
+  });
+
+  it("the quit dialog contains focus and leaves the run behind it unreachable", async () => {
+    // Keyboard simulation needs real time; nothing here is timed.
+    vi.useRealTimers();
+    const user = userEvent.setup();
+    const callbacks = handlers();
+    const paused = step(runV2Fixtures.ready.run, { type: "PAUSE", runId: runV2Fixtures.ready.run.runId });
+    const { container } = renderRun(paused, callbacks);
+    const resume = screen.getByRole("button", { name: "Resume" });
+    await user.click(screen.getByRole("button", { name: "Quit run" }));
+    const dialog = screen.getByRole("alertdialog", { name: "End this run?" });
+    const keep = within(dialog).getByRole("button", { name: "Keep paused" });
+    const end = within(dialog).getByRole("button", { name: "End run" });
+    expect(keep).toHaveFocus();
+
+    // Reverse and forward Tab wrap inside the dialog.
+    await user.tab({ shift: true });
+    expect(end).toHaveFocus();
+    await user.tab();
+    expect(keep).toHaveFocus();
+    for (let i = 0; i < 4; i += 1) {
+      await user.tab();
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    }
+    // Everything behind it is inert, except the live region that keeps announcing.
+    expect(resume.closest("[inert]")).not.toBeNull();
+    expect(container.querySelector(".run-bar")?.closest("[inert]")).not.toBeNull();
+    expect(container.querySelector("[aria-live]")?.closest("[inert]")).toBeNull();
+    await user.keyboard("{Enter}");
+    expect(callbacks.onResume).not.toHaveBeenCalled();
+
+    // Escape closes it, lifts the inert background and returns focus to Quit run.
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(container.querySelector("[inert]")).toBeNull();
+    expect(screen.getByRole("button", { name: "Quit run" })).toHaveFocus();
+    expect(callbacks.onQuit).not.toHaveBeenCalled();
   });
 
   it("the quit dialog closes on Escape and keeps the run", () => {
