@@ -828,6 +828,39 @@ describe("MobileApp game run", () => {
     expect(audio.play).not.toHaveBeenCalled();
   });
 
+  test.each([
+    [6, 5, "Add more active single words to start a 6-word run."],
+    [12, 11, "Need 12 active words · 11 available"]
+  ] as const)("words_play_again_failure_names_the_shortage_%s", async (length, shrunk, reason) => {
+    const user = userEvent.setup();
+    let fresh: number = length;
+    installRunApi({ words: () => bankRows(BANK.slice(0, fresh)) });
+    render(<MobileApp />);
+    const card = await openWords(user);
+    await within(card).findByText(`${length} active words`);
+    if (length === 12) await user.click(within(card).getByRole("radio", { name: "12 words" }));
+    await user.click(within(card).getByRole("button", { name: `Start ${length} words` }));
+    expect(await screen.findByText(`My words · ${length} words`, { selector: ".run-bar-title" })).toBeInTheDocument();
+    await recordAndStop(user);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Record next" })).toBeEnabled());
+    await quitRun(user);
+
+    // A word graduated or was deleted: the fresh bank is one short.
+    fresh = shrunk;
+    await user.click(await screen.findByRole("button", { name: "Play again" }));
+    const message = `Couldn't start a new run. ${reason} Your results are still here.`;
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    await user.click(screen.getByRole("button", { name: "See review" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(message);
+
+    // With the bank refilled, Try again keeps the same length.
+    fresh = length;
+    await user.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText(`My words · ${length} words`, { selector: ".run-bar-title" })).toBeInTheDocument();
+    expect(screen.getByText(`1 / ${length} · Word bank`, { selector: ".run-stage-label" })).toBeInTheDocument();
+  });
+
   test("production_has_no_interim_fixture_wiring", () => {
     const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
     const screenSource = read("src/mobile/screens/PracticeScreen.tsx");

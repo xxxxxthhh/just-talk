@@ -62,6 +62,12 @@ export function useReplay(actions: RestartActions, runId: string | null) {
 
 export const REPLAY_FAILED = "Couldn't start a new run. Your results are still here. Try again.";
 
+// A My words Play again rebuilds from the fresh bank, so its shortage reason tells the learner what to
+// change; starter runs keep the generic line.
+export function playAgainFailed(reason: string | null): string {
+  return reason ? `Couldn't start a new run. ${reason} Your results are still here.` : REPLAY_FAILED;
+}
+
 export function nextSoundFailed(phoneme: string): string {
   return `Couldn't start /${phoneme}/. Your results are still here.`;
 }

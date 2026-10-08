@@ -20,7 +20,7 @@ import type {
 } from "../types";
 import { formatRunScore, LiveRunRing, TIER_LABELS, useRolledNumber, type RunRingProps } from "./RunRing";
 import { RunStones } from "./RunStones";
-import { nextSoundFailed, REPLAY_FAILED, revisitWordsFailed, type RestartKind } from "./useReplay";
+import { nextSoundFailed, playAgainFailed, REPLAY_FAILED, revisitWordsFailed, type RestartKind } from "./useReplay";
 
 export const SLOW_SCORE_MS = 5000;
 const SUMMARY_ROLL_DELAY_MS = 350;
@@ -838,6 +838,13 @@ function RunSummary(props: ScreenProps) {
     ) : props.restartFailed === "revisit-words" ? (
       <p className="run-replay-error" role="alert">
         {revisitWordsFailed(props.restartMessage)}{" "}
+        <button type="button" className="run-link-button" onClick={act(props.onRetryRestart)}>
+          Try again
+        </button>
+      </p>
+    ) : props.restartFailed === "play-again" && run.config.source === "words" && props.restartMessage ? (
+      <p className="run-replay-error" role="alert">
+        {playAgainFailed(props.restartMessage)}{" "}
         <button type="button" className="run-link-button" onClick={act(props.onRetryRestart)}>
           Try again
         </button>

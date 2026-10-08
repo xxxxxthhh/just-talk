@@ -16,7 +16,7 @@ import type {
 import { RunMiniPlayer, useYouPlayer, type CoachPlayback, type YouPlayer, type YouTake } from "./RunMiniPlayer";
 import { formatRunScore, TIER_LABELS } from "./RunRing";
 import { stageLabel } from "./PracticeRun";
-import { nextSoundFailed, REPLAY_FAILED, revisitWordsFailed, type RestartKind } from "./useReplay";
+import { nextSoundFailed, playAgainFailed, REPLAY_FAILED, revisitWordsFailed, type RestartKind } from "./useReplay";
 
 const MAX_EVIDENCE = 3;
 
@@ -412,6 +412,13 @@ export function RunReview({
         ) : restartFailed === "revisit-words" ? (
           <p className="run-replay-error" role="alert">
             {revisitWordsFailed(restartMessage)}{" "}
+            <button type="button" className="run-link-button" onClick={leave(onRetryRestart)}>
+              Try again
+            </button>
+          </p>
+        ) : restartFailed === "play-again" && run.config.source === "words" && restartMessage ? (
+          <p className="run-replay-error" role="alert">
+            {playAgainFailed(restartMessage)}{" "}
             <button type="button" className="run-link-button" onClick={leave(onRetryRestart)}>
               Try again
             </button>
