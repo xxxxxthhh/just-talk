@@ -108,8 +108,9 @@ function renderReview(run: RunState, overrides: Partial<Parameters<typeof RunRev
     drillsEnabled: false,
     onPlayReference: vi.fn(),
     onStopReference: vi.fn(),
-    onPlayAgain: vi.fn(async () => {}),
+    onPlayAgain: vi.fn(),
     starting: false,
+    replayFailed: false,
     onExit: vi.fn(),
     ...overrides,
   };

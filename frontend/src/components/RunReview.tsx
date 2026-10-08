@@ -15,7 +15,7 @@ import type {
 } from "../types";
 import { RunMiniPlayer, useYouPlayer, type CoachPlayback, type YouPlayer, type YouTake } from "./RunMiniPlayer";
 import { formatRunScore, TIER_LABELS } from "./RunRing";
-import { REPLAY_FAILED, useReplay } from "./useReplay";
+import { REPLAY_FAILED } from "./useReplay";
 
 const MAX_EVIDENCE = 3;
 
@@ -249,10 +249,12 @@ type RunReviewProps = {
   drillsEnabled: boolean;
   onPlayReference: (prompt: RunPrompt) => void;
   onStopReference: () => void;
-  // Resolves once the new run has started; rejects if it can't be built.
-  onPlayAgain: () => Promise<void>;
+  // Starts the new run inside the tap; its pending state and failure come back as props.
+  onPlayAgain: () => void;
   // The new run's deck is loading.
   starting: boolean;
+  // The last Play again could not build a new run; the finished run is still shown.
+  replayFailed: boolean;
   onGenerateDrill?: (phoneme: string) => void;
   onExit: () => void;
 };
@@ -269,12 +271,12 @@ export function RunReview({
   onStopReference,
   onPlayAgain,
   starting,
+  replayFailed,
   onGenerateDrill,
   onExit
 }: RunReviewProps) {
   const [player, playerElement] = useYouPlayer(coach, onStopReference, run.paused);
   const [showUnreached, setShowUnreached] = useState(false);
-  const replay = useReplay(onPlayAgain);
   const shared: Shared = { player, coach, attemptAudioUrls, onPlayReference, onStopReference };
 
   // Leaving the review stops the Coach too; the recording element stops itself.
@@ -390,7 +392,7 @@ export function RunReview({
       </div>
 
       <footer className="run-review-actions-v2">
-        {replay.failed ? (
+        {replayFailed ? (
           <p className="run-replay-error" role="alert">
             {REPLAY_FAILED}
           </p>
@@ -404,7 +406,7 @@ export function RunReview({
           <button type="button" className="run-secondary-v2" onClick={leave(onExit)}>
             Done
           </button>
-          <button type="button" className="run-primary-v2" disabled={starting} onClick={leave(replay.playAgain)}>
+          <button type="button" className="run-primary-v2" disabled={starting} onClick={leave(onPlayAgain)}>
             {starting ? "Starting…" : "Play again"}
           </button>
         </div>

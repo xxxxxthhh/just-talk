@@ -10,6 +10,7 @@ import {
 import { PracticeRun } from "../../components/PracticeRun";
 import { RunHero } from "../../components/RunHero";
 import { RunReview } from "../../components/RunReview";
+import { useReplay } from "../../components/useReplay";
 import { ScoredPassage } from "../../components/ScoredPassage";
 import { ScoreGrid } from "../../components/ScoreGrid";
 import { selectRunScore } from "../../game/scoring";
@@ -47,6 +48,12 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
   const [isResultSheetOpen, setIsResultSheetOpen] = useState(false);
   const reducedMotion = useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion);
   const scoresLeft = usePublicScoresLeft();
+  // Owned here, above Summary and Review, so a replay failure survives switching between them.
+  const replay = useReplay(run.playAgain, run.state?.runId ?? null);
+  const leaveRun = () => {
+    replay.abandon();
+    run.exit();
+  };
   const {
     activeMaterial,
     activeSpokenWordIndex,
@@ -201,13 +208,14 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             publicMode={PUBLIC_MODE}
             drillsEnabled={Boolean(session.health?.passage_check_configured)}
             onPlayReference={run.playReference}
-            onPlayAgain={run.playAgain}
+            onPlayAgain={replay.playAgain}
             starting={run.starting}
+            replayFailed={replay.failed}
             onGenerateDrill={(phoneme) => {
-              run.exit();
+              leaveRun();
               void session.insights.generateDrill(phoneme);
             }}
-            onExit={run.exit}
+            onExit={leaveRun}
           />
         ) : (
           <PracticeRun
@@ -234,9 +242,10 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             onResume={run.resume}
             onQuit={run.quit}
             onOpenReview={run.openReview}
-            onPlayAgain={run.playAgain}
+            onPlayAgain={replay.playAgain}
             starting={run.starting}
-            onDone={run.exit}
+            replayFailed={replay.failed}
+            onDone={leaveRun}
             onPlayRevisit={run.playReference}
             scoresLeft={scoresLeft}
           />

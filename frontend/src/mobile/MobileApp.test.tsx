@@ -752,6 +752,63 @@ describe("MobileApp game run", () => {
     }
   });
 
+  test("replay_failure_survives_summary_to_review_while_pending", async () => {
+    const user = userEvent.setup();
+    // Only the replay's own request gets the unbuildable word; Review's refresh stays valid.
+    let broken = false;
+    const gate = deckGate();
+    installRunApi({
+      hold: gate.hold,
+      words: () => {
+        if (!broken) return [];
+        broken = false;
+        return [{ id: "bad", word: null, status: "active", due_at: null }];
+      },
+    });
+    render(<MobileApp />);
+    await finishWithOneTake(user, "summary");
+
+    broken = true;
+    gate.close();
+    await user.click(screen.getByRole("button", { name: "Play again" }));
+    expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "See review" }));
+    expect(screen.getByRole("region", { name: "Run review" })).toBeInTheDocument();
+    await act(async () => gate.open());
+    expect(await screen.findByRole("button", { name: "Play again" })).toBeEnabled();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't start a new run. Your results are still here. Try again."
+    );
+
+    // Done clears it; the next run's screens start clean.
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await startRun(user);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("an_abandoned_replay_that_fails_late_shows_nothing", async () => {
+    const user = userEvent.setup();
+    let broken = false;
+    const gate = deckGate();
+    installRunApi({ hold: gate.hold, words: () => (broken ? [{ id: "bad", word: null, status: "active", due_at: null }] : []) });
+    render(<MobileApp />);
+    await finishWithOneTake(user, "summary");
+
+    broken = true;
+    gate.close();
+    await user.click(screen.getByRole("button", { name: "Play again" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await act(async () => gate.open());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    broken = false;
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await startRun(user);
+    await recordAndStop(user);
+    await quitRun(user);
+    expect(await screen.findByRole("heading", { name: "Run ended" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   test("cancel_quit_keeps_paused_run_and_results", async () => {
     const user = userEvent.setup();
     const scored = installRunApi();
