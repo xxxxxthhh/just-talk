@@ -230,7 +230,11 @@ export function selectReviewSuggestions(run: RunState): readonly RevisitSuggesti
 }
 
 // The summary's single "One thing to revisit": the first suggestion's weakest evidence.
-export function selectTopRevisit(run: RunState): RevisitSuggestion | null {
-  const [top] = selectReviewSuggestions(run);
+export function topRevisitOf(suggestions: readonly RevisitSuggestion[]): RevisitSuggestion | null {
+  const [top] = suggestions;
   return top ? { ...top, evidence: top.evidence.slice(0, 1) } : null;
+}
+
+export function selectTopRevisit(run: RunState): RevisitSuggestion | null {
+  return topRevisitOf(selectReviewSuggestions(run));
 }

@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 
 import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecording } from "../api";
-import { bestBucketForRun, finalizeRunBest, readBest } from "../game/personalBest";
+import { bestBucketForRun, finalizeRunBest } from "../game/personalBest";
 import { getRunPreferences, setRunPreference, useRunPreferences } from "../game/preferences";
 import { buildRunDeck } from "../game/runDeck";
 import { canRecord, nextCapture, runReducer, SENTENCE_COLLECT_MAX } from "../game/runModel";
@@ -9,8 +9,8 @@ import {
   runWeakWords,
   selectReviewSuggestions,
   selectRunScore,
-  selectTopRevisit,
   tierForAccuracy,
+  topRevisitOf,
   validAccuracy
 } from "../game/scoring";
 import { cancelCues, cueForSummary, cueForVerdict, playCue, resetCueEvents } from "../game/sfx";
@@ -394,9 +394,7 @@ export function usePracticeRun(session: RunSession) {
 
   const score = useMemo(() => (state ? selectRunScore(state) : null), [state]);
   const suggestions = useMemo(() => (state ? selectReviewSuggestions(state) : []), [state]);
-  const topRevisit = useMemo(() => (state ? selectTopRevisit(state) : null), [state]);
-  // The bucket comes from the frozen deck; the record itself may change in another tab.
-  const currentBest = state ? readBest(bestBucketForRun(state)) : null;
+  const topRevisit = useMemo(() => topRevisitOf(suggestions), [suggestions]);
 
   return {
     state,
@@ -406,7 +404,6 @@ export function usePracticeRun(session: RunSession) {
     suggestions,
     topRevisit,
     receipt,
-    currentBest,
     preferences,
     setPreference: setRunPreference,
     // Persists Auto-stop off, so the next take is manual; no attempt is used.
