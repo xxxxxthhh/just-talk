@@ -536,6 +536,82 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(graduated_words.json()[0]["status"], "graduated")
         self.assertEqual(graduated_words.json()[0]["consecutive_successes"], 2)
 
+    def test_sentence_score_does_not_increment_word_practice(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+            app = create_app(
+                settings=Settings(
+                    database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}",
+                    max_audio_seconds=30,
+                ),
+                store=store,
+                scorer=FakeScorer(),
+            )
+            client = TestClient(app)
+            client.post("/api/words", json={"word": "quiet"})
+
+            response = client.post(
+                "/api/score",
+                data={"reference_text": "Quiet streets at night."},
+                files={"audio": ("sample.wav", make_wav_bytes(), "audio/wav")},
+            )
+            words = client.get("/api/words")
+
+        # The sentence is scored and saved, but only a single-word reference is spaced-review practice.
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(response.json()["session"])
+        self.assertEqual(words.json()[0]["word"], "quiet")
+        self.assertEqual(words.json()[0]["practice_count"], 0)
+        self.assertIsNone(words.json()[0]["latest_score"])
+
+    def test_score_equal_to_graduation_score_is_not_an_srs_success(self):
+        from fastapi.testclient import TestClient
+
+        from app.config import Settings
+        from app.main import create_app
+        from app.storage import SessionStore
+
+        class ExactlyGraduationScorer(FakeScorer):
+            def score(self, wav_path: Path, reference_text: str) -> dict:
+                payload = super().score(wav_path, reference_text)
+                best = payload["NBest"][0]
+                best["PronunciationAssessment"]["AccuracyScore"] = 85
+                best["Words"][0]["PronunciationAssessment"]["AccuracyScore"] = 85
+                return payload
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SessionStore(f"sqlite:///{Path(temp_dir) / 'sessions.db'}")
+            app = create_app(
+                settings=Settings(
+                    database_url=f"sqlite:///{Path(temp_dir) / 'sessions.db'}",
+                    max_audio_seconds=30,
+                    vocabulary_graduation_score=85,
+                ),
+                store=store,
+                scorer=ExactlyGraduationScorer(),
+            )
+            client = TestClient(app)
+            client.post("/api/words", json={"word": "quiet"})
+            response = client.post(
+                "/api/score",
+                data={"reference_text": "quiet"},
+                files={"audio": ("sample.wav", make_wav_bytes(), "audio/wav")},
+            )
+            words = client.get("/api/words")
+
+        # 85 is Great in the game, but spaced review needs strictly more than the graduation score.
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(words.json()[0]["latest_score"], 85.0)
+        self.assertEqual(words.json()[0]["consecutive_successes"], 0)
+        self.assertEqual(words.json()[0]["interval_days"], 0)
+        self.assertEqual(words.json()[0]["status"], "active")
+
     def test_score_endpoint_long_mode_uses_continuous_scorer_and_saves_segmented_result(self):
         from fastapi.testclient import TestClient
 
