@@ -3,11 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecording } from "../api";
 import { readBest, RUN_BEST_KEY } from "../game/personalBest";
+import { buildRunDeck } from "../game/runDeck";
 import { setRunPreference } from "../game/preferences";
 import { RUN_RULES_VERSION } from "../game/scoring";
 import { cancelCues, playCue, resetCueEvents } from "../game/sfx";
 import type { CaptureStopReason, CaptureSummary, RunCaptureOptions, RunMode, ScoreResponse, WordResult } from "../types";
 import { usePracticeRun, type RunSession } from "./usePracticeRun";
+
+vi.mock("../game/runDeck", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../game/runDeck")>();
+  return { ...actual, buildRunDeck: vi.fn(actual.buildRunDeck) };
+});
 
 vi.mock("../game/sfx", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../game/sfx")>()),
@@ -811,5 +817,117 @@ describe("usePracticeRun", () => {
     });
     expect(h.session.setError).toHaveBeenCalledWith("Microphone blocked");
     expect(h.run().state).toMatchObject({ phase: "ready", activeAttemptId: null, budgetUsed: 0 });
+  });
+
+  it("terminal_pause_only_silences_audio", async () => {
+    // Quit from a paused run ends on an unpaused summary.
+    let h = await setup("challenge");
+    await attempt(h, scored(90));
+    act(() => h.run().pause());
+    expect(h.run().state?.paused).toBe(true);
+    act(() => h.run().quit());
+    expect(h.run().state).toMatchObject({ phase: "summary", paused: false });
+
+    // Pausing a finished run's summary or review changes nothing but stops the voice and cues.
+    h = await setup("challenge");
+    for (let i = 0; i < 6; i += 1) {
+      await attempt(h, scored(95));
+      act(() => h.run().finish());
+    }
+    act(() => h.run().markFeedbackConsumed("summary:run"));
+    const summary = h.run().state;
+    const receipt = h.run().receipt;
+    const consumed = h.run().consumedFeedbackIds;
+    expect(summary?.phase).toBe("summary");
+    vi.mocked(cancelCues).mockClear();
+    h.session.stopCurrentSpeech.mockClear();
+    act(() => h.run().pause());
+    expect(h.run().state).toBe(summary);
+    expect(cancelCues).toHaveBeenCalledTimes(1);
+    expect(h.session.stopCurrentSpeech).toHaveBeenCalledTimes(1);
+
+    act(() => h.run().openReview());
+    const review = h.run().state;
+    act(() => h.run().pause());
+    expect(h.run().state).toBe(review);
+    expect(review?.paused).toBe(false);
+    expect(h.run().receipt).toBe(receipt);
+    expect(h.run().consumedFeedbackIds).toBe(consumed);
+    expect(consumed.has("summary:run")).toBe(true);
+    expect(review?.items.every((item) => item.attempts.length === 1)).toBe(true);
+    expect(h.session.cancelRunCapture).not.toHaveBeenCalled();
+  });
+
+  it("starting_tracks_the_accepted_start_until_its_deck_resolves", async () => {
+    const fake = fakeSession();
+    const hook = renderHook(() => usePracticeRun(fake.session));
+    const run = () => hook.result.current;
+    expect(run().starting).toBe(false);
+
+    // Start: true at once, false when the deck lands.
+    const first = deferred<never[]>();
+    vi.mocked(fetchPhonemeStats).mockReturnValueOnce(first.promise);
+    let starting!: Promise<void>;
+    act(() => {
+      starting = run().start("route");
+    });
+    expect(run().starting).toBe(true);
+    expect(run().state).toBeNull();
+    await act(async () => {
+      first.resolve([]);
+      await starting;
+    });
+    expect(run().starting).toBe(false);
+    expect(run().state?.mode).toBe("route");
+
+    // A superseded start never clears the newer start's flag.
+    const older = deferred<never[]>();
+    const newer = deferred<never[]>();
+    vi.mocked(fetchPhonemeStats).mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    let olderStart!: Promise<void>;
+    let newerStart!: Promise<void>;
+    act(() => {
+      olderStart = run().playAgain();
+    });
+    act(() => {
+      newerStart = run().start("challenge");
+    });
+    await act(async () => {
+      older.resolve([]);
+      await olderStart;
+    });
+    expect(run().starting).toBe(true);
+    await act(async () => {
+      newer.resolve([]);
+      await newerStart;
+    });
+    expect(run().starting).toBe(false);
+    expect(run().state?.mode).toBe("challenge");
+    expect(fake.session.enterRun).toHaveBeenCalledTimes(2);
+
+    // Exit clears it at once; the abandoned deck never takes over.
+    const abandoned = deferred<never[]>();
+    vi.mocked(fetchPhonemeStats).mockReturnValueOnce(abandoned.promise);
+    act(() => {
+      starting = run().start("route");
+    });
+    act(() => run().exit());
+    expect(run().starting).toBe(false);
+    await act(async () => {
+      abandoned.resolve([]);
+      await starting;
+    });
+    expect(run().starting).toBe(false);
+    expect(run().state).toBeNull();
+
+    // A deck that fails to build clears it and reports to the caller.
+    vi.mocked(buildRunDeck).mockImplementationOnce(() => {
+      throw new Error("No deck");
+    });
+    await act(async () => {
+      await expect(run().start("route")).rejects.toThrow("No deck");
+    });
+    expect(run().starting).toBe(false);
+    expect(run().state).toBeNull();
   });
 });

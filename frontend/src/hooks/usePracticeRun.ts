@@ -111,6 +111,9 @@ export function usePracticeRun(session: RunSession) {
   // Bumped by every start and exit; a start whose token moved on while it
   // fetched deck data is abandoned.
   const startTokenRef = useRef(0);
+  // True from an accepted Start or Play again until its deck is in or the start is abandoned, so the
+  // run owns navigation while the deck loads.
+  const [starting, setStarting] = useState(false);
   // Decided once when a rated run ends and kept for the run's lifetime, across summary and
   // review remounts, so later storage changes never alter it.
   const [receipt, setReceipt] = useState<RunBestReceipt | null>(null);
@@ -179,17 +182,23 @@ export function usePracticeRun(session: RunSession) {
     session.prepareRunAudio();
     startTokenRef.current += 1;
     const token = startTokenRef.current;
-    const [phonemeStats, vocabulary] = await Promise.all([
-      fetchPhonemeStats().catch((): PhonemeStat[] => []),
-      listWords().catch((): VocabularyItem[] => [])
-    ]);
-    if (startTokenRef.current !== token) return;
-    const prompts = buildRunDeck({ phonemeStats, vocabulary, previousWeakWords });
-    // Replacing a run keeps the session's run audio that this gesture just unlocked.
-    if (stateRef.current) teardown(true);
-    session.enterRun();
-    resetRunLifetime();
-    dispatch({ type: "START", runId: newId("run"), mode, prompts });
+    setStarting(true);
+    try {
+      const [phonemeStats, vocabulary] = await Promise.all([
+        fetchPhonemeStats().catch((): PhonemeStat[] => []),
+        listWords().catch((): VocabularyItem[] => [])
+      ]);
+      if (startTokenRef.current !== token) return;
+      const prompts = buildRunDeck({ phonemeStats, vocabulary, previousWeakWords });
+      // Replacing a run keeps the session's run audio that this gesture just unlocked.
+      if (stateRef.current) teardown(true);
+      session.enterRun();
+      resetRunLifetime();
+      dispatch({ type: "START", runId: newId("run"), mode, prompts });
+    } finally {
+      // A newer start owns the flag; exit has already cleared it.
+      if (startTokenRef.current === token) setStarting(false);
+    }
   }
 
   async function record() {
@@ -347,6 +356,7 @@ export function usePracticeRun(session: RunSession) {
 
   // Each ends the attempt first, so a blob that arrives while the capture
   // stops is discarded.
+  // In summary or review the reducer ignores PAUSE, but the voice and cues still stop.
   function pause() {
     runAction("PAUSE");
     cancelCapture("pause");
@@ -370,6 +380,7 @@ export function usePracticeRun(session: RunSession) {
 
   function exit() {
     startTokenRef.current += 1;
+    setStarting(false);
     teardown(false);
     resetRunLifetime();
   }
@@ -387,6 +398,7 @@ export function usePracticeRun(session: RunSession) {
 
   return {
     state,
+    starting,
     attemptAudioUrls,
     score,
     suggestions,
