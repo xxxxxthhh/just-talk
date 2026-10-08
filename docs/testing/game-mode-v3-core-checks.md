@@ -2,23 +2,27 @@
 
 Track A's record of the core (non-UI) acceptance for Game Mode v3 ([design](../design/game-mode-v3.md), [plan](../development/game-mode-v3-implementation-plan.md), Task A6). It maps the plan's checks to tests that exist in the repository and to command output, and it names what is not yet verified. Mocked and fake-service tests are not device evidence; browser layout, audio policy and physical recording stay **Not verified** here and belong to Track B's unified device checklist (`game-mode-v3-device-checklist.md`).
 
-**Status:** Partial. Everything below that does not depend on B7 (My words UI) is recorded. The final end-to-end pass, including B7's `WordsScreen.test.tsx` and B's post-A5 `route12_production_pack_completes_summary_review_and_replay`, is added after B7 lands.
+**Status:** Complete for the automated core checks at `cce6b7b`, after B7 (My words UI) landed. Device and browser rows stay Not verified (see below).
 
 ## Automated results
 
-Revision `1859254` (`feat/game-mode-v3`). The shared working tree held impl-ui's uncommitted changes at the time, so every command ran from a clean `git archive` export of that commit, with the repository's own `frontend/node_modules` and `.venv` linked in. Mocks and fake synthesizers only; no Azure calls.
+Final run at `cce6b7b` (`feat/game-mode-v3`), from the repository root with a clean working tree (`git status --short` printed nothing). Mocks and fake synthesizers only; no Azure calls.
 
 | Command | Exit | Result |
 | --- | --- | --- |
-| `git diff --check` (export is a clean commit) | 0 | Clean |
+| `git status --short` | 0 | Clean |
+| `git diff --check` | 0 | Clean |
 | `npm --prefix frontend test -- --run src/game` | 0 | 11 files, 109 passed |
 | `npm --prefix frontend test -- --run src/hooks/usePracticeRun.test.tsx src/hooks/useRecorder.test.tsx src/hooks/useSpeech.test.tsx src/usePracticeSession.test.tsx` | 0 | 4 files, 107 passed |
-| `npm --prefix frontend test -- --run src/components/RunHero.test.tsx src/components/RunStones.test.tsx src/components/RunRing.test.tsx src/components/PracticeRun.test.tsx src/components/RunReview.test.tsx src/components/RunMiniPlayer.test.tsx src/components/useReplay.test.tsx src/components/PublicGate.test.tsx src/mobile/MobileApp.test.tsx` | 0 | 9 files, 115 passed |
-| `npm --prefix frontend test -- --run src/mobile/screens/WordsScreen.test.tsx` | 1 | **Not run: the file does not exist yet (B7).** |
+| `npm --prefix frontend test -- --run src/components/RunHero.test.tsx src/components/RunStones.test.tsx src/components/RunRing.test.tsx src/components/PracticeRun.test.tsx src/components/RunReview.test.tsx src/components/RunMiniPlayer.test.tsx src/components/useReplay.test.tsx src/components/PublicGate.test.tsx src/mobile/MobileApp.test.tsx` | 0 | 9 files, 129 passed |
+| `npm --prefix frontend test -- --run src/mobile/screens/WordsScreen.test.tsx` | 0 | 1 file, 2 passed |
+| `npm --prefix frontend test -- --run src/mobile/MobileApp.test.tsx -t route12_production_pack_completes_summary_review_and_replay` | 0 | 1 passed (B's post-A5 production Route 12 test, on the real 60-item pack) |
 | `PYTHONPATH=backend .venv/bin/python -m pytest backend/tests/test_game_starter_cache.py backend/tests/test_api.py backend/tests/test_public_word_bank.py` | 0 | 33 passed |
-| `bash scripts/test.sh` | 0 | Ruff clean; 120 backend tests passed; lint 0 errors; 36 files, 437 frontend tests passed; production build succeeded |
+| `bash scripts/test.sh` | 0 | Ruff clean; 120 backend tests passed; lint 0 errors; 37 files, 453 frontend tests passed; production build succeeded |
 
 `--run` was added to the plan's Vitest commands so they exit instead of watching.
+
+An earlier pre-B7 record at `1859254` (taken from a clean export, while the shared tree held impl-ui's uncommitted work) passed everything except the not-yet-existing `WordsScreen.test.tsx`: 36 files and 437 frontend tests, 120 backend.
 
 Existing warnings, none from v3 code:
 
@@ -27,7 +31,7 @@ Existing warnings, none from v3 code:
 
 ## Implementation the plan keeps unchanged
 
-`git diff --stat 7995c5e 1859254` is empty for `game/vad.ts`, `game/runAudio.ts`, `game/sfx.ts`, `hooks/useRecorder.ts`, `hooks/useSpeech.ts`, `usePracticeSession.ts`, `components/PublicGate.tsx` and `api.ts`. Their A-owned tests were extended; their code was not. The one controller-side fix for an existing speech seam (`ff1f1f5`, repeat Hear it first) lives in `hooks/usePracticeRun.ts`.
+`git diff --stat 7995c5e cce6b7b` is empty for `game/vad.ts`, `game/runAudio.ts`, `game/sfx.ts`, `hooks/useRecorder.ts`, `hooks/useSpeech.ts`, `usePracticeSession.ts`, `components/PublicGate.tsx`, `components/WordBankPanel.tsx` and `api.ts`. In `backend/app`, the only change is the A5 `GAME_STARTER_TEXTS` allowlist in `main.py`. Their A-owned tests were extended; their code was not. The one controller-side fix for an existing speech seam (`ff1f1f5`, repeat Hear it first) lives in `hooks/usePracticeRun.ts`.
 
 ### Auto-stop parameters (unchanged from v2)
 
@@ -108,7 +112,7 @@ Not verified. Fake-service and jsdom tests do not show browser audio policy, rea
 | My words 6/12 order, counts 5/6/11/12, no graduated filler, no PB; revisit from a Summary | Not verified |
 | Full-bank known vs unknown words and score quota vs word capacity on the public trial | Not verified (fake-service evidence only) |
 
-## Pending until B7
+## End-to-end after B7
 
-- Run `src/mobile/screens/WordsScreen.test.tsx` and the post-A5 `route12_production_pack_completes_summary_review_and_replay` once they exist, then rerun `bash scripts/test.sh` at the final revision.
-- Record the final revision and results here, and mark this record complete.
+- `WordsScreen.test.tsx` (2 tests) and B's `route12_production_pack_completes_summary_review_and_replay` pass at `cce6b7b`, together with the full suite above.
+- No core regression is open. The core rows of the device checklist above remain Not verified until Track B's owner pilot records them.
