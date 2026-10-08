@@ -18,6 +18,7 @@ import { usePracticeRun } from "../../hooks/usePracticeRun";
 import { usePublicScoresLeft } from "../usePublicScoresLeft";
 import { PUBLIC_MODE } from "../../publicMode";
 import { scoreValue } from "../../scoreUtils";
+import type { RunChoice } from "../../types";
 import { usePracticeSession } from "../../usePracticeSession";
 
 type PracticeSessionState = ReturnType<typeof usePracticeSession>;
@@ -48,6 +49,8 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
   const [isResultSheetOpen, setIsResultSheetOpen] = useState(false);
   const reducedMotion = useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion);
   const scoresLeft = usePublicScoresLeft();
+  // The entry choice. A3's useRunChoice/setRunChoice replace this local state.
+  const [runChoice, setRunChoice] = useState<RunChoice>({ selection: "route", routeLength: 6 });
   // Owned here, above Summary and Review, so a replay failure survives switching between them.
   const replay = useReplay(run.playAgain, run.state?.runId ?? null);
   const leaveRun = () => {
@@ -325,7 +328,16 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
           starting={run.starting}
           preferences={run.preferences}
           onSetPreference={run.setPreference}
-          onStart={(mode) => run.start(mode)}
+          choice={runChoice}
+          onChoiceChange={setRunChoice}
+          // Until A2's start(config), only the two six-item v2 configurations can start; the
+          // others fail visibly instead of starting a different run.
+          onStart={(choice) =>
+            choice.selection === "target85" || (choice.selection === "route" && choice.routeLength === 12)
+              ? Promise.reject(new Error("This configuration needs the v3 controller."))
+              : run.start(choice.selection === "route" ? "route" : "challenge")
+          }
+          maxScores={null}
           scoresLeft={scoresLeft}
         />
 

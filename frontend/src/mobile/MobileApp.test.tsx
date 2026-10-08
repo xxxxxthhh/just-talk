@@ -304,7 +304,7 @@ const STARTER_TEXTS = [
 ];
 
 async function startRun(user: ReturnType<typeof userEvent.setup>, mode: "Route" | "Challenge" = "Route") {
-  await user.click(await screen.findByRole("radio", { name: new RegExp(`^${mode}`) }));
+  await user.click(await screen.findByRole("radio", { name: mode === "Route" ? "Route" : "Challenge, target 60" }));
   await user.click(await screen.findByRole("button", { name: `Start ${mode}` }));
   return screen.findByRole("region", { name: `${mode} run` });
 }
@@ -465,10 +465,10 @@ describe("MobileApp game run", () => {
     // No stats yet means the starter focus /θ/, the same rule the run freezes.
     const hero = await screen.findByRole("region", { name: "This run's sound" });
     expect(await within(hero).findByText("/θ/")).toBeInTheDocument();
-    expect(within(hero).getByText("Best · /θ/ · Route").parentElement).toHaveTextContent("861A");
-    await user.click(within(hero).getByRole("radio", { name: /^Challenge/ }));
+    expect(within(hero).getByText("Best · /θ/ · Route 6").parentElement).toHaveTextContent("861A");
+    await user.click(within(hero).getByRole("radio", { name: "Challenge, target 60" }));
     expect(within(hero).getByText("No best yet")).toBeInTheDocument();
-    await user.click(within(hero).getByRole("radio", { name: /^Route/ }));
+    await user.click(within(hero).getByRole("radio", { name: "Route" }));
 
     // One preference, shared by the card and the run.
     await user.click(within(hero).getByRole("button", { name: "Auto-stop on" }));

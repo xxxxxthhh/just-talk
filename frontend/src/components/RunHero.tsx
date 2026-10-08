@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 
 import { fetchPhonemeStats } from "../api";
 import "../game/game.css";
@@ -7,13 +7,28 @@ import type { RunPreferences } from "../game/preferences";
 import { chooseFocusPhoneme } from "../game/runDeck";
 import { RUN_RULES_VERSION } from "../game/scoring";
 import { STARTER_PACK } from "../game/starterPack";
-import type { PhonemeStat, RunMode } from "../types";
-import { RunStonePlaceholders } from "./RunStones";
+import { PUBLIC_MODE } from "../publicMode";
+import type { PhonemeStat, RunChoice, RunLength, RunSelection } from "../types";
 
-const MODES: readonly { mode: RunMode; name: string; line: string }[] = [
-  { mode: "route", name: "Route", line: "Six items, no hearts" },
-  { mode: "challenge", name: "Challenge", line: "Two hearts · aim for S" }
+const SELECTIONS: readonly { selection: RunSelection; name: string; label: string; target: 60 | 85 | null }[] = [
+  { selection: "route", name: "Route", label: "Route", target: null },
+  { selection: "target60", name: "Target 60", label: "Challenge, target 60", target: 60 },
+  { selection: "target85", name: "Target 85", label: "Challenge, target 85", target: 85 }
 ];
+const LENGTHS: readonly RunLength[] = [6, 12];
+
+// Arrow keys move the checked radio within its group, wrapping, as native radios do.
+function radioKeys<T>(options: readonly T[], current: T, choose: (value: T) => void) {
+  return (event: KeyboardEvent<HTMLElement>) => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+    if (!step) return;
+    event.preventDefault();
+    const index = (options.indexOf(current) + step + options.length) % options.length;
+    choose(options[index]);
+    const radios = event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]');
+    radios[index]?.focus();
+  };
+}
 
 type RunHeroProps = {
   // False while an ordinary take is recording or scoring, or a drill is generating.
@@ -22,15 +37,29 @@ type RunHeroProps = {
   starting: boolean;
   preferences: RunPreferences;
   onSetPreference: (name: keyof RunPreferences, value: boolean) => void;
-  onStart: (mode: RunMode) => Promise<void>;
+  // The remembered entry choice; the screen owns reading and saving it.
+  choice: RunChoice;
+  onChoiceChange: (choice: RunChoice) => void;
+  onStart: (choice: RunChoice) => Promise<void>;
+  // Counted scores the chosen configuration may use; null until the screen can derive it.
+  maxScores: number | null;
   // Public mode only; null hides the usage line.
   scoresLeft: number | null;
 };
 
 // The run's entry card. The sound it previews comes from the same stats and rule the run uses
 // to freeze its focus, so the Best shown here is the bucket the run will be compared with.
-export function RunHero({ canStart, starting, preferences, onSetPreference, onStart, scoresLeft }: RunHeroProps) {
-  const [mode, setMode] = useState<RunMode>("route");
+export function RunHero({
+  canStart,
+  starting,
+  preferences,
+  onSetPreference,
+  choice,
+  onChoiceChange,
+  onStart,
+  maxScores,
+  scoresLeft
+}: RunHeroProps) {
   const [stats, setStats] = useState<readonly PhonemeStat[] | null>(null);
   const [startError, setStartError] = useState(false);
 
@@ -49,13 +78,27 @@ export function RunHero({ canStart, starting, preferences, onSetPreference, onSt
   const examples = focus
     ? STARTER_PACK.filter((item) => item.phoneme === focus && item.stage === "focus").map((item) => item.targetWord)
     : [];
+  const selected = SELECTIONS.find((option) => option.selection === choice.selection) ?? SELECTIONS[0];
+  const isRoute = selected.target === null;
+  const mode = isRoute ? "route" : "challenge";
   const best = focus ? readBest({ mode, focus, rulesVersion: RUN_RULES_VERSION }) : null;
-  const modeName = mode === "challenge" ? "Challenge" : "Route";
+  const configName = isRoute ? `Route ${choice.routeLength}` : selected.name;
+  const shape = isRoute
+    ? `${choice.routeLength} items · no hearts`
+    : `6 items · target ${selected.target} · 2 hearts`;
+  // Public mode states the cost once, in the usage line.
+  const explanation = maxScores !== null && !PUBLIC_MODE ? `${shape} · up to ${maxScores} scores` : shape;
+  const usage =
+    scoresLeft === null ? null : maxScores === null ? `${scoresLeft} scores left today` : `Up to ${maxScores} scores · ${scoresLeft} left today`;
+
+  // Choosing a target keeps the remembered Route length for the next Route.
+  const choose = (selection: RunSelection) => onChoiceChange({ ...choice, selection });
+  const chooseLength = (routeLength: RunLength) => onChoiceChange({ ...choice, routeLength });
 
   // The start itself runs in this tap, so run audio is unlocked inside the gesture.
   const start = () => {
     setStartError(false);
-    onStart(mode).catch(() => setStartError(true));
+    onStart(choice).catch(() => setStartError(true));
   };
 
   return (
@@ -80,11 +123,73 @@ export function RunHero({ canStart, starting, preferences, onSetPreference, onSt
         </div>
       </div>
 
-      <RunStonePlaceholders highlight="focus" />
+      <div
+        className="run-hero-modes"
+        role="radiogroup"
+        aria-label="Run type"
+        onKeyDown={starting ? undefined : radioKeys(SELECTIONS.map((option) => option.selection), choice.selection, choose)}
+      >
+        {SELECTIONS.map((option) => {
+          const checked = option.selection === choice.selection;
+          return (
+            <button
+              key={option.selection}
+              type="button"
+              role="radio"
+              aria-checked={checked}
+              aria-label={option.label}
+              tabIndex={checked ? 0 : -1}
+              className="run-hero-mode"
+              disabled={starting}
+              onClick={() => choose(option.selection)}
+            >
+              <span className="run-hero-mode-name">{option.name}</span>
+              {option.target === null ? (
+                <span className="run-hero-mode-line">No hearts</span>
+              ) : (
+                <span className="run-hero-mode-hearts" aria-hidden="true">
+                  ♥♥
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="run-hero-config">
+        {isRoute ? (
+          <div
+            className="run-hero-chips"
+            role="radiogroup"
+            aria-label="Route length"
+            onKeyDown={starting ? undefined : radioKeys(LENGTHS, choice.routeLength, chooseLength)}
+          >
+            {LENGTHS.map((length) => {
+              const checked = length === choice.routeLength;
+              return (
+                <button
+                  key={length}
+                  type="button"
+                  role="radio"
+                  aria-checked={checked}
+                  aria-label={`${length} items`}
+                  tabIndex={checked ? 0 : -1}
+                  className="run-hero-chip"
+                  disabled={starting}
+                  onClick={() => chooseLength(length)}
+                >
+                  {length}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        <p className="run-hero-explain">{explanation}</p>
+      </div>
 
       <div className="run-hero-best">
         <span className="run-hero-best-label">
-          Best{focus ? ` · /${focus}/` : ""} · {modeName}
+          Best{focus ? ` · /${focus}/` : ""} · {configName}
         </span>
         {best ? (
           <span className="run-hero-best-value">
@@ -96,30 +201,6 @@ export function RunHero({ canStart, starting, preferences, onSetPreference, onSt
         ) : (
           <span className="run-hero-best-none">{focus ? "No best yet" : "—"}</span>
         )}
-      </div>
-
-      <div className="run-hero-modes" role="radiogroup" aria-label="Run type">
-        {MODES.map((option) => (
-          <button
-            key={option.mode}
-            type="button"
-            role="radio"
-            aria-checked={mode === option.mode}
-            className="run-hero-mode"
-            onClick={() => setMode(option.mode)}
-          >
-            <span className="run-hero-mode-name">
-              {option.name}
-              {option.mode === "challenge" ? (
-                <span className="run-hero-mode-hearts" aria-hidden="true">
-                  {" "}
-                  ♥♥
-                </span>
-              ) : null}
-            </span>
-            <span className="run-hero-mode-line">{option.line}</span>
-          </button>
-        ))}
       </div>
 
       <div className="run-hero-toggles">
@@ -144,14 +225,14 @@ export function RunHero({ canStart, starting, preferences, onSetPreference, onSt
       </div>
 
       <button type="button" className="run-primary-v2" disabled={!canStart || starting} onClick={start}>
-        {starting ? "Starting…" : `Start ${modeName}`}
+        {starting ? "Starting…" : isRoute ? "Start Route" : "Start Challenge"}
       </button>
       {startError ? (
         <p className="run-hero-error" role="alert">
           Couldn't start the run. Try again.
         </p>
       ) : null}
-      {scoresLeft !== null ? <p className="run-hero-usage">{scoresLeft} scores left today</p> : null}
+      {usage ? <p className="run-hero-usage">{usage}</p> : null}
     </section>
   );
 }

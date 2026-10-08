@@ -1589,10 +1589,6 @@
   font-weight: 600;
 }
 
-.run-stones.is-placeholder .run-stone.is-pending .run-stone-shape {
-  stroke: rgba(251, 146, 60, 0.55);
-}
-
 .run-hero-best {
   display: flex;
   align-items: center;
@@ -1629,16 +1625,16 @@
 
 .run-hero-modes {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .run-hero-mode {
-  min-height: 64px;
+  min-height: 56px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px;
+  gap: 2px;
+  padding: 9px 10px;
   border: 1px solid var(--g-line-strong);
   border-radius: var(--g-radius-tile);
   background: transparent;
@@ -1653,8 +1649,9 @@
 
 .run-hero-mode-name {
   font-family: var(--font-display);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .run-hero-mode-hearts {
@@ -1665,6 +1662,50 @@
 .run-hero-mode-line {
   color: var(--g-text-muted);
   font-size: 12px;
+}
+
+.run-hero-mode:disabled,
+.run-hero-chip:disabled {
+  opacity: 0.55;
+}
+
+/* Route length chips share one row with the explanation; a target shows the line alone. */
+.run-hero-config {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.run-hero-chips {
+  flex: none;
+  display: flex;
+  gap: 6px;
+}
+
+.run-hero-chip {
+  width: 50px;
+  height: 44px;
+  border: 1px solid var(--g-line-strong);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--g-text-muted);
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.run-hero-chip[aria-checked="true"] {
+  border: 1.5px solid var(--g-accent);
+  background: rgba(251, 146, 60, 0.12);
+  color: var(--g-text);
+}
+
+.run-hero-explain {
+  margin: 0;
+  color: var(--g-text-soft);
+  font-size: 13px;
+  line-height: 1.35;
 }
 
 .run-hero-toggles {
