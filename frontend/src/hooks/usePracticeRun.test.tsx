@@ -858,7 +858,7 @@ describe("usePracticeRun", () => {
     expect(h.session.cancelRunCapture).not.toHaveBeenCalled();
   });
 
-  it("starting_tracks_the_accepted_start_until_its_deck_resolves", async () => {
+  it("starting_tracks_the_accepted_start_until_its_deck_resolves_or_cannot_be_built", async () => {
     const fake = fakeSession();
     const hook = renderHook(() => usePracticeRun(fake.session));
     const run = () => hook.result.current;
@@ -920,7 +920,8 @@ describe("usePracticeRun", () => {
     expect(run().starting).toBe(false);
     expect(run().state).toBeNull();
 
-    // A deck that fails to build clears it and reports to the caller.
+    // An unrecoverable deck build failure clears it and rejects start. (A failed stats or word
+    // fetch is not one: the run falls back to the starter deck.)
     vi.mocked(buildRunDeck).mockImplementationOnce(() => {
       throw new Error("No deck");
     });
@@ -929,5 +930,50 @@ describe("usePracticeRun", () => {
     });
     expect(run().starting).toBe(false);
     expect(run().state).toBeNull();
+  });
+
+  it("heart_cue_plays_in_the_foreground_but_not_for_a_result_settled_while_paused", async () => {
+    // Lose the first heart in the foreground: the heart cue plays.
+    const h = await setup("challenge");
+    await attempt(h, scored(40));
+    act(() => h.run().playReference());
+    act(() => h.loads[0](true));
+    await attempt(h, scored(40));
+    expect(h.run().state?.hearts).toBe(1);
+    expect(playCue).toHaveBeenCalledWith("heart", expect.any(String));
+    act(() => h.run().finish());
+
+    // The final rescue's result settles while paused and ends the run: summary, unpaused, silent.
+    await attempt(h, scored(40));
+    act(() => h.run().playReference());
+    act(() => h.loads[1](true));
+    const pending = deferred<ScoreResponse>();
+    vi.mocked(scoreRecording).mockReturnValueOnce(pending.promise);
+    await act(async () => {
+      await h.run().record();
+    });
+    act(() => h.run().stop());
+    act(() => h.run().pause());
+    vi.mocked(playCue).mockClear();
+    pending.resolve(scored(40));
+    await flush();
+    expect(h.run().state).toMatchObject({ phase: "summary", endReason: "hearts-exhausted", paused: false });
+    expect(vi.mocked(playCue).mock.calls.filter(([cue]) => cue !== null)).toEqual([]);
+  });
+
+  it("failed_stats_and_word_fetches_still_start_a_starter_route", async () => {
+    vi.mocked(fetchPhonemeStats).mockRejectedValue(new Error("offline"));
+    vi.mocked(listWords).mockRejectedValue(new Error("offline"));
+    const fake = fakeSession();
+    const hook = renderHook(() => usePracticeRun(fake.session));
+    await act(async () => {
+      await hook.result.current.start("route");
+    });
+    expect(hook.result.current.starting).toBe(false);
+    expect(hook.result.current.state?.mode).toBe("route");
+    expect(hook.result.current.state?.items).toHaveLength(6);
+    expect(hook.result.current.state?.items.every((item) => item.prompt.source === "starter")).toBe(true);
+    expect(fake.session.enterRun).toHaveBeenCalledTimes(1);
+    expect(fake.session.setError).not.toHaveBeenCalled();
   });
 });

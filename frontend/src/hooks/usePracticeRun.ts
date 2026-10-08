@@ -131,7 +131,9 @@ export function usePracticeRun(session: RunSession) {
 
   // Facts are final before anything renders: the receipt and cues come from the same transition.
   function settle(previous: RunState | null, next: RunState, action: RunAction) {
-    if (action.type === "SCORE_RECEIVED" && !next.paused) {
+    // A result that settles while paused stays silent, even when ending the run clears paused.
+    const audible = previous !== null && !previous.paused && !next.paused;
+    if (action.type === "SCORE_RECEIVED" && audible) {
       const item = next.items.find((candidate) => candidate.prompt.itemId === action.key.itemId);
       const attempt = item?.attempts.find((candidate) => candidate.key.attemptId === action.key.attemptId);
       if (item && attempt) {
@@ -142,7 +144,7 @@ export function usePracticeRun(session: RunSession) {
     receiptRunRef.current = next.runId;
     const score = selectRunScore(next);
     setReceipt(finalizeRunBest(bestBucketForRun(next), next.runId, score));
-    if (!next.paused) playCue(cueForSummary(score), `summary-${next.runId}`);
+    if (audible) playCue(cueForSummary(score), `summary-${next.runId}`);
   }
 
   function dispatch(action: RunAction): RunState | null {
