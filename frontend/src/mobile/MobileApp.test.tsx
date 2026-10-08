@@ -300,6 +300,12 @@ async function startRun(user: ReturnType<typeof userEvent.setup>, mode: "Start a
   return screen.findByRole("region", { name: mode === "Challenge" ? "Challenge run" : "Route run" });
 }
 
+// Quit lives behind Pause while the tab bar is hidden.
+async function quitRun(user: ReturnType<typeof userEvent.setup>) {
+  if (!screen.queryByRole("button", { name: "Quit run" })) await user.click(await screen.findByRole("button", { name: "Pause run" }));
+  await user.click(await screen.findByRole("button", { name: "Quit run" }));
+}
+
 async function recordAndStop(user: ReturnType<typeof userEvent.setup>, recordName = "Record") {
   await user.click(screen.getByRole("button", { name: recordName }));
   await user.click(await screen.findByRole("button", { name: "Stop" }));
@@ -395,7 +401,7 @@ describe("MobileApp game run", () => {
     expect(FakeMediaRecorder.instances[0].state).toBe("inactive");
     await user.click(screen.getByRole("tab", { name: "Practice" }));
 
-    expect(screen.getByText("Paused.")).toBeInTheDocument();
+    expect(screen.getByText("Paused.", { selector: ".run-status-main" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Record" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Resume" }));
     expect(screen.getByRole("button", { name: "Record" })).toBeEnabled();
@@ -404,12 +410,12 @@ describe("MobileApp game run", () => {
 
     // Backgrounding the page pauses the same way.
     await recordAndStop(user);
-    expect(await screen.findByText("Clear. Nice one.")).toBeInTheDocument();
+    expect(await screen.findByText("Strong.")).toBeInTheDocument();
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
     act(() => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
-    expect(await screen.findByText("Paused.")).toBeInTheDocument();
+    expect(await screen.findByText("Paused.", { selector: ".run-status-main" })).toBeInTheDocument();
     expect(getUserMedia).toHaveBeenCalledTimes(2);
     expect(scored).toEqual(["thin"]);
   });
@@ -445,7 +451,7 @@ describe("MobileApp game run", () => {
     expect(screen.getByRole("region", { name: "Route run" })).toBeInTheDocument();
     // Cancelling also left the session alone: leaving the run shows no "water" drill.
     await user.click(screen.getByRole("button", { name: "Resume" }));
-    await user.click(screen.getByRole("button", { name: "Quit" }));
+    await quitRun(user);
     await user.click(await screen.findByRole("button", { name: "Done" }));
     expect(screen.getByRole("textbox", { name: "Passage" })).not.toHaveValue("water");
     await startRun(user);
@@ -499,7 +505,7 @@ describe("MobileApp game run", () => {
     await waitFor(() => expect(scored).toEqual(["thin"]));
     vi.mocked(Date.now).mockRestore();
 
-    await user.click(await screen.findByRole("button", { name: "Quit" }));
+    await quitRun(user);
     await user.click(await screen.findByRole("button", { name: "Done" }));
     expect(screen.queryByRole("button", { name: /View score/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Score" })).not.toBeInTheDocument();
@@ -507,7 +513,7 @@ describe("MobileApp game run", () => {
 
   async function generateDrillFromReview(user: ReturnType<typeof userEvent.setup>) {
     await startRun(user);
-    await user.click(screen.getByRole("button", { name: "Quit" }));
+    await quitRun(user);
     await user.click(await screen.findByRole("button", { name: "Generate a drill for /θ/" }));
   }
 
@@ -586,7 +592,7 @@ describe("MobileApp game run", () => {
     for (let i = 1; i < STARTER_TEXTS.length; i += 1) {
       await waitFor(() => expect(screen.getByRole("button", { name: "Record next" })).toBeEnabled());
       await recordAndStop(user, "Record next");
-      await screen.findByText(STARTER_TEXTS[i], { selector: ".run-prompt .run-prompt-text" });
+      await screen.findByText(STARTER_TEXTS[i], { selector: ".run-prompt-v2" });
       await waitFor(() => expect(scored).toHaveLength(i + 1));
     }
     await waitFor(() => expect(screen.getByRole("button", { name: "Finish" })).toBeEnabled());
@@ -598,7 +604,7 @@ describe("MobileApp game run", () => {
     await user.click(screen.getByRole("button", { name: "Play again" }));
     expect(await screen.findByRole("region", { name: "Route run" })).toBeInTheDocument();
     expect(scored).toHaveLength(6);
-    await user.click(screen.getByRole("button", { name: "Quit" }));
+    await quitRun(user);
     await user.click(await screen.findByRole("button", { name: "Done" }));
 
     // Challenge: an unknown failure leaves the item pending and lets the learner continue.
@@ -606,10 +612,10 @@ describe("MobileApp game run", () => {
     failNext = true;
     await recordAndStop(user);
     expect(await screen.findByText("Still waiting on that score. You can keep going.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Item 1: not practiced, score pending, current")).toBeInTheDocument();
+    expect(screen.getByLabelText("1. thin: result pending")).toBeInTheDocument();
     await recordAndStop(user, "Record next");
-    expect(await screen.findByText("Passed.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Quit" }));
+    expect(await screen.findByText("Strong.")).toBeInTheDocument();
+    await quitRun(user);
     expect(await screen.findByRole("heading", { name: "Challenge incomplete" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "See review" }));
     const pendingItem = (await screen.findByText("thin", { selector: ".run-review-item .run-prompt-text" })).closest("li");

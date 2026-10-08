@@ -1,5 +1,5 @@
 import { Clock3, Loader2, Mic, Square, UploadCloud, X } from "lucide-react";
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 
 import { AudioPlayer } from "../../components/AudioPlayer";
 import { AudioVisualizer } from "../../components/AudioVisualizer";
@@ -9,8 +9,11 @@ import {
 } from "../../components/MaterialLibrary";
 import { PracticeRun } from "../../components/PracticeRun";
 import { RunReview } from "../../components/RunReview";
+import { IDLE_TELEMETRY } from "../../components/RunRing";
 import { ScoredPassage } from "../../components/ScoredPassage";
 import { ScoreGrid } from "../../components/ScoreGrid";
+import { setRunPreference, useRunPreferences } from "../../game/preferences";
+import { selectRunScore, selectTopRevisit } from "../../game/scoring";
 import { usePracticeRun } from "../../hooks/usePracticeRun";
 import { PUBLIC_MODE } from "../../publicMode";
 import { scoreValue } from "../../scoreUtils";
@@ -23,6 +26,18 @@ type PracticeScreenProps = {
   run: ReturnType<typeof usePracticeRun>;
 };
 
+const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
+
+function subscribeReducedMotion(listener: () => void): () => void {
+  const query = window.matchMedia?.(REDUCED_MOTION);
+  query?.addEventListener("change", listener);
+  return () => query?.removeEventListener("change", listener);
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia?.(REDUCED_MOTION).matches ?? false;
+}
+
 export default function PracticeScreen({ session, run }: PracticeScreenProps) {
   const materialLibraryRef = useRef<HTMLDivElement | null>(null);
   const resultSheetRef = useRef<HTMLDialogElement | null>(null);
@@ -30,6 +45,13 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
   const resultChipRef = useRef<HTMLButtonElement | null>(null);
   const focusReturnRef = useRef<HTMLElement | null>(null);
   const [isResultSheetOpen, setIsResultSheetOpen] = useState(false);
+  const runPreferences = useRunPreferences();
+  const reducedMotion = useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion);
+  // Interim until the run controller holds consumed feedback for the run's lifetime.
+  const [consumedFeedbackIds, setConsumedFeedbackIds] = useState<ReadonlySet<string>>(() => new Set());
+  const markFeedbackConsumed = useCallback((id: string) => {
+    setConsumedFeedbackIds((previous) => (previous.has(id) ? previous : new Set(previous).add(id)));
+  }, []);
   const {
     activeMaterial,
     activeSpokenWordIndex,
@@ -190,15 +212,28 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
         ) : (
           <PracticeRun
             run={run.state}
+            score={selectRunScore(run.state)}
+            topRevisit={selectTopRevisit(run.state)}
+            receipt={null}
+            telemetry={IDLE_TELEMETRY}
+            preferences={runPreferences}
+            reducedMotion={reducedMotion}
+            consumedFeedbackIds={consumedFeedbackIds}
+            onFeedbackConsumed={markFeedbackConsumed}
+            onSetPreference={setRunPreference}
             onRecord={() => void run.record()}
             onStop={run.stop}
             onRecordNext={run.recordNext}
             onFinish={run.finish}
             onSkip={run.skip}
             onPlayReference={() => run.playReference()}
-            onQuit={run.quit}
+            onUseManualStop={() => setRunPreference("autoStop", false)}
+            onPause={run.pause}
             onResume={run.resume}
+            onQuit={run.quit}
             onOpenReview={run.openReview}
+            onPlayAgain={() => void run.playAgain()}
+            onDone={run.exit}
           />
         )}
       </section>

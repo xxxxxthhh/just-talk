@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { tierForAccuracy } from "../game/scoring";
 import type { CaptureTelemetry, RunRating, RunTier } from "../types";
 
 export type RunRingProps = {
@@ -10,7 +11,18 @@ export type RunRingProps = {
   rating: RunRating | null;
   reducedMotion: boolean;
   feedbackId: string | null;
+  // This feedback was already shown (e.g. before a remount): render its final state with no entrance motion.
+  settled: boolean;
   onStop: () => void;
+};
+
+// Telemetry when no capture is open.
+export const IDLE_TELEMETRY: CaptureTelemetry = {
+  captureId: null,
+  level: 0,
+  silenceProgress: 0,
+  autoStopState: "off",
+  elapsedMs: 0
 };
 
 // Taps on the ring within this window of a capture starting are ignored; the bottom Stop has no guard.
@@ -35,13 +47,26 @@ function clamp01(value: number): number {
   return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0;
 }
 
+// Whole numbers, except where rounding would cross a tier line: 84.9 shows as 84.9, not 85.
+export function formatRunScore(accuracy: number): string {
+  const rounded = Math.round(accuracy);
+  if (tierForAccuracy(rounded) === tierForAccuracy(accuracy)) return String(rounded);
+  return (Math.floor(accuracy * 10) / 10).toFixed(1);
+}
+
 function formatElapsed(ms: number): string {
   const seconds = Math.max(0, ms) / 1000;
   return `${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, "0")}`;
 }
 
-// Counts up to the target once per feedback; game facts are already final, so this is display only.
-function useRolledScore(target: number | null, rollKey: string | null, enabled: boolean): number | null {
+// Counts up to the target once per key; game facts are already final, so this is display only.
+export function useRolledNumber(
+  target: number | null,
+  rollKey: string | null,
+  enabled: boolean,
+  durationMs = SCORE_ROLL_MS,
+  delayMs = 0
+): number | null {
   const [frame, setFrame] = useState<{ key: string; value: number } | null>(null);
   const active = enabled && target !== null && rollKey !== null;
 
@@ -50,20 +75,20 @@ function useRolledScore(target: number | null, rollKey: string | null, enabled: 
     const startedAt = performance.now();
     let handle = 0;
     const tick = () => {
-      const progress = Math.min(1, (performance.now() - startedAt) / SCORE_ROLL_MS);
+      const progress = Math.min(1, Math.max(0, performance.now() - startedAt - delayMs) / durationMs);
       setFrame({ key: rollKey, value: target * (1 - (1 - progress) ** 3) });
       if (progress < 1) handle = requestAnimationFrame(tick);
     };
     setFrame({ key: rollKey, value: 0 });
     handle = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(handle);
-  }, [active, rollKey, target]);
+  }, [active, rollKey, target, durationMs, delayMs]);
 
   if (!active) return target;
   return frame?.key === rollKey ? frame.value : 0;
 }
 
-export function RunRing({ phase, telemetry, accuracy, tier, rating, reducedMotion, feedbackId, onStop }: RunRingProps) {
+export function RunRing({ phase, telemetry, accuracy, tier, rating, reducedMotion, feedbackId, settled, onStop }: RunRingProps) {
   const captureStart = useRef<{ captureId: string | null; at: number }>({ captureId: null, at: 0 });
 
   // Anchored to when the capture began, not when the ring mounted; a late telemetry sample only
@@ -76,13 +101,14 @@ export function RunRing({ phase, telemetry, accuracy, tier, rating, reducedMotio
   }, [telemetry.captureId, telemetry.elapsedMs]);
 
   const showsScore = (phase === "verdict" || phase === "rescue") && accuracy !== null;
-  const rolls = showsScore && phase === "verdict" && !reducedMotion && (accuracy ?? 0) >= ROLL_FROM;
-  const shownScore = useRolledScore(showsScore ? accuracy : null, feedbackId, rolls);
+  const still = reducedMotion || settled;
+  const rolls = showsScore && phase === "verdict" && !still && (accuracy ?? 0) >= ROLL_FROM;
+  const shownScore = useRolledNumber(showsScore ? accuracy : null, feedbackId, rolls);
 
   const recording = phase === "recording";
   const level = clamp01(telemetry.level);
   const silence = clamp01(telemetry.silenceProgress);
-  const sparkle = phase === "verdict" && tier === "perfect" && !reducedMotion;
+  const sparkle = phase === "verdict" && tier === "perfect" && !still;
 
   const art = (
     <svg className="run-ring-art" viewBox="0 0 200 200" aria-hidden="true" focusable="false" key={feedbackId ?? phase}>
@@ -108,7 +134,11 @@ export function RunRing({ phase, telemetry, accuracy, tier, rating, reducedMotio
   const face = (
     <div className="run-ring-face" aria-hidden="true">
       {recording ? <span className="run-ring-time">{formatElapsed(telemetry.elapsedMs)}</span> : null}
-      {showsScore && shownScore !== null ? <span className="run-ring-score">{Math.round(shownScore)}</span> : null}
+      {showsScore && shownScore !== null ? (
+        <span className={`run-ring-score${accuracy !== null && !Number.isInteger(Number(formatRunScore(accuracy))) ? " is-decimal" : ""}`}>
+          {shownScore === accuracy ? formatRunScore(shownScore) : Math.floor(shownScore)}
+        </span>
+      ) : null}
       {phase === "verdict" && tier ? <span className="run-ring-tier">{TIER_LABELS[tier]}</span> : null}
       {phase === "summary" && rating ? <span className="run-ring-rating">{rating}</span> : null}
     </div>
@@ -122,7 +152,7 @@ export function RunRing({ phase, telemetry, accuracy, tier, rating, reducedMotio
 
   return (
     <div
-      className={`run-ring${reducedMotion ? " is-reduced" : ""}`}
+      className={`run-ring${reducedMotion ? " is-reduced" : ""}${settled ? " is-settled" : ""}`}
       data-phase={phase}
       data-tier={phase === "summary" ? undefined : (tier ?? undefined)}
       data-rating={phase === "summary" ? (rating ?? "none") : undefined}

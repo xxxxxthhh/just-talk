@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { nextCapture, runReducer } from "../game/runModel";
 import type { RunMode, RunPrompt, RunState, ScoreResponse, WordCandidate, WordResult } from "../types";
 import { PracticeRun } from "./PracticeRun";
+import { practiceRunProps } from "./runV2Fixtures";
 import { RunReview } from "./RunReview";
 
 const PROMPTS: RunPrompt[] = [
@@ -230,21 +231,10 @@ describe("RunReview", () => {
     expect(screen.getByText("Incomplete · 2 of 2 hearts left")).toBeInTheDocument();
     challengeView.unmount();
 
-    const runCallbacks = {
-      onRecord: vi.fn(),
-      onStop: vi.fn(),
-      onRecordNext: vi.fn(),
-      onFinish: vi.fn(),
-      onSkip: vi.fn(),
-      onPlayReference: vi.fn(),
-      onQuit: vi.fn(),
-      onResume: vi.fn(),
-      onOpenReview: vi.fn(),
-    };
-    const routeRun = render(<PracticeRun run={start("route")} {...runCallbacks} />);
+    const routeRun = render(<PracticeRun {...practiceRunProps(start("route"))} />);
     expect(screen.queryByLabelText(/hearts left/)).not.toBeInTheDocument();
     routeRun.unmount();
-    render(<PracticeRun run={start("challenge")} {...runCallbacks} />);
+    render(<PracticeRun {...practiceRunProps(start("challenge"))} />);
     expect(screen.getByLabelText("2 of 2 hearts left")).toBeInTheDocument();
   });
 });
