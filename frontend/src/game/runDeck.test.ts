@@ -1,8 +1,66 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { PhonemeStat, VocabularyItem } from "../types";
+import type { PhonemeStat, RunFocusPhoneme, RunPrompt, VocabularyItem } from "../types";
+import { configForChoice } from "./runConfig";
 import { buildRunDeck, chooseFocusPhoneme } from "./runDeck";
-import { STARTER_PACK } from "./starterPack";
+import { STARTER_PACK, type StarterItem } from "./starterPack";
+
+// Tests may swap in a synthetic four-per-stage pack; the others read the shipped one.
+const pack = vi.hoisted(() => ({ override: null as readonly unknown[] | null }));
+vi.mock("./starterPack", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./starterPack")>();
+  return {
+    ...actual,
+    get STARTER_PACK() {
+      return pack.override ?? actual.STARTER_PACK;
+    }
+  };
+});
+
+const ROUTE_6 = configForChoice({ selection: "route", routeLength: 6 });
+const ROUTE_12 = configForChoice({ selection: "route", routeLength: 12 });
+const GROUPS: [StarterItem["group"], RunFocusPhoneme][] = [
+  ["theta", "θ"],
+  ["eth", "ð"],
+  ["r", "ɹ"],
+  ["l", "l"],
+  ["v", "v"]
+];
+
+// Four items per stage and sound. context-1/-3 reuse focus-1/-3; context-2/-4 bring fresh targets,
+// as the approved pack does.
+function syntheticPack(): StarterItem[] {
+  return GROUPS.flatMap(([group, phoneme]) => {
+    const item = (stage: StarterItem["stage"], n: number, text: string, targetWord: string): StarterItem => ({
+      id: `${group}-${stage}-${n}`,
+      group,
+      stage,
+      text,
+      phoneme,
+      targetWord
+    });
+    return [
+      ...[1, 2, 3, 4].map((n) => item("warmup", n, `${group}w${n}`, `${group}w${n}`)),
+      ...[1, 2, 3, 4].map((n) => item("focus", n, `${group}f${n}`, `${group}f${n}`)),
+      ...[1, 2, 3, 4].map((n) => {
+        const target = n % 2 === 1 ? `${group}f${n}` : `${group}c${n}`;
+        return item("context", n, `We say ${target} in sentence ${n}.`, target);
+      })
+    ];
+  });
+}
+
+function build(runId: string, focusPhoneme: RunFocusPhoneme = "θ", config = ROUTE_6, previousWeakWords: string[] = [], vocabulary: VocabularyItem[] = []) {
+  return buildRunDeck({ runId, config, focusPhoneme, vocabulary, previousWeakWords });
+}
+
+function texts(deck: readonly RunPrompt[], stage: RunPrompt["stage"]): string[] {
+  return deck.filter((prompt) => prompt.stage === stage).map((prompt) => prompt.text);
+}
+
+afterEach(() => {
+  pack.override = null;
+});
 
 function stat(phoneme: string, average_accuracy: number): PhonemeStat {
   return {
@@ -105,7 +163,7 @@ describe("buildRunDeck", () => {
       vocab("future", "2999-01-01T00:00:00Z"),
     ];
 
-    const deck = buildRunDeck({ phonemeStats: [], vocabulary });
+    const deck = buildRunDeck({ runId: "run", config: ROUTE_6, focusPhoneme: "θ", vocabulary });
 
     expect(deck.map((prompt) => [prompt.stage, prompt.kind, prompt.text, prompt.source])).toEqual([
       ["warmup", "word", "earliest", "due-word"],
@@ -129,15 +187,17 @@ describe("buildRunDeck", () => {
 
   it("does_not_label_a_multiword_due_entry_as_a_word_prompt", () => {
     const deck = buildRunDeck({
-      phonemeStats: [],
+      runId: "run",
+      config: ROUTE_6,
+      focusPhoneme: "θ",
       vocabulary: [vocab("new york", null), vocab("good morning", past(1)), vocab("bright", past(2))],
       previousWeakWords: ["ice cream", "  "],
     });
 
-    expect(deck.slice(0, 2).map((prompt) => [prompt.text, prompt.source])).toEqual([
-      ["bright", "due-word"],
-      ["thin", "starter"],
-    ]);
+    expect(deck[0]).toMatchObject({ text: "bright", source: "due-word" });
+    // The remaining slot is a seeded starter warm-up.
+    expect(deck[1].source).toBe("starter");
+    expect(["thin", "thick"]).toContain(deck[1].text);
     for (const prompt of deck.filter((candidate) => candidate.kind === "word")) {
       expect(prompt.text.trim().split(/\s+/)).toHaveLength(1);
     }
@@ -145,7 +205,9 @@ describe("buildRunDeck", () => {
 
   it("filters_an_external_focus_word_with_boundary_punctuation", () => {
     const deck = buildRunDeck({
-      phonemeStats: [],
+      runId: "run",
+      config: ROUTE_6,
+      focusPhoneme: "θ",
       vocabulary: [vocab("Think!", past(1)), vocab("(path)", past(2)), vocab("don't", past(3)), vocab("well-known", past(4))],
       previousWeakWords: ['"thank,"'],
     });
@@ -165,7 +227,9 @@ describe("buildRunDeck", () => {
     const vocabulary = [vocab("water", past(1)), vocab("bright", past(2))];
 
     const replay = buildRunDeck({
-      phonemeStats: [stat("l", 40)],
+      runId: "run",
+      config: ROUTE_6,
+      focusPhoneme: chooseFocusPhoneme([stat("l", 40)]),
       vocabulary,
       previousWeakWords: [" Late ", "", "Water", "lake"],
     });
@@ -176,11 +240,112 @@ describe("buildRunDeck", () => {
     ]);
     expect(replay[2].text).toBe("late");
 
-    const empty = buildRunDeck({ phonemeStats: [stat("l", 40)], vocabulary: [], previousWeakWords: ["late"] });
+    const empty = buildRunDeck({ runId: "run", config: ROUTE_6, focusPhoneme: "l", vocabulary: [], previousWeakWords: ["late"] });
     expect(empty.slice(0, 2).map((prompt) => [prompt.text, prompt.source])).toEqual([
       ["light", "starter"],
       ["leaf", "starter"],
     ]);
     expect(empty[0].targetPhoneme).toBe("l");
+  });
+});
+
+// Pinned outputs of the seeded selection over the synthetic pack. A change here changes which items
+// existing run IDs would have drawn.
+const GOLDEN: [string, string][] = [
+  ["warmup-1", "thetaw1"],
+  ["warmup-2", "thetaw4"],
+  ["focus-1", "thetaf1"],
+  ["focus-2", "thetaf4"],
+  ["context-1", "We say thetaf3 in sentence 3."],
+  ["context-2", "We say thetac4 in sentence 4."]
+];
+const UNPAIRED_SEED = "seed-2";
+
+describe("seeded decks", () => {
+  it("seeded_deck_is_repeatable_and_canonically_ordered", () => {
+    pack.override = syntheticPack();
+    const deck = build("golden-run");
+    expect(build("golden-run")).toEqual(deck);
+    // Golden membership for this seed; the presentation order is always the pack's own.
+    expect(deck.map((prompt) => [prompt.itemId, prompt.text])).toEqual(GOLDEN);
+
+    const canonical = (pack.override as StarterItem[]).map((item) => item.text);
+    const subsets = new Set<string>();
+    for (let i = 0; i < 40; i += 1) {
+      const sampled = build(`run-${i}`);
+      const positions = sampled.map((prompt) => canonical.indexOf(prompt.text));
+      expect(positions).toEqual([...positions].sort((left, right) => left - right));
+      subsets.add(texts(sampled, "focus").join(","));
+    }
+    // Different seeds pick different subsets (and may also repeat one).
+    expect(subsets.size).toBeGreaterThan(1);
+  });
+
+  it("six_samples_membership_and_twelve_has_four_per_stage", () => {
+    pack.override = syntheticPack();
+    for (const [group, phoneme] of GROUPS) {
+      const six = build(`six-${group}`, phoneme);
+      expect(six.map((prompt) => prompt.stage)).toEqual(["warmup", "warmup", "focus", "focus", "context", "context"]);
+      expect(six.map((prompt) => prompt.itemId)).toEqual(["warmup-1", "warmup-2", "focus-1", "focus-2", "context-1", "context-2"]);
+      expect(six.every((prompt) => prompt.text.includes(group) && prompt.targetPhoneme === phoneme)).toBe(true);
+
+      const twelve = build(`twelve-${group}`, phoneme, ROUTE_12);
+      expect(twelve).toHaveLength(12);
+      for (const stage of ["warmup", "focus", "context"] as const) {
+        expect(texts(twelve, stage)).toEqual(
+          (pack.override as StarterItem[]).filter((item) => item.group === group && item.stage === stage).map((item) => item.text)
+        );
+      }
+      expect(twelve.map((prompt) => prompt.itemId).slice(8)).toEqual(["context-1", "context-2", "context-3", "context-4"]);
+    }
+
+    // Personal words replace only starter warm-up slots.
+    const personal = build("twelve-personal", "θ", ROUTE_12, ["water", "bright"]);
+    expect(personal.slice(0, 4).map((prompt) => prompt.source)).toEqual(["previous-run", "previous-run", "starter", "starter"]);
+    expect(texts(personal, "warmup").slice(0, 2)).toEqual(["water", "bright"]);
+    expect(texts(personal, "focus")).toEqual(texts(build("twelve-personal", "θ", ROUTE_12), "focus"));
+    expect(texts(personal, "context")).toEqual(texts(build("twelve-personal", "θ", ROUTE_12), "context"));
+
+    // The shipped thirty-item pack cannot fill twelve: the builder refuses rather than repeat or shrink.
+    pack.override = null;
+    expect(() => build("twelve-real", "θ", ROUTE_12)).toThrow("cannot fill");
+  });
+
+  it("all_context_targets_excluded_from_personal_warmups", () => {
+    pack.override = syntheticPack();
+    // Every θ word row and context target, sampled into this run or not, plus one fresh word.
+    const weak = ["thetac2", "THETAC4!", "thetaf3", "thetaw4", "fresh"];
+    for (let i = 0; i < 10; i += 1) {
+      const deck = build(`exclude-${i}`, "θ", ROUTE_6, weak);
+      expect(deck[0]).toMatchObject({ text: "fresh", source: "previous-run", targetPhoneme: null });
+      expect(deck[1].source).toBe("starter");
+    }
+  });
+
+  it("context_focus_pairs_need_not_cooccur", () => {
+    pack.override = syntheticPack();
+    // This seed samples context-3 (target thetaf3) without the matching focus word.
+    const deck = build(UNPAIRED_SEED);
+    expect(deck.filter((prompt) => prompt.stage === "context").map((prompt) => prompt.targetWord)).toContain("thetaf3");
+    expect(texts(deck, "focus")).not.toContain("thetaf3");
+  });
+
+  it("warmup_priority_dedupe_and_frozen_focus_hold", () => {
+    pack.override = syntheticPack();
+    const past = "2026-09-01T00:00:00Z";
+    const vocabulary = [vocab("due", past), vocab("Water", past)];
+    // Previous weak words first, then due words; duplicates by normalized key appear once.
+    const deck = build("priority", "l", ROUTE_12, ["water ", "WATER", "lf2"], vocabulary);
+    expect(deck.slice(0, 4).map((prompt) => [prompt.text, prompt.source])).toEqual([
+      ["water", "previous-run"],
+      ["due", "due-word"],
+      [texts(deck, "warmup")[2], "starter"],
+      [texts(deck, "warmup")[3], "starter"]
+    ]);
+    expect(deck.slice(2, 4).every((prompt) => prompt.targetPhoneme === "l")).toBe(true);
+    // The focus sound is the one passed in: stats are not consulted again.
+    expect(deck.slice(4).every((prompt) => prompt.targetPhoneme === "l")).toBe(true);
+    expect(new Set(deck.map((prompt) => prompt.text.toLowerCase())).size).toBe(12);
+    expect(Object.isFrozen(deck)).toBe(true);
   });
 });
