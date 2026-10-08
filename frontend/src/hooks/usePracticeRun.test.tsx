@@ -2,8 +2,19 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecording } from "../api";
-import type { RunMode, ScoreResponse, WordResult } from "../types";
+import { readBest, RUN_BEST_KEY } from "../game/personalBest";
+import { setRunPreference } from "../game/preferences";
+import { RUN_RULES_VERSION } from "../game/scoring";
+import { cancelCues, playCue, resetCueEvents } from "../game/sfx";
+import type { CaptureStopReason, CaptureSummary, RunCaptureOptions, RunMode, ScoreResponse, WordResult } from "../types";
 import { usePracticeRun, type RunSession } from "./usePracticeRun";
+
+vi.mock("../game/sfx", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../game/sfx")>()),
+  playCue: vi.fn(() => true),
+  cancelCues: vi.fn(),
+  resetCueEvents: vi.fn()
+}));
 
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
@@ -37,31 +48,50 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-// A stand-in for the shared recorder: one capture at a time, one blob per stop.
+// A stand-in for the shared recorder: one capture at a time, one blob and summary per stop.
 function fakeSession() {
-  let active: ((blob: Blob) => void) | null = null;
+  let active: ((blob: Blob, summary: CaptureSummary) => void) | null = null;
+  let activeId = "";
   const loads: ((ok: boolean) => void)[] = [];
-  const fire = () => {
+  // What the next delivered take reports, on top of a healthy manual stop.
+  const take: { summary: Partial<CaptureSummary> } = { summary: {} };
+  const fire = (reason: CaptureStopReason) => {
     const onReady = active;
     active = null;
-    onReady?.(new Blob(["audio"], { type: "audio/mp4" }));
+    onReady?.(new Blob(["audio"], { type: "audio/mp4" }), {
+      captureId: activeId,
+      stopReason: reason,
+      durationMs: 1000,
+      detectionValid: true,
+      speechSeen: true,
+      voicedMs: 800,
+      ...take.summary
+    });
   };
   const session = {
     enterRun: vi.fn(),
     exitRun: vi.fn(),
-    startRunCapture: vi.fn(async (_options: unknown, onReady: (blob: Blob) => void) => {
+    prepareRunAudio: vi.fn(),
+    startRunCapture: vi.fn(async (options: RunCaptureOptions, onReady: (blob: Blob, summary: CaptureSummary) => void) => {
       active = onReady;
+      activeId = options.key.attemptId;
       return true;
     }),
-    cancelRunCapture: vi.fn(fire),
-    stopRecording: vi.fn(fire),
+    cancelRunCapture: vi.fn((reason: CaptureStopReason = "cancel") => fire(reason)),
+    stopRunCapture: vi.fn((reason: CaptureStopReason = "manual") => fire(reason)),
+    runCaptureTelemetry: { get: vi.fn(), set: vi.fn(), subscribe: vi.fn() },
     playCorrect: vi.fn(async (_text: string, options?: { onLoadResult?: (ok: boolean) => void }) => {
       if (options?.onLoadResult) loads.push(options.onLoadResult);
     }),
+    stopCurrentSpeech: vi.fn(),
+    speakingText: "",
+    speechStatus: "idle",
+    speechCurrentTime: 0,
+    speechDuration: 0,
     refreshVocabulary: vi.fn(async () => undefined),
     setError: vi.fn()
   };
-  return { session: session as unknown as RunSession & typeof session, loads };
+  return { session: session as unknown as RunSession & typeof session, loads, take, fire };
 }
 
 async function flush() {
@@ -102,6 +132,8 @@ describe("usePracticeRun", () => {
 
   beforeEach(() => {
     urlCounter = 0;
+    window.localStorage.clear();
+    setRunPreference("autoStop", true);
     vi.mocked(fetchPhonemeStats).mockResolvedValue([]);
     vi.mocked(listWords).mockResolvedValue([]);
     vi.mocked(addWordsFromSession).mockResolvedValue([]);
@@ -141,7 +173,7 @@ describe("usePracticeRun", () => {
       h.run().stop();
       h.run().stop();
       // An auto-stop racing the manual stop delivers the same capture again.
-      onReady(new Blob(["late"]));
+      onReady(new Blob(["late"]), { captureId: h.session.startRunCapture.mock.calls[0][0].key.attemptId, stopReason: "silence", durationMs: 900, detectionValid: true, speechSeen: true, voicedMs: 700 });
     });
     expect(scoreRecording).toHaveBeenCalledTimes(1);
     expect(vi.mocked(scoreRecording).mock.calls[0][2]).toBe("short");
@@ -242,13 +274,16 @@ describe("usePracticeRun", () => {
     expect(addWordsFromSession).not.toHaveBeenCalled();
   });
 
-  it("pause_discards_capture_but_accepts_matching_inflight_result", async () => {
+  it("pause_allows_matching_submitted_result_without_new_capture", async () => {
     const h = await setup("route");
     await act(async () => {
       await h.run().record();
     });
     act(() => h.run().pause());
     expect(h.session.cancelRunCapture).toHaveBeenCalledTimes(1);
+    expect(h.session.cancelRunCapture).toHaveBeenCalledWith("pause");
+    expect(cancelCues).toHaveBeenCalled();
+    expect(h.session.stopCurrentSpeech).toHaveBeenCalled();
     expect(scoreRecording).not.toHaveBeenCalled();
     expect(current(h).attempts).toEqual([]);
     expect(URL.createObjectURL).not.toHaveBeenCalled();
@@ -270,6 +305,9 @@ describe("usePracticeRun", () => {
     await flush();
     expect(current(h).verdict).toBe("practiced");
     expect(h.run().state?.paused).toBe(true);
+    // Settled while paused: no new capture and no cue.
+    expect(h.session.startRunCapture).toHaveBeenCalledTimes(2);
+    expect(playCue).not.toHaveBeenCalled();
   });
 
   it("rescue_record_requires_reference_ready_without_waiting_for_ended", async () => {
@@ -354,7 +392,9 @@ describe("usePracticeRun", () => {
     await act(async () => {
       await h.run().playAgain();
     });
-    expect(h.session.exitRun).toHaveBeenCalledTimes(1);
+    // Replacing the run keeps the audio unlocked by this gesture: no exitRun in between.
+    expect(h.session.exitRun).not.toHaveBeenCalled();
+    expect(h.session.prepareRunAudio).toHaveBeenCalledTimes(2);
     expect(h.session.enterRun).toHaveBeenCalledTimes(2);
     expect(h.run().state?.items[0].prompt.text).toBe("narrow");
     expect(h.run().state?.items[0].prompt.source).toBe("previous-run");
@@ -477,5 +517,247 @@ describe("usePracticeRun", () => {
     const h = await setup("route");
     await attempt(h, scored(90, [{ ...word("thin", 90), phonemes }]));
     expect(current(h).verdict).toBe("practiced");
+  });
+
+  it("local_reject_never_sends_or_allocates_review_url", async () => {
+    const h = await setup("challenge");
+    const capture = h.session.startRunCapture;
+    for (const summary of [
+      { speechSeen: false, voicedMs: 0, durationMs: 4000 },
+      { durationMs: 400 }
+    ] as const) {
+      await act(async () => {
+        await h.run().record();
+      });
+      expect(capture.mock.lastCall?.[0]).toMatchObject({ kind: "word", autoStop: true });
+      h.take.summary = summary;
+      act(() => h.fire(summary.durationMs === 4000 ? "no-speech" : "manual"));
+    }
+    expect(scoreRecording).not.toHaveBeenCalled();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(h.run().state).toMatchObject({ budgetUsed: 0, phase: "ready", activeAttemptId: null });
+    expect(current(h).attempts).toEqual([]);
+    expect(current(h).lastRejection?.localReason).toBe("too-short");
+
+    h.take.summary = {};
+    await attempt(h, scored(90));
+    expect(scoreRecording).toHaveBeenCalledTimes(1);
+    expect(current(h).lastRejection).toBeNull();
+  });
+
+  it("manual_stop_without_onset_still_submits", async () => {
+    const h = await setup("route");
+    h.take.summary = { durationMs: 3000, speechSeen: false, voicedMs: 0 };
+    await attempt(h, scored(80));
+    expect(scoreRecording).toHaveBeenCalledTimes(1);
+    expect(current(h).verdict).toBe("practiced");
+  });
+
+  it("manual_silence_cap_race_submits_once", async () => {
+    const h = await setup("route");
+    vi.mocked(scoreRecording).mockReturnValue(deferred<ScoreResponse>().promise);
+    await act(async () => {
+      await h.run().record();
+    });
+    const [options, onReady] = h.session.startRunCapture.mock.calls[0];
+    act(() => h.fire("silence"));
+    act(() => {
+      h.run().stop();
+      const late = { captureId: options.key.attemptId, durationMs: 1200, detectionValid: true, speechSeen: true, voicedMs: 900 };
+      onReady(new Blob(["manual"]), { ...late, stopReason: "manual" });
+      onReady(new Blob(["cap"]), { ...late, stopReason: "auto-cap" });
+    });
+    expect(scoreRecording).toHaveBeenCalledTimes(1);
+    expect(h.run().state?.budgetUsed).toBe(1);
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancel_take_does_not_skip_or_use_budget", async () => {
+    const h = await setup("challenge");
+    // The cancelled take's blob arrives later.
+    h.session.cancelRunCapture.mockImplementationOnce(() => undefined);
+    await act(async () => {
+      await h.run().record();
+    });
+    act(() => h.run().cancelTake());
+    expect(h.session.cancelRunCapture).toHaveBeenCalledWith("cancel");
+    expect(h.run().state).toMatchObject({ phase: "ready", index: 0, budgetUsed: 0, extraUsed: 0 });
+    expect(current(h).resolution).toBe("open");
+    expect(current(h).verdict).toBeNull();
+
+    // The lock holds until delivery, then the item records normally.
+    await act(async () => {
+      await h.run().record();
+    });
+    expect(h.session.startRunCapture).toHaveBeenCalledTimes(1);
+    act(() => h.fire("cancel"));
+    expect(scoreRecording).not.toHaveBeenCalled();
+    await attempt(h, scored(90));
+    expect(h.session.startRunCapture).toHaveBeenCalledTimes(2);
+    expect(h.run().state?.budgetUsed).toBe(1);
+  });
+
+  it("pb_receipt_survives_summary_remount_without_rewrite", async () => {
+    const h = await setup("challenge");
+    const bucket = { mode: "challenge" as const, focus: current(h).prompt.targetPhoneme, rulesVersion: RUN_RULES_VERSION };
+    for (let i = 0; i < 6; i += 1) {
+      await attempt(h, scored(95));
+      act(() => h.run().finish());
+    }
+    expect(h.run().state?.challengeOutcome).toBe("cleared");
+    const receipt = h.run().receipt;
+    expect(receipt).toMatchObject({ outcome: "first-record", previousPoints: null });
+    expect(h.run().score).toMatchObject({ points: 955, rating: "S" });
+    expect(playCue).toHaveBeenCalledWith("clear", `summary-${h.run().state?.runId}`);
+
+    // Another tab stores a better run, then the public record would have expired: the summary and
+    // review keep this run's receipt, and nothing is rewritten.
+    const bucketKey = `challenge|${bucket.focus}|${RUN_RULES_VERSION}`;
+    const other = { runId: "other-tab", points: 978, rating: "S", updatedAt: Date.now(), expiresAt: null };
+    window.localStorage.setItem(RUN_BEST_KEY, JSON.stringify({ [bucketKey]: other }));
+    const stored = window.localStorage.getItem(RUN_BEST_KEY);
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 8 * 24 * 60 * 60 * 1000);
+    h.hook.rerender();
+    act(() => h.run().openReview());
+    h.hook.rerender();
+    expect(h.run().receipt).toBe(receipt);
+    expect(window.localStorage.getItem(RUN_BEST_KEY)).toBe(stored);
+
+    // A non-winning run keeps its own frozen comparison.
+    await act(async () => {
+      await h.run().playAgain();
+    });
+    expect(h.run().receipt).toBeNull();
+    for (let i = 0; i < 6; i += 1) {
+      await attempt(h, scored(85));
+      act(() => h.run().finish());
+    }
+    const losing = h.run().receipt;
+    expect(losing).toMatchObject({ outcome: "none", previousPoints: 978 });
+    window.localStorage.clear();
+    h.hook.rerender();
+    act(() => h.run().openReview());
+    expect(h.run().receipt).toBe(losing);
+    expect(window.localStorage.getItem(RUN_BEST_KEY)).toBeNull();
+  });
+
+  it("new_stats_do_not_change_pb_bucket", async () => {
+    vi.mocked(fetchPhonemeStats).mockResolvedValue([{ phoneme: "v", average_accuracy: 40, attempts: 5 } as never]);
+    const h = await setup("route");
+    expect(current(h).prompt.stage).toBe("warmup");
+    vi.mocked(fetchPhonemeStats).mockResolvedValue([{ phoneme: "θ", average_accuracy: 10, attempts: 5 } as never]);
+    for (let i = 0; i < 6; i += 1) {
+      await attempt(h, scored(95));
+      act(() => h.run().finish());
+    }
+    expect(h.run().receipt?.outcome).toBe("first-record");
+    expect(readBest({ mode: "route", focus: "v", rulesVersion: RUN_RULES_VERSION })?.points).toBe(955);
+    expect(readBest({ mode: "route", focus: "θ", rulesVersion: RUN_RULES_VERSION })).toBeNull();
+  });
+
+  it("quit_exit_play_again_drop_late_capture_and_cues", async () => {
+    const h = await setup("route");
+    // Takes are delivered late, after the run has moved on.
+    h.session.cancelRunCapture.mockImplementation(() => undefined);
+    await act(async () => {
+      await h.run().record();
+    });
+    act(() => h.run().quit());
+    expect(h.session.cancelRunCapture).toHaveBeenLastCalledWith("quit");
+    expect(cancelCues).toHaveBeenCalled();
+    act(() => h.fire("manual"));
+    expect(scoreRecording).not.toHaveBeenCalled();
+    expect(h.run().state?.endReason).toBe("quit");
+
+    vi.mocked(resetCueEvents).mockClear();
+    await act(async () => {
+      await h.run().playAgain();
+    });
+    expect(resetCueEvents).toHaveBeenCalled();
+    const pending = deferred<ScoreResponse>();
+    vi.mocked(scoreRecording).mockReturnValueOnce(pending.promise);
+    await act(async () => {
+      await h.run().record();
+    });
+    act(() => h.run().stop());
+    expect(scoreRecording).toHaveBeenCalledTimes(1);
+
+    // Exit drops the in-flight score's late result and its cue.
+    act(() => h.run().exit());
+    expect(h.session.exitRun).toHaveBeenCalledTimes(1);
+    pending.resolve(scored(95));
+    await flush();
+    expect(h.run().state).toBeNull();
+    // Only the unrated quit summary asked, and it has no cue.
+    expect(vi.mocked(playCue).mock.calls.filter(([cue]) => cue !== null)).toEqual([]);
+  });
+
+  it("start_exit_token_and_sentence_collection_regressions_hold", async () => {
+    // Start unlocks audio synchronously, before the deck fetch resolves; exiting meanwhile abandons it.
+    const fake = fakeSession();
+    const hook = renderHook(() => usePracticeRun(fake.session));
+    const stats = deferred<never[]>();
+    vi.mocked(fetchPhonemeStats).mockReturnValueOnce(stats.promise);
+    let starting!: Promise<void>;
+    act(() => {
+      starting = hook.result.current.start("route");
+    });
+    expect(fake.session.prepareRunAudio).toHaveBeenCalledTimes(1);
+    act(() => hook.result.current.exit());
+    await act(async () => {
+      stats.resolve([]);
+      await starting;
+    });
+    expect(hook.result.current.state).toBeNull();
+    expect(fake.session.enterRun).not.toHaveBeenCalled();
+
+    // An auto-stopped sentence still shows its score before collection, and Next waits for it.
+    const h = await setup("route");
+    for (let i = 0; i < 4; i += 1) {
+      await attempt(h, scored(90));
+      act(() => h.run().finish());
+    }
+    const collection = deferred<never[]>();
+    vi.mocked(addWordsFromSession).mockReturnValueOnce(collection.promise);
+    vi.mocked(scoreRecording).mockResolvedValueOnce(scored(65, [word("path", 50)]));
+    await act(async () => {
+      await h.run().record();
+    });
+    expect(h.session.startRunCapture.mock.lastCall?.[0]).toMatchObject({ kind: "sentence", autoStop: true });
+    act(() => h.fire("silence"));
+    await flush();
+    expect(current(h).attempts[0].sync).toBe("pending");
+    const captures = h.session.startRunCapture.mock.calls.length;
+    act(() => h.run().recordNext());
+    await flush();
+    expect(h.session.startRunCapture).toHaveBeenCalledTimes(captures);
+    collection.resolve([]);
+    await flush();
+    expect(current(h).attempts[0].sync).toBe("done");
+  });
+
+  it("feedback_ids_and_manual_stop_fallback_last_the_run", async () => {
+    const h = await setup("route");
+    const ids = h.run().consumedFeedbackIds;
+    act(() => h.run().markFeedbackConsumed("attempt-1"));
+    h.hook.rerender();
+    expect(h.run().consumedFeedbackIds).toBe(ids);
+    expect(h.run().consumedFeedbackIds.has("attempt-1")).toBe(true);
+
+    act(() => h.run().useManualStopNextTake());
+    expect(h.run().preferences.autoStop).toBe(false);
+    await act(async () => {
+      await h.run().record();
+    });
+    expect(h.session.startRunCapture.mock.lastCall?.[0]).toMatchObject({ autoStop: false });
+    expect(h.run().state?.budgetUsed).toBe(0);
+    act(() => h.run().stop());
+    await flush();
+
+    await act(async () => {
+      await h.run().playAgain();
+    });
+    expect(h.run().consumedFeedbackIds).not.toBe(ids);
+    expect(h.run().consumedFeedbackIds.size).toBe(0);
   });
 });

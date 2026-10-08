@@ -1,14 +1,28 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecording } from "../api";
-import { runWeakWords } from "../components/RunReview";
+import { bestBucketForRun, finalizeRunBest, readBest } from "../game/personalBest";
+import { getRunPreferences, setRunPreference, useRunPreferences } from "../game/preferences";
 import { buildRunDeck } from "../game/runDeck";
 import { canRecord, nextCapture, runReducer, SENTENCE_COLLECT_MAX } from "../game/runModel";
+import {
+  runWeakWords,
+  selectReviewSuggestions,
+  selectRunScore,
+  selectTopRevisit,
+  tierForAccuracy,
+  validAccuracy
+} from "../game/scoring";
+import { cancelCues, cueForSummary, cueForVerdict, playCue, resetCueEvents } from "../game/sfx";
+import { classifyCapture } from "../game/vad";
 import { normalizedWord, weakWordsFromResult } from "../scoreUtils";
 import type {
   AttemptKey,
+  CaptureStopReason,
+  CaptureSummary,
   PhonemeStat,
   RunAction,
+  RunBestReceipt,
   RunMode,
   RunPrompt,
   RunState,
@@ -22,10 +36,17 @@ export type RunSession = Pick<
   ReturnType<typeof usePracticeSession>,
   | "enterRun"
   | "exitRun"
+  | "prepareRunAudio"
   | "startRunCapture"
+  | "stopRunCapture"
   | "cancelRunCapture"
-  | "stopRecording"
+  | "runCaptureTelemetry"
   | "playCorrect"
+  | "stopCurrentSpeech"
+  | "speakingText"
+  | "speechStatus"
+  | "speechCurrentTime"
+  | "speechDuration"
   | "refreshVocabulary"
   | "setError"
 >;
@@ -90,12 +111,43 @@ export function usePracticeRun(session: RunSession) {
   // Bumped by every start and exit; a start whose token moved on while it
   // fetched deck data is abandoned.
   const startTokenRef = useRef(0);
+  // Decided once when a rated run ends and kept for the run's lifetime, across summary and
+  // review remounts, so later storage changes never alter it.
+  const [receipt, setReceipt] = useState<RunBestReceipt | null>(null);
+  const receiptRunRef = useRef<string | null>(null);
+  // Feedback already shown this run (pops, rolls, haptics, announcements); live, never re-renders.
+  const [consumedFeedbackIds, setConsumedFeedbackIds] = useState<Set<string>>(() => new Set());
+  const preferences = useRunPreferences();
+
+  function resetRunLifetime() {
+    receiptRunRef.current = null;
+    setReceipt(null);
+    setConsumedFeedbackIds(new Set());
+    resetCueEvents();
+  }
+
+  // Facts are final before anything renders: the receipt and cues come from the same transition.
+  function settle(previous: RunState | null, next: RunState, action: RunAction) {
+    if (action.type === "SCORE_RECEIVED" && !next.paused) {
+      const item = next.items.find((candidate) => candidate.prompt.itemId === action.key.itemId);
+      const attempt = item?.attempts.find((candidate) => candidate.key.attemptId === action.key.attemptId);
+      if (item && attempt) {
+        playCue(cueForVerdict(item.verdict, tierForAccuracy(validAccuracy(attempt))), attempt.key.attemptId);
+      }
+    }
+    if (next.endReason === null || previous?.endReason !== null || receiptRunRef.current === next.runId) return;
+    receiptRunRef.current = next.runId;
+    const score = selectRunScore(next);
+    setReceipt(finalizeRunBest(bestBucketForRun(next), next.runId, score));
+    if (!next.paused) playCue(cueForSummary(score), `summary-${next.runId}`);
+  }
 
   function dispatch(action: RunAction): RunState | null {
     const previous = stateRef.current;
     const next = runReducer(previous, action);
     if (next === previous) return next;
     stateRef.current = next;
+    if (next) settle(previous, next, action);
     setState(next);
     if (next?.phase === "review" && previous?.phase !== "review") {
       // History, insights, and activity refresh when their own screens open.
@@ -118,11 +170,13 @@ export function usePracticeRun(session: RunSession) {
     setAttemptAudioUrls({});
   }
 
-  function cancelCapture() {
-    if (captureRef.current) session.cancelRunCapture();
+  function cancelCapture(reason: CaptureStopReason) {
+    if (captureRef.current) session.cancelRunCapture(reason);
   }
 
+  // Unlocks run audio inside the Start or Play again gesture, before any await.
   async function start(mode: RunMode, previousWeakWords: readonly string[] = []) {
+    session.prepareRunAudio();
     startTokenRef.current += 1;
     const token = startTokenRef.current;
     const [phonemeStats, vocabulary] = await Promise.all([
@@ -131,8 +185,10 @@ export function usePracticeRun(session: RunSession) {
     ]);
     if (startTokenRef.current !== token) return;
     const prompts = buildRunDeck({ phonemeStats, vocabulary, previousWeakWords });
-    if (stateRef.current) teardown();
+    // Replacing a run keeps the session's run audio that this gesture just unlocked.
+    if (stateRef.current) teardown(true);
     session.enterRun();
+    resetRunLifetime();
     dispatch({ type: "START", runId: newId("run"), mode, prompts });
   }
 
@@ -141,14 +197,15 @@ export function usePracticeRun(session: RunSession) {
     if (!current || captureRef.current || !canRecord(current)) return;
     const capture = nextCapture(current);
     if (!capture) return;
-    const key = { runId: current.runId, itemId: current.items[current.index].prompt.itemId, attemptId: newId("attempt") };
+    const { itemId, kind } = current.items[current.index].prompt;
+    const key = { runId: current.runId, itemId, attemptId: newId("attempt") };
     if (dispatch({ type: "BEGIN_CAPTURE", key, ...capture }) === current) return;
     captureRef.current = key;
     let started = false;
     try {
-      // Auto-stop stays off until the run classifies local rejects before sending.
-      const kind = current.items[current.index].prompt.kind;
-      started = await session.startRunCapture({ key, kind, autoStop: false }, (blob) => handleBlob(key, blob));
+      // Each take keeps the auto-stop preference it started with.
+      const options = { key, kind, autoStop: getRunPreferences().autoStop };
+      started = await session.startRunCapture(options, (blob, summary) => handleBlob(key, kind, blob, summary));
     } catch (err) {
       session.setError(err instanceof Error ? err.message : "Could not start the microphone.");
     }
@@ -158,8 +215,19 @@ export function usePracticeRun(session: RunSession) {
     }
   }
 
-  function handleBlob(key: AttemptKey, blob: Blob) {
+  function handleBlob(key: AttemptKey, kind: RunPrompt["kind"], blob: Blob, summary: CaptureSummary) {
     if (captureRef.current?.attemptId === key.attemptId) captureRef.current = null;
+    if (summary.captureId !== key.attemptId) return;
+    // Local decisions come before anything is sent or kept: no budget, no review URL.
+    const disposition = classifyCapture(summary, kind);
+    if (disposition === "discard") {
+      dispatch({ type: "CANCEL_CAPTURE", key });
+      return;
+    }
+    if (disposition !== "submit") {
+      dispatch({ type: "LOCAL_REJECT", key, reason: disposition });
+      return;
+    }
     // Cancelled, stale, or repeated blobs leave the run unchanged and are discarded.
     const before = stateRef.current;
     const ready = dispatch({ type: "BLOB_READY", key, blob });
@@ -215,7 +283,16 @@ export function usePracticeRun(session: RunSession) {
   }
 
   function stop() {
-    if (captureRef.current) session.stopRecording();
+    if (captureRef.current) session.stopRunCapture("manual");
+  }
+
+  // Abandons the current take without skipping the item or using a score. The lock holds until
+  // the take's blob is delivered, so no second capture can start meanwhile.
+  function cancelTake() {
+    const key = captureRef.current;
+    if (!key) return;
+    dispatch({ type: "CANCEL_CAPTURE", key });
+    session.cancelRunCapture("cancel");
   }
 
   function itemAction(type: "SKIP" | "ADVANCE" | "CANNOT_CONFIRM") {
@@ -259,29 +336,38 @@ export function usePracticeRun(session: RunSession) {
     if (current) dispatch({ type, runId: current.runId });
   }
 
+  function silenceRunAudio() {
+    cancelCues();
+    session.stopCurrentSpeech();
+  }
+
   // Each ends the attempt first, so a blob that arrives while the capture
   // stops is discarded.
   function pause() {
     runAction("PAUSE");
-    cancelCapture();
+    cancelCapture("pause");
+    silenceRunAudio();
   }
 
   function quit() {
     runAction("QUIT");
-    cancelCapture();
+    cancelCapture("quit");
+    silenceRunAudio();
   }
 
-  function teardown() {
+  function teardown(replacing: boolean) {
     const current = stateRef.current;
     if (current) dispatch({ type: "EXIT", runId: current.runId });
-    cancelCapture();
+    cancelCapture(replacing ? "replaced" : "exit");
     releaseAllUrls();
-    session.exitRun();
+    silenceRunAudio();
+    if (!replacing) session.exitRun();
   }
 
   function exit() {
     startTokenRef.current += 1;
-    teardown();
+    teardown(false);
+    resetRunLifetime();
   }
 
   async function playAgain() {
@@ -289,12 +375,38 @@ export function usePracticeRun(session: RunSession) {
     if (current) await start(current.mode, runWeakWords(current));
   }
 
+  const score = useMemo(() => (state ? selectRunScore(state) : null), [state]);
+  const suggestions = useMemo(() => (state ? selectReviewSuggestions(state) : []), [state]);
+  const topRevisit = useMemo(() => (state ? selectTopRevisit(state) : null), [state]);
+  // The bucket comes from the frozen deck; the record itself may change in another tab.
+  const currentBest = state ? readBest(bestBucketForRun(state)) : null;
+
   return {
     state,
     attemptAudioUrls,
+    score,
+    suggestions,
+    topRevisit,
+    receipt,
+    currentBest,
+    preferences,
+    setPreference: setRunPreference,
+    // Persists Auto-stop off, so the next take is manual; no attempt is used.
+    useManualStopNextTake: () => setRunPreference("autoStop", false),
+    telemetryStore: session.runCaptureTelemetry,
+    consumedFeedbackIds: consumedFeedbackIds as ReadonlySet<string>,
+    markFeedbackConsumed: (id: string) => void consumedFeedbackIds.add(id),
+    reference: {
+      text: session.speakingText,
+      status: session.speechStatus,
+      currentTime: session.speechCurrentTime,
+      duration: session.speechDuration
+    },
+    stopReference: () => session.stopCurrentSpeech(),
     start,
     record,
     stop,
+    cancelTake,
     recordNext,
     finish: () => void itemAction("ADVANCE"),
     skip: () => void itemAction("SKIP"),
