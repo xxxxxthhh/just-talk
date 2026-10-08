@@ -159,9 +159,11 @@ export function RunMiniPlayer({
     onPlayCoach(coachPrompt);
   };
 
+  // Changing take silences both voices, including a Coach still loading, until asked again.
   const chooseTake = (attemptId: string) => {
     if (attemptId === selected?.attemptId) return;
     if (player.attemptId !== null) player.stop();
+    if (coachActive) onStopCoach();
     setSelectedId(attemptId);
   };
 

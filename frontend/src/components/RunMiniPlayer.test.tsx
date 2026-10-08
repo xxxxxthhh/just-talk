@@ -128,6 +128,27 @@ describe("RunMiniPlayer", () => {
     expect(screen.getByRole("button", { name: "Stop your take of these" })).toBeInTheDocument();
   });
 
+  it("changing take stops a loading or playing Coach", () => {
+    for (const status of ["loading", "playing"] as const) {
+      const onPlayCoach = vi.fn();
+      const onStopCoach = vi.fn();
+      const coach: CoachPlayback = { text: "those", status };
+      const view = render(<Harness coach={coach} onPlayCoach={onPlayCoach} onStopCoach={onStopCoach} />);
+      fireEvent.click(screen.getByRole("button", { name: "Take 1 · 46" }));
+      expect(screen.getByRole("button", { name: "Take 1 · 46" })).toHaveAttribute("aria-pressed", "true");
+      expect(onStopCoach, status).toHaveBeenCalledTimes(1);
+      // Selecting the take already chosen is a no-op.
+      fireEvent.click(screen.getByRole("button", { name: "Take 1 · 46" }));
+      expect(onStopCoach, status).toHaveBeenCalledTimes(1);
+
+      // When the cancelled Coach reports back idle, nothing restarts on its own.
+      view.rerender(<Harness coach={IDLE} onPlayCoach={onPlayCoach} onStopCoach={onStopCoach} />);
+      expect(onPlayCoach).not.toHaveBeenCalled();
+      expect(play).not.toHaveBeenCalled();
+      view.unmount();
+    }
+  });
+
   it("a stale play() failure never marks the newer take as failed", async () => {
     let rejectFirst: (error: Error) => void = () => {};
     play.mockImplementationOnce(() => new Promise<void>((_, reject) => (rejectFirst = reject)));
