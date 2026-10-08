@@ -15,7 +15,7 @@ import { ScoredPassage } from "../../components/ScoredPassage";
 import { ScoreGrid } from "../../components/ScoreGrid";
 import { setRunChoice, useRunChoice } from "../../game/preferences";
 import { configForChoice, maxCountedScores } from "../../game/runConfig";
-import { selectPractisedCount, selectRunScore } from "../../game/scoring";
+import { selectRunScore } from "../../game/scoring";
 import { usePracticeRun } from "../../hooks/usePracticeRun";
 import { usePublicScoresLeft } from "../usePublicScoresLeft";
 import { PUBLIC_MODE } from "../../publicMode";
@@ -54,12 +54,7 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
   const runChoice = useRunChoice();
   // Owned here, above Summary and Review, so a replay failure survives switching between them.
   const replay = useReplay(
-    {
-      "play-again": run.playAgain,
-      // Until A4's nextSound (B5) the Summary offers no Next sound (nextSoundPhoneme is null),
-      // so this is never reached.
-      "next-sound": () => Promise.reject(new Error("Next sound needs the A4 controller."))
-    },
+    { "play-again": run.playAgain, "next-sound": run.nextSound },
     run.state?.runId ?? null
   );
   const leaveRun = () => {
@@ -224,9 +219,10 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             starting={run.starting}
             pendingRestart={replay.pendingAction}
             restartFailed={replay.failedAction}
-            nextSoundPhoneme={null}
+            nextSoundPhoneme={run.nextSoundPhoneme}
             onRetryRestart={replay.retry}
-            maxScores={maxCountedScores(run.state.config)}
+            // Null only without a run, which this branch excludes.
+            maxScores={run.maxScores ?? 0}
             onGenerateDrill={(phoneme) => {
               leaveRun();
               void session.insights.generateDrill(phoneme);
@@ -250,10 +246,8 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             onStop={run.stop}
             onCancelTake={run.cancelTake}
             onRecordNext={run.recordNext}
-            // Interim until A4's hearFirst/hearNextFirst (B5): play the current reference, and
-            // advance to the next Ready, where Hear it first is offered.
-            onHearFirst={() => run.playReference()}
-            onHearNextFirst={run.finish}
+            onHearFirst={run.hearFirst}
+            onHearNextFirst={run.hearNextFirst}
             onFinish={run.finish}
             onSkip={run.skip}
             onPlayReference={() => run.playReference()}
@@ -264,13 +258,13 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             onOpenReview={run.openReview}
             onPlayAgain={() => replay.restart("play-again")}
             onNextSound={() => replay.restart("next-sound")}
-            nextSoundPhoneme={null}
+            nextSoundPhoneme={run.nextSoundPhoneme}
             starting={run.starting}
             pendingRestart={replay.pendingAction}
             restartFailed={replay.failedAction}
             onRetryRestart={replay.retry}
-            maxScores={maxCountedScores(run.state.config)}
-            practisedCount={selectPractisedCount(run.state)}
+            maxScores={run.maxScores ?? 0}
+            practisedCount={run.practisedCount}
             onDone={leaveRun}
             onPlayRevisit={run.playReference}
             scoresLeft={scoresLeft}

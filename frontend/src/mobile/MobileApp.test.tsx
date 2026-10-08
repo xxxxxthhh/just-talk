@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -5,12 +8,19 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { setRunChoice, setRunPreference } from "../game/preferences";
 import MobileApp from "./MobileApp";
 
-// Six-item decks draw two of four items per stage, seeded by a runId that includes the time. These
-// tests follow fixed words, so they use v2's two items per stage, which makes every six-item deck
-// the same.
+// Six-item decks draw two of four items per stage, seeded by a runId that includes the time. Tests
+// that follow fixed words use v2's two items per stage, which makes every six-item deck the same;
+// the production-pack tests switch to the real 60 items and read the prompts from the screen.
+const pack = vi.hoisted(() => ({ small: true }));
 vi.mock("../game/starterPack", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../game/starterPack")>();
-  return { ...actual, STARTER_PACK: actual.STARTER_PACK.filter((item) => Number(item.id.at(-1)) <= 2) };
+  const small = actual.STARTER_PACK.filter((item) => Number(item.id.at(-1)) <= 2);
+  return {
+    ...actual,
+    get STARTER_PACK() {
+      return pack.small ? small : actual.STARTER_PACK;
+    }
+  };
 });
 
 function mockApi(payloads: Record<string, unknown>) {
@@ -376,6 +386,185 @@ describe("MobileApp game run", () => {
     // The entry choice is remembered across mounts; each test starts from the default.
     setRunChoice({ selection: "route", routeLength: 6 });
     window.localStorage.removeItem("jt.runConfig.v1");
+    pack.small = true;
+  });
+
+  // Records every item in turn, reading each prompt from the screen, then finishes to the Summary.
+  async function playToSummary(user: ReturnType<typeof userEvent.setup>, items: number, scored: readonly string[]) {
+    const shown: string[] = [];
+    for (let index = 0; index < items; index += 1) {
+      if (index > 0) await waitFor(() => expect(screen.getByRole("button", { name: "Record next" })).toBeEnabled());
+      await recordAndStop(user, index === 0 ? "Record" : "Record next");
+      await screen.findByText(new RegExp(`^${index + 1} / ${items} · `), { selector: ".run-stage-label" });
+      await waitFor(() => expect(scored).toHaveLength(index + 1));
+      shown.push(document.querySelector(".run-prompt-v2")?.textContent ?? "");
+    }
+    await waitFor(() => expect(screen.getByRole("button", { name: "Finish" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Finish" }));
+    return shown;
+  }
+
+  function speakTexts(): string[] {
+    return vi
+      .mocked(fetch)
+      .mock.calls.filter(([url]) => String(url) === "/api/speak")
+      .map(([, init]) => JSON.parse(String(init?.body)).text as string);
+  }
+
+  test("three_six_item_configs_complete_with_production_pack", async () => {
+    pack.small = false;
+    const user = userEvent.setup();
+    const scored = installRunApi();
+    render(<MobileApp />);
+
+    for (const [radio, header, kicker, cost] of [
+      ["Route", "Route · 6 items · /θ/", /^Route complete · \/θ\//, "Each new run uses up to 8 scores"],
+      ["Challenge, target 60", "Challenge · Target 60 · /θ/", /^Challenge cleared · Target 60/, "Play again uses up to 8 new scores"],
+      ["Challenge, target 85", "Challenge · Target 85 · /θ/", /^Challenge cleared · Target 85/, "Play again uses up to 10 new scores"]
+    ] as const) {
+      scored.length = 0;
+      await user.click(await screen.findByRole("radio", { name: radio }));
+      await user.click(screen.getByRole("button", { name: radio === "Route" ? "Start Route" : "Start Challenge" }));
+      expect(await screen.findByText(header, { selector: ".run-bar-title" })).toBeInTheDocument();
+      const shown = await playToSummary(user, 6, scored);
+      // Six distinct production prompts, scored in the order shown.
+      expect(new Set(shown).size).toBe(6);
+      expect(scored).toEqual(shown);
+      expect(await screen.findByRole("heading", { name: kicker })).toBeInTheDocument();
+      expect(document.querySelector("footer")).toHaveTextContent(cost);
+      expect(Boolean(screen.queryByRole("button", { name: "Next sound /ð/" }))).toBe(radio === "Route");
+      await user.click(screen.getByRole("button", { name: "See review" }));
+      expect(screen.getByRole("list", { name: "All readings" }).children).toHaveLength(6);
+      await user.click(screen.getByRole("button", { name: "Done" }));
+    }
+  });
+
+  test("route12_production_pack_completes_summary_review_and_replay", async () => {
+    pack.small = false;
+    const user = userEvent.setup();
+    const scored = installRunApi();
+    render(<MobileApp />);
+    await user.click(await screen.findByRole("radio", { name: "12 items" }));
+    await user.click(screen.getByRole("button", { name: "Start Route" }));
+    expect(await screen.findByText("Route · 12 items · /θ/", { selector: ".run-bar-title" })).toBeInTheDocument();
+    expect(document.querySelectorAll(".run-stones-group > ol.is-grid")).toHaveLength(3);
+
+    const shown = await playToSummary(user, 12, scored);
+    expect(new Set(shown).size).toBe(12);
+    expect(scored).toEqual(shown);
+    expect(await screen.findByRole("heading", { name: "Route complete · /θ/" })).toBeInTheDocument();
+    expect(document.querySelector(".run-summary-practised")).toHaveTextContent("12 / 12Practised");
+    expect(document.querySelectorAll(".run-summary-scores li")).toHaveLength(12);
+    expect(document.querySelector("footer")).toHaveTextContent("Each new run uses up to 16 scores");
+
+    await user.click(screen.getByRole("button", { name: "See review" }));
+    expect(screen.getByRole("list", { name: "All readings" }).children).toHaveLength(12);
+    expect(document.querySelectorAll("audio")).toHaveLength(1);
+
+    // Play again keeps Route 12.
+    await user.click(screen.getByRole("button", { name: "Play again" }));
+    expect(await screen.findByText("1 / 12 · Warm-up", { selector: ".run-stage-label" })).toBeInTheDocument();
+    expect(screen.getByText("Route · 12 items · /θ/", { selector: ".run-bar-title" })).toBeInTheDocument();
+    await quitRun(user);
+    await user.click(await screen.findByRole("button", { name: "Done" }));
+  });
+
+  test("route_hear_first_and_hear_next_first_use_the_controller", async () => {
+    const user = userEvent.setup();
+    const scored = installRunApi();
+    render(<MobileApp />);
+    await startRun(user);
+
+    // Hear it first asks for this item's reference; the test API has none, which never blocks Record.
+    await user.click(screen.getByRole("button", { name: "Hear it first" }));
+    await waitFor(() => expect(speakTexts()).toEqual(["thin"]));
+    expect(await screen.findByText("Couldn't load it · Record works any time")).toBeInTheDocument();
+    await recordAndStop(user);
+    expect(await screen.findByText("Strong.", { selector: ".run-status-main" })).toBeInTheDocument();
+
+    // Hear next first moves on once and previews the new item, without recording it.
+    await user.click(screen.getByRole("button", { name: "Hear next first" }));
+    expect(await screen.findByText("2 / 6 · Warm-up", { selector: ".run-stage-label" })).toBeInTheDocument();
+    await waitFor(() => expect(speakTexts()).toEqual(["thin", "thick"]));
+    expect(screen.getByRole("button", { name: "Record" })).toBeEnabled();
+    expect(scored).toEqual(["thin"]);
+  });
+
+  test("next_sound_starts_the_next_focus_and_owns_navigation_while_pending", async () => {
+    const user = userEvent.setup();
+    const gate = deckGate("/api/words");
+    installRunApi({ hold: gate.hold });
+    render(<MobileApp />);
+    await finishWithOneTake(user, "summary");
+
+    gate.close();
+    await user.click(screen.getByRole("button", { name: "Next sound /ð/" }));
+    // Pending: only Next sound says Starting…; the finished run stays, tabs stay hidden.
+    expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Play again" })).toBeDisabled();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    await act(async () => gate.open());
+    expect(await screen.findByText("Route · 6 items · /ð/", { selector: ".run-bar-title" })).toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+  });
+
+  test("next_sound_failure_survives_review_and_retry_keeps_destination", async () => {
+    const user = userEvent.setup();
+    let broken = 0;
+    const gate = deckGate("/api/words");
+    installRunApi({
+      hold: gate.hold,
+      words: () => {
+        if (broken === 0) return [];
+        broken -= 1;
+        return [{ id: "bad", word: null, status: "active", due_at: null }];
+      }
+    });
+    render(<MobileApp />);
+    await finishWithOneTake(user, "summary");
+
+    broken = 1;
+    gate.close();
+    await user.click(screen.getByRole("button", { name: "Next sound /ð/" }));
+    await user.click(screen.getByRole("button", { name: "See review" }));
+    await act(async () => gate.open());
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't start /ð/. Your results are still here.");
+
+    // Retry from Review repeats Next sound to the same /ð/.
+    await user.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Route · 6 items · /ð/", { selector: ".run-bar-title" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("deferred_next_sound_then_done_never_reopens_run", async () => {
+    const user = userEvent.setup();
+    const gate = deckGate("/api/words");
+    installRunApi({ hold: gate.hold });
+    render(<MobileApp />);
+    await finishWithOneTake(user, "summary");
+
+    gate.close();
+    await user.click(screen.getByRole("button", { name: "Next sound /ð/" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(await screen.findByRole("tablist")).toBeInTheDocument();
+    await act(async () => gate.open());
+    expect(screen.queryByRole("region", { name: "Route run" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Route" })).toBeInTheDocument();
+  });
+
+  test("production_has_no_interim_fixture_wiring", () => {
+    const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
+    const screenSource = read("src/mobile/screens/PracticeScreen.tsx");
+    const appSource = read("src/mobile/MobileApp.tsx");
+    for (const source of [screenSource, appSource]) {
+      expect(source).not.toMatch(/runV[23]Fixtures|Interim|needs the A4|Promise\.reject/);
+    }
+    expect(screenSource).toMatch(/onHearFirst=\{run\.hearFirst\}/);
+    expect(screenSource).toMatch(/onHearNextFirst=\{run\.hearNextFirst\}/);
+    expect(screenSource).toMatch(/"next-sound": run\.nextSound/);
+    expect(read("src/components/PracticeRun.tsx")).not.toMatch(/MAX_EXTRA_ATTEMPTS/);
   });
 
   test("entry_uses_shared_choice_without_mutating_active_config", async () => {
@@ -694,7 +883,8 @@ describe("MobileApp game run", () => {
   });
 
   // A gate the next deck requests wait behind, opened by the test.
-  function deckGate() {
+  // Holds the deck's stats request (Start, Play again) or, for Next sound, its vocabulary request.
+  function deckGate(url = "/api/phoneme-stats") {
     let release: () => void = () => {};
     let promise = Promise.resolve();
     let closed = false;
@@ -707,7 +897,7 @@ describe("MobileApp game run", () => {
         closed = false;
         release();
       },
-      hold: (url: string) => (closed && url === "/api/phoneme-stats" ? promise : undefined),
+      hold: (requested: string) => (closed && requested === url ? promise : undefined),
     };
   }
 
