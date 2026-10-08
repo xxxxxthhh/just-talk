@@ -242,4 +242,3 @@ describe("personal best", () => {
     expect(readBest({ ...target85, config: TARGET_60 }, T0)).toBeNull();
   });
 });
-
