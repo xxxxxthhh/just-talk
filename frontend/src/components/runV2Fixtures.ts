@@ -236,6 +236,38 @@ const heartLost = fixture(
   ring("verdict", { accuracy: 52, tier: "relisten", feedbackId: lastAttemptId(heartLostRun) })
 );
 
+// The rescue reads 72 instead: the stone keeps the first reading's tier and adds the rescued mark.
+const savedRun = scored(loadReference(rescueRun), 72);
+const rescueSaved = fixture(
+  savedRun,
+  rescueScore,
+  ring("verdict", { accuracy: 72, tier: "good", feedbackId: lastAttemptId(savedRun) })
+);
+
+// A Route mid-run with every non-judgment mark: 100, skipped, no match, result unknown, now on item 5.
+function noMatch(state: RunState): RunState {
+  const sent = send(state);
+  const empty = response(0, []);
+  return step(sent.state, {
+    type: "SCORE_RECEIVED",
+    key: sent.key,
+    response: { ...empty, result: { ...empty.result, recognition_status: "no_match" } }
+  });
+}
+
+function unknownResult(state: RunState): RunState {
+  const sent = send(state);
+  return step(sent.state, { type: "SCORE_FAILED", key: sent.key, failure: { kind: "unknown", message: "No reply" } });
+}
+
+const routeSkipped = step(advance(scored(start("route"), 100)), { type: "SKIP", runId: "fixture-route", itemId: "warmup-2" });
+const routeGapsRun = advance(unknownResult(advance(noMatch(routeSkipped))));
+const routeGaps = fixture(
+  routeGapsRun,
+  scoreView([itemScore(0, 100, "perfect", 1)], { points: 150, currentChain: 0, longestChain: 1 }),
+  ring("ready")
+);
+
 // The owner's run from the design: 100, 80, 95, 92, 86, 94 → 861 A, Challenge cleared.
 const ratedRun = readings("challenge", [100, 80, 95, 92, 86, 94]);
 const ratedScore = scoreView(
@@ -298,6 +330,8 @@ export const runV2Fixtures = {
   verdictRelisten,
   rescue,
   heartLost,
+  rescueSaved,
+  routeGaps,
   summaryRated,
   summaryUnrated,
   review
