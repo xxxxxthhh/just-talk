@@ -1,7 +1,7 @@
 import { useId } from "react";
 
-import { scoreValue } from "../scoreUtils";
 import type { RunItem, RunItemScore, RunPrompt, RunTier } from "../types";
+import { formatRunScore } from "./RunRing";
 
 export type RunStonesProps = {
   items: readonly RunItem[];
@@ -40,7 +40,10 @@ function stoneLabel(position: number, item: RunItem, score: RunItemScore | undef
   const status = stoneStatus(item);
   const parts: string[] = [];
   // The first valid reading is the scored fact; a rescue is reported beside it, never instead of it.
-  if (score?.tier) parts.push(`first reading ${TIER_LABELS[score.tier]} ${scoreValue(score.firstAccuracy)}`);
+  // Same rule as the ring: a decimal only where rounding would cross a tier line (84.9 stays Good).
+  if (score?.tier && score.firstAccuracy !== null) {
+    parts.push(`first reading ${TIER_LABELS[score.tier]} ${formatRunScore(score.firstAccuracy)}`);
+  }
   if (item.verdict === "saved") parts.push("rescued");
   if (status) parts.push(STATUS_LABELS[status]);
   if (parts.length === 0) parts.push(current ? "now" : "not reached");

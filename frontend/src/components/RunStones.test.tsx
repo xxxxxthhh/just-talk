@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { tierForAccuracy } from "../game/scoring";
 import { RunStones } from "./RunStones";
 import { runV2Fixtures, type RunV2Fixture } from "./runV2Fixtures";
 
@@ -77,6 +78,37 @@ describe("RunStones", () => {
     const lost = stones()[3];
     expect(lost).toHaveAttribute("data-tier", "relisten");
     expect(lost).not.toHaveClass("is-rescued");
+  });
+
+  it("stone labels keep the decimal wherever rounding would cross a tier line", () => {
+    const run = runV2Fixtures.summaryRated.run;
+    const values = [59.6, 60, 84.9, 85, 94.9, 95];
+    const scores = run.items.map((item, index) => ({
+      itemId: item.prompt.itemId,
+      firstAccuracy: values[index],
+      tier: tierForAccuracy(values[index]),
+      chain: 0,
+      basePoints: 0,
+      chainPoints: 0,
+    }));
+    const { unmount } = render(<RunStones items={run.items} scores={scores} currentIndex={null} reducedMotion />);
+    expect(stones().map((stone) => stone.getAttribute("aria-label")?.split(": ")[1])).toEqual([
+      "first reading Re-listen 59.6",
+      "first reading Good 60",
+      "first reading Good 84.9",
+      "first reading Great 85",
+      "first reading Great 94.9",
+      "first reading Perfect 95",
+    ]);
+    unmount();
+
+    // A rescued stone keeps its first reading below 60, decimal included, beside the rescue.
+    const saved = runV2Fixtures.rescueSaved;
+    const rescuedScores = saved.score.items.map((item, index) =>
+      index === 3 ? { ...item, firstAccuracy: 59.6, tier: tierForAccuracy(59.6) } : item
+    );
+    render(<RunStones items={saved.run.items} scores={rescuedScores} currentIndex={null} reducedMotion />);
+    expect(stones()[3]).toHaveAccessibleName("4. those: first reading Re-listen 59.6, rescued");
   });
 
   it("reduced motion stops the current stone breathing", () => {
