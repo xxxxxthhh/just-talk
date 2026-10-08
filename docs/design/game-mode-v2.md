@@ -15,14 +15,14 @@ This is the merged outcome of independent proposals from Fable and Codex (GPT-6-
 
 1. **Penalties stay on the robust line.** Hearts and run endings use only the v1 rules: fixed 60, confirmed twice, technical failures never cost a heart. Tiers, chain, score, rating, and personal best (PB) may absorb scorer noise because they never cost anything.
 2. **Animation never decides or blocks.** Every game fact is derived from reducer state before an animation starts. Buttons are usable from the first frame.
-3. **Scoring is derived.** Tier, chain, score, rating, and badges are pure functions of `RunState`. The reducer changes in one place only: `LOCAL_REJECT`.
+3. **Scoring is derived.** Tier, chain, score, rating, and badges are pure functions of `RunState`. The reducer changes only for `LOCAL_REJECT` and the terminal-state rules (both modes end on Summary; finished runs are never paused).
 4. **No backend changes.**
 
 ## Mechanics
 
 ### Tiers
 
-The game uses its own palette, not `scoreTone`. Compare raw values: 84.9 is Good even if it displays as 85.
+The game uses its own palette, not `scoreTone`. Compare raw values: 84.9 is Good. Everywhere a game score is shown or announced (ring, stones, summary, review, live region), it is a whole number unless rounding would cross a tier line. In that case it shows one decimal, truncated, so 84.9 never reads as 85.
 
 | Tier | Raw accuracy | Color |
 | --- | --- | --- |
@@ -127,7 +127,7 @@ The manual Stop button stays at the same bottom position at all times.
 
 ### Parameters
 
-These are first-pass values, tuned on real devices.
+These are first-pass values. They await the owner's device pilot (`docs/testing/game-mode-v2-device-checklist.md`).
 
 | | Word | Sentence |
 | --- | --- | --- |
@@ -138,10 +138,14 @@ These are first-pass values, tuned on real devices.
 | Trailing silence to stop | 650 ms | 1000 ms |
 | No-onset timeout | 4 s → local reject (`no-speech`) | 6 s |
 | Auto-mode cap | 6 s | 14 s |
-| Noise fallback | N > −32 dBFS, or calibration spread P90−P10 > 12 dB over the first 8 frames → auto-stop off for this take, "Noisy · tap Stop" | same |
+| Noise fallback | N > −32 dBFS, or calibration spread P90−P10 > 12 dB over the first 8 frames → auto-stop off for this take, "Noisy · tap Stop". The spread is decided once, after the 250 ms opening replay and the current frame; onset or immediate speech seen by then wins and skips it | same |
 | Detection invalid | Sampling gap > 250 ms, context not running, or page hidden → auto-stop off for this take. A gap is never counted as silence. Hidden pages already pause the run | same |
 
 The rolling floor replaces calibration on the first 250 ms. That rule broke when the learner spoke immediately: a quiet speaker at −36 dBFS would never cross the onset and would be rejected.
+
+Known limits:
+- A floor that starts at −55 dBFS and rises at most 1 dB/s cannot reach the N > −32 fallback within a healthy 6 s or 14 s auto take. Steady noise above the onset threshold, such as a TV or fan, therefore reads as voice and runs to the auto cap, which submits once.
+- Energy endpointing stops on a pause about as long as the trailing-silence window, even mid-sentence.
 
 Trailing silence is kept in the blob; nothing is trimmed.
 
@@ -149,16 +153,22 @@ Trailing silence is kept in the blob; nothing is trimmed.
 
 Every stop path is one stop-once call. The capture's callback receives an immutable summary: `captureId`, `stopReason`, `durationMs`, `detectionValid`, `speechSeen`, and `voicedMs`.
 
+Capture contract:
+- A started capture hands off its blob and matching summary exactly once.
+- A capture cancelled or replaced while permission is pending resolves `false` with no callback. Its late stream, or a late denial, is ignored.
+- A stop the browser makes on its own (for example, device loss) counts as `cancel` and is discarded.
+- VAD timing and `durationMs` use the monotonic clock from `recorder.start()`. The elapsed display and the hard cap use wall time.
+
 | Stop reason / state | Result |
 | --- | --- |
 | Pause, quit, exit, or replaced by a new capture | Discard silently |
 | Manual Stop, < 0.45 s | `LOCAL_REJECT` with "Too short · try once more" |
 | Manual Stop, ≥ 0.45 s | **Submit. VAD never vetoes a manual stop** |
 | Healthy detection, onset seen, minimum voiced time met, trailing silence reached | Submit once |
-| Healthy detection, no onset by the timeout | `LOCAL_REJECT` with "Didn't catch anything" plus a one-tap **"Use manual Stop"** for the next take |
+| Healthy detection, no onset by the timeout | `LOCAL_REJECT` with "Didn't catch anything" plus a one-tap **"Use manual Stop"** for the next take. It persists `jt.autoStop = false`, so it applies from the next take and stays off until turned back on; it is not a one-take override |
 | Healthy detection, onset seen but trailing silence reached before the minimum voiced time | `LOCAL_REJECT` with "Too short" |
 | Healthy detection, auto-mode cap reached | Submit if the minimum voiced time is met; otherwise `LOCAL_REJECT` |
-| Auto-stop off, noisy, or detection invalid | No VAD stops or rejects. Manual Stop plus the session's existing hard cap (30 s) |
+| Auto-stop off, noisy, or detection invalid | No VAD stops or rejects. Manual Stop plus the session's existing hard cap (the health `max_audio_seconds`, default 30 s) |
 
 Microphone keep-warm across takes is deferred.
 
@@ -181,9 +191,9 @@ The run stays inside the existing warm brown and orange brand.
   - In the ready state it is decoration (`aria-hidden`). While recording, tapping it stops the take, with a 400 ms debounce that applies to the ring only.
 - **Stones**:
   - Six 28 px hexagons in three groups (2 + 2 + 2), labelled Warm-up, Focus, and In context.
-  - Fill color is the tier. The current stone breathes.
+  - Fill is the tier of the item's first valid reading; Perfect uses the gold gradient. The current stone breathes.
   - Status marks: skipped is dashed, unjudged is striped, pending has an orange outline.
-  - A rescued item shows a tier fill plus a coral outline.
+  - Only an item whose verdict is `saved` (a successful rescue) gets the orange `#FB923C` rescued outline over its first-reading fill. Other rescue attempts add no outline.
 - **Glow**: a radial gradient from the ring in the current tier color, at opacity 0.18 or less. Gold appears only for Perfect and S.
 - **Type**:
   - Outfit for display: words 44–56 px, sentences 24–28 px, score 88 px with `tabular-nums`, tier labels 14 px uppercase with 0.18em tracking.
@@ -194,6 +204,7 @@ The run stays inside the existing warm brown and orange brand.
   - **On by default.** One mute toggle on the entry card and in the run header, stored in `jt.sfx`.
   - Cues: good (pop), great (two-note rise), perfect (arpeggio), heart (soft crack), clear (fanfare; shorter for B and C), rescue-saved (light double tone).
   - No sound at all while the microphone is open, including a recording-start cue.
+  - A result or summary cue plays only if the run was unpaused both before and after that transition. A result that settles while paused stays silent, even when it ends the run.
   - Muting stops sound output only; it never suspends the shared context that auto-stop uses.
   - A rejected `play()` degrades silently.
 - **Haptics**: `navigator.vibrate` by feature detection. It doesn't exist in iOS Safari, and the design never promises it.
@@ -211,8 +222,10 @@ The bottom thumb zone is fixed at about 144 px: a chain or auto-stop row, a 60 p
    - A Route or Challenge choice, each with a one-line explanation.
    - Auto-stop and sound toggles, and a full-width Start.
    - In public mode, a usage line.
-   - About 220–260 px tall.
+   - About 495 px tall. This is a lead-accepted departure from the original 220–260 px.
    - Start stays disabled while a normal recording or score is in flight.
+   - An accepted Start (or Play again) owns navigation at once, before the deck loads. The controller's `starting` flag follows its start token, and exit clears it.
+   - If the stats or word fetch fails, the run still starts from the starter deck. Only an unrecoverable deck-build failure is shown as an error.
 2. **Ready and recording**:
    - Header: Pause (since the tab bar is hidden), mode, hearts, sound.
    - Then the stones, the stage label, and the prompt.
@@ -256,14 +269,18 @@ The bottom thumb zone is fixed at about 144 px: a chain or auto-stop row, a 60 p
      - Out of hearts shows a cracked heart where the letter goes;
      - no fanfare.
    - Buttons: See review, Play again (note that it uses new score calls), Done.
+   - While a replay's deck loads, Play again shows that it is pending and is disabled; Done stays available and abandons it. If the replay cannot start, the old results stay, with a retryable error on the same surface.
+   - Both modes end here. Summary and Review are never paused: ending a run clears pause, and Pause there changes no state but still silences the voice and cues.
 8. **Review (rebuilt)**:
    - A compact summary bar at the top (rating, score, stones; tapping a stone jumps to its item).
    - "What to practice next": up to three items, deduplicated so one recording never appears as both a sound card and a word card.
    - A custom dark mini player, "▶ You" and "▶ Coach", with Take 1 and Take 2 for rescued items. **Only one player sounds at a time.**
    - Word-level chips under sentences, e.g. "birds 31", with "word score" and "sentence score" labelled.
    - Unreached items are collapsed. Items without a recording show no empty player.
+   - In "All readings", a take already featured in a suggestion above links to it instead of repeating its You control.
+   - Hiding the page stops You and Coach playback, and nothing replays on return.
    - "Generate a drill" keeps its progress and error after moving to Practice.
-9. **Immersion**: the tab bar is hidden during a run. Quit asks for confirmation and then calls `run.quit` (results kept, go to summary), not `run.exit`.
+9. **Immersion**: the tab bar is hidden during a run, from the accepted Start onward. Quit asks for confirmation and then calls `run.quit` (results kept, go to summary), not `run.exit`. A custom confirmation dialog is acceptable if it contains focus and makes the run behind it inert.
 
 ### Reduced motion and VoiceOver
 
