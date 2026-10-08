@@ -739,6 +739,95 @@ describe("MobileApp game run", () => {
     expect(screen.queryByRole("region", { name: "Route run" })).not.toBeInTheDocument();
   });
 
+  // A playing Coach on the Summary's revisit word, from a quit Route whose first take scored 50.
+  async function summaryWithCoach(user: ReturnType<typeof userEvent.setup>) {
+    await startRun(user);
+    await recordAndStop(user);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Record next" })).toBeEnabled());
+    await quitRun(user);
+    return screen.findByRole("button", { name: "Hear thin" });
+  }
+
+  function coachAudio() {
+    const play = vi.fn().mockResolvedValue(undefined);
+    const pause = vi.fn();
+    vi.stubGlobal("Audio", vi.fn(function AudioMock() {
+      return { play, pause, currentTime: 0 };
+    }));
+    return { play, pause };
+  }
+  const SPEAK = { "/api/speak": { audio_base64: "YXVkaW8=", content_type: "audio/mpeg" } };
+
+  test.each(["Play again", "Next sound /ð/"])("summary_restart_gesture_stops_the_coach_first: %s", async (button) => {
+    const user = userEvent.setup();
+    const gate = deckGate("/api/words");
+    const audio = coachAudio();
+    installRunApi({ hold: gate.hold, score: (text) => scoreReply(text, 50), extra: SPEAK });
+    render(<MobileApp />);
+    await user.click(await summaryWithCoach(user));
+    await waitFor(() => expect(audio.play).toHaveBeenCalledTimes(1));
+    audio.pause.mockClear();
+
+    gate.close();
+    await user.click(screen.getByRole("button", { name: button }));
+    // The new run is still loading, and the old Coach has already stopped.
+    expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    expect(audio.pause).toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await act(async () => gate.open());
+  });
+
+  test("summary_try_again_stops_the_coach_first", async () => {
+    const user = userEvent.setup();
+    const gate = deckGate("/api/words");
+    let broken = 0;
+    const audio = coachAudio();
+    installRunApi({
+      hold: gate.hold,
+      score: (text) => scoreReply(text, 50),
+      extra: SPEAK,
+      words: () => {
+        if (broken === 0) return [];
+        broken -= 1;
+        return [{ id: "bad", word: null, status: "active", due_at: null }];
+      }
+    });
+    render(<MobileApp />);
+    const hear = await summaryWithCoach(user);
+    broken = 1;
+    await user.click(screen.getByRole("button", { name: "Next sound /ð/" }));
+    const alert = await screen.findByRole("alert");
+    await user.click(hear);
+    await waitFor(() => expect(audio.play).toHaveBeenCalledTimes(1));
+    audio.pause.mockClear();
+    gate.close();
+    await user.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(audio.pause).toHaveBeenCalled();
+    await act(async () => gate.open());
+    expect(await screen.findByText("Route · 6 items · /ð/", { selector: ".run-bar-title" })).toBeInTheDocument();
+  });
+
+  test("summary_restart_drops_a_coach_still_loading", async () => {
+    const user = userEvent.setup();
+    const audio = coachAudio();
+    let releaseSpeak: () => void = () => {};
+    let holdSpeak = false;
+    installRunApi({
+      score: (text) => scoreReply(text, 50),
+      extra: SPEAK,
+      hold: (url) => (holdSpeak && url === "/api/speak" ? new Promise<void>((done) => (releaseSpeak = done)) : undefined)
+    });
+    render(<MobileApp />);
+    const hear = await summaryWithCoach(user);
+    holdSpeak = true;
+    await user.click(hear);
+    await user.click(screen.getByRole("button", { name: "Play again" }));
+    expect(await screen.findByText("1 / 6 · Warm-up", { selector: ".run-stage-label" })).toBeInTheDocument();
+    // The reference arrives after the new run started: it never plays.
+    await act(async () => releaseSpeak());
+    expect(audio.play).not.toHaveBeenCalled();
+  });
+
   test("production_has_no_interim_fixture_wiring", () => {
     const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
     const screenSource = read("src/mobile/screens/PracticeScreen.tsx");

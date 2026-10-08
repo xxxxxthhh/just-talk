@@ -10,7 +10,7 @@ import {
 import { PracticeRun } from "../../components/PracticeRun";
 import { RunHero } from "../../components/RunHero";
 import { RunReview } from "../../components/RunReview";
-import { useReplay } from "../../components/useReplay";
+import { useReplay, type RestartKind } from "../../components/useReplay";
 import { ScoredPassage } from "../../components/ScoredPassage";
 import { ScoreGrid } from "../../components/ScoreGrid";
 import { setRunChoice, useRunChoice } from "../../game/preferences";
@@ -60,6 +60,16 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
   const leaveRun = () => {
     replay.abandon();
     run.exit();
+  };
+  // A new-run action first silences the finished run's Coach (playing or still loading), then starts
+  // in the same tap, so run audio is still prepared inside the gesture.
+  const restart = (kind: RestartKind) => {
+    run.stopReference();
+    replay.restart(kind);
+  };
+  const retryRestart = () => {
+    run.stopReference();
+    replay.retry();
   };
   const {
     activeMaterial,
@@ -215,12 +225,12 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             publicMode={PUBLIC_MODE}
             drillsEnabled={Boolean(session.health?.passage_check_configured)}
             onPlayReference={run.playReference}
-            onPlayAgain={() => replay.restart("play-again")}
+            onPlayAgain={() => restart("play-again")}
             starting={run.starting}
             pendingRestart={replay.pendingAction}
             restartFailed={replay.failedAction}
             nextSoundPhoneme={run.nextSoundPhoneme}
-            onRetryRestart={replay.retry}
+            onRetryRestart={retryRestart}
             restartMessage={replay.failureMessage}
             // Null only without a run, which this branch excludes.
             maxScores={run.maxScores ?? 0}
@@ -257,15 +267,15 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             onResume={run.resume}
             onQuit={run.quit}
             onOpenReview={run.openReview}
-            onPlayAgain={() => replay.restart("play-again")}
-            onNextSound={() => replay.restart("next-sound")}
+            onPlayAgain={() => restart("play-again")}
+            onNextSound={() => restart("next-sound")}
             nextSoundPhoneme={run.nextSoundPhoneme}
             starting={run.starting}
             pendingRestart={replay.pendingAction}
             restartFailed={replay.failedAction}
-            onRetryRestart={replay.retry}
+            onRetryRestart={retryRestart}
             restartMessage={replay.failureMessage}
-            onRunWithRevisitWords={() => replay.restart("revisit-words")}
+            onRunWithRevisitWords={() => restart("revisit-words")}
             revisitWords={run.revisitWords}
             maxScores={run.maxScores ?? 0}
             practisedCount={run.practisedCount}
