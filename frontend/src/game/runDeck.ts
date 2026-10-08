@@ -1,5 +1,6 @@
 import { getDueWordsForReview } from "../components/WordBankPanel";
 import type { PhonemeStat, RunFocusPhoneme, RunPrompt, StarterRunConfig, VocabularyItem } from "../types";
+import { singleWordKey } from "./singleWord";
 import { DEFAULT_STARTER_PHONEME, STARTER_PACK, type StarterItem } from "./starterPack";
 
 const PACK_PHONEMES = new Set<string>(STARTER_PACK.map((item) => item.phoneme));
@@ -24,14 +25,8 @@ export function chooseFocusPhoneme(stats: readonly PhonemeStat[]): RunFocusPhone
   return focus;
 }
 
-const BOUNDARY_PUNCTUATION = /^[.,!?;:"'()[\]{}]+|[.,!?;:"'()[\]{}]+$/g;
-
-// Mirrors the backend's _single_word_reference: the scoring target of a word
-// prompt, or "" when the text is not one word. Used lowercased as the dedupe key.
-export function singleWordKey(text: string): string {
-  const stripped = text.trim().replace(BOUNDARY_PUNCTUATION, "").trim();
-  return stripped && stripped.split(/\s+/).length === 1 ? stripped.toLowerCase() : "";
-}
+// Words decks, revisit seeds and START validation share one judgment of "a single word".
+export { singleWordKey };
 
 // FNV-1a over the seed's UTF-16 code units, feeding a mulberry32 generator. Deterministic for a seed
 // on every platform; never Math.random.

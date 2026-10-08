@@ -45,7 +45,7 @@ From `frontend/src/game/vad.ts`:
 | Auto-mode cap | 6 s | 14 s |
 | Manual Stop shorter than this is "too-short" | 450 ms | 450 ms |
 
-Floor −55 dBFS rising at most 1 dB/s; onset = floor + 10 dB clamped to −48…−28 with 3 of 5 frames; offset 6 dB below onset; immediate speech above −40 dBFS in the first 250 ms; noisy fallback when the first 8 frames spread over 12 dB, decided once; detection off for a gap over 250 ms. The known limits in `game-mode-v2-device-checklist.md` still apply unchanged: a pause of about 1 s or more can end a sentence early, steady noise runs to the auto cap, and the −32 dBFS floor fallback cannot trigger within a take.
+Floor −55 dBFS rising at most 1 dB/s; onset = floor + 10 dB clamped to −48…−28 with 3 of 5 frames; offset 6 dB below onset; immediate speech above −40 dBFS in the first 250 ms; noisy fallback when the P90−P10 spread of the first 8 frames exceeds 12 dB, decided once after the 250 ms opening has been replayed through the detector and skipped when an onset or immediate speech came first; detection off for a gap over 250 ms. The known limits in `game-mode-v2-device-checklist.md` still apply unchanged: a pause of about 1 s or more can end a sentence early, steady noise runs to the auto cap, and the −32 dBFS floor fallback cannot trigger within a take.
 
 ## Preserved v2 regression matrix
 
@@ -70,6 +70,7 @@ Each row of the plan's matrix, with the A-owned tests that hold it. B-owned halv
 | Check | Tests |
 | --- | --- |
 | Fresh-bank fetch failure or shortage keeps the old run | `usePracticeRun`: `words_fetch_or_shortage_preserves_old_run`; `wordDeck`: `words_exact_6_12_no_padding_or_autoshrink` |
+| Preview count, builder and START agree on a single word (e.g. `( Paris )`); multi-word and punctuation-only rows stay out | `wordDeck`: `words_boundary_punctuation_counts_builds_and_starts`; `usePracticeRun`: `words_boundary_punctuation_preview_builder_and_start_agree`; `runConfig`: `deck_validation_is_source_aware_and_exact` |
 | Due order, then lowest score, unscored last; dedupe; case | `wordDeck`: `words_due_order_then_low_score_null_last`, `words_single_key_dedupe_and_graduated_exclusion`, `words_preserve_display_and_reference_case` |
 | First-valid seeds below 85, graduated excluded, absent-bank seeds allowed | `scoring`: `revisit_first_valid_below85_seed_order_and_target_rules`; `wordDeck`: `revisit_excludes_graduated_and_fills_after_absent_seeds`; `usePracticeRun`: `challenge_revisit_creates_route6_without_mutating_receipt`, `summary_cached_shortage_does_not_disable_revisit`, `summary_no_local_seeds_disables_revisit` |
 | No PB, no Next sound, no fake stages | `usePracticeRun`: `rated_words_never_read_write_or_finalize_pb` (populated `route\|\|1` and starter keys; no `jt.runBest.v1` read or write at the Storage level, no finalize; mutation-checked), `words_play_again_refreshes_bank_and_next_sound_is_noop`; `personalBest`: `four_configs_have_isolated_buckets`; `runConfig`: `words_source_validation_has_no_fake_stages_or_focus` |
@@ -115,4 +116,5 @@ Not verified. Fake-service and jsdom tests do not show browser audio policy, rea
 ## End-to-end after B7
 
 - `WordsScreen.test.tsx` (2 tests) and B's `route12_production_pack_completes_summary_review_and_replay` pass at `cce6b7b`, together with the full suite above.
+- Review of A7 found one core defect after that run (A7-S1): a bank word with boundary punctuation such as `( Paris )` was counted by the Words preview and built into the deck, but START's validation still required no whitespace and refused it. The A7-S1 fix commit makes START judge words with the same `singleWordKey` as the preview and builder (moved to `game/singleWord.ts`, still exported from `runDeck`), adds the regressions in the words table above, and keeps the multi-word and punctuation-only rejections. With that fix on top of `ad10855`, `bash scripts/test.sh` exits 0: ruff clean, 120 backend tests, lint 0 errors (same 7 warnings), 37 files and 455 frontend tests, build OK.
 - No core regression is open. The core rows of the device checklist above remain Not verified until Track B's owner pilot records them.

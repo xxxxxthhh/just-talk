@@ -7,6 +7,7 @@ import type {
   StarterRunConfig,
   WordsRunConfig
 } from "../types";
+import { singleWordKey } from "./singleWord";
 
 // The six accepted run configurations, frozen once. Pure: no preferences, storage, or audio.
 const ROUTE_6: StarterRunConfig = Object.freeze({ source: "starter", mode: "route", length: 6, target: null, maxExtra: 2 });
@@ -55,7 +56,8 @@ export function isFocusPhoneme(value: unknown): value is RunFocusPhoneme {
 
 // The deck Start may accept for this configuration: exact size, unique IDs and texts, and the
 // source's shape. Starter: N/3 Warm-up, Focus, and In-context prompts sharing one focus sound.
-// Words: N single words with no stage split or target sound.
+// Words: N single words with no stage split or target sound. A word is judged by singleWordKey, as
+// the bank preview, the deck builder and the scorer judge it, and two spellings of one key are one word.
 export function isValidRunDeck(config: RunConfig, prompts: readonly Readonly<RunPrompt>[]): boolean {
   if (prompts.length !== config.length) return false;
   const texts = prompts.map((prompt) => prompt.text.trim().toLowerCase());
@@ -64,6 +66,8 @@ export function isValidRunDeck(config: RunConfig, prompts: readonly Readonly<Run
   if (new Set(prompts.map((prompt) => prompt.itemId)).size !== prompts.length) return false;
 
   if (config.source === "words") {
+    const keys = prompts.map((prompt) => singleWordKey(prompt.text));
+    if (keys.some((key) => key === "") || new Set(keys).size !== prompts.length) return false;
     return prompts.every(
       (prompt) =>
         prompt.stage === "words" &&
@@ -71,7 +75,7 @@ export function isValidRunDeck(config: RunConfig, prompts: readonly Readonly<Run
         WORDS_SOURCES.includes(prompt.source) &&
         prompt.targetPhoneme === null &&
         prompt.targetWord === prompt.text &&
-        /^\S+$/.test(prompt.text)
+        prompt.text === prompt.text.trim()
     );
   }
   const perStage = config.length / STARTER_STAGES.length;

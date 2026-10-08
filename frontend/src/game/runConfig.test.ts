@@ -141,7 +141,13 @@ describe("run config", () => {
 
     const words = wordsDeck(6);
     const replaceWord = (patch: Partial<RunPrompt>) => words.map((p, i) => (i === 0 ? { ...p, ...patch } : p));
+    // One word is judged as the scorer and the bank judge it: boundary punctuation around it is fine.
+    expect(isValidRunDeck(wordsConfig(6), replaceWord({ text: "( Paris )", targetWord: "( Paris )" }))).toBe(true);
     expect(isValidRunDeck(wordsConfig(6), replaceWord({ text: "two words", targetWord: "two words" }))).toBe(false);
+    expect(isValidRunDeck(wordsConfig(6), replaceWord({ text: "(...)", targetWord: "(...)" }))).toBe(false);
+    expect(isValidRunDeck(wordsConfig(6), replaceWord({ text: " Word0 ", targetWord: " Word0 " }))).toBe(false);
+    // Two spellings of one word are one word.
+    expect(isValidRunDeck(wordsConfig(6), replaceWord({ text: "word1!", targetWord: "word1!" }))).toBe(false);
     expect(isValidRunDeck(wordsConfig(6), replaceWord({ targetPhoneme: "θ" }))).toBe(false);
     expect(isValidRunDeck(wordsConfig(6), replaceWord({ stage: "warmup" }))).toBe(false);
     expect(isValidRunDeck(wordsConfig(6), replaceWord({ targetWord: "other" }))).toBe(false);

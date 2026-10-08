@@ -1853,4 +1853,20 @@ describe("usePracticeRun", () => {
     });
     expect(h.run().state?.items[0].prompt).toMatchObject({ text: seeds[0].word, source: "run-review" });
   });
+
+  it("words_boundary_punctuation_preview_builder_and_start_agree", async () => {
+    const h = await setup("route");
+    const words = [bankRow("( Paris )", { latest_score: 10 }), bankRow("two words"), bankRow("(...)"), ...bank(5, "e")];
+    h.session.vocabulary = words;
+    h.hook.rerender();
+    expect(h.run().wordsEntry).toEqual({ eligibleCount: 6, canStart6: true, canStart12: false });
+    act(() => h.run().quit());
+    vi.mocked(listWords).mockResolvedValueOnce(words);
+    await act(async () => {
+      await h.run().startWords(6);
+    });
+    expect(h.run().config?.source).toBe("words");
+    expect(h.run().state?.items[0].prompt).toMatchObject({ text: "( Paris )", targetWord: "( Paris )", source: "word-bank" });
+    expect(h.run().state?.items.map((item) => item.prompt.text)).not.toContain("two words");
+  });
 });

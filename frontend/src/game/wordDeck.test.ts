@@ -111,6 +111,23 @@ describe("words deck", () => {
     expect(prompts.every((prompt) => Object.isFrozen(prompt))).toBe(true);
   });
 
+  it("words_boundary_punctuation_counts_builds_and_starts", () => {
+    vi.spyOn(Date, "now").mockReturnValue(NOW);
+    const vocabulary = [
+      row("( Paris )", { latest_score: 10 }),
+      row("two words", { latest_score: 1 }),
+      row("(...)", { latest_score: 1 }),
+      ...["e1", "e2", "e3", "e4", "e5"].map((word) => row(word))
+    ];
+    // The preview counts exactly what the builder can use, and START accepts what it builds.
+    expect(wordsBankSnapshot(vocabulary)).toHaveLength(6);
+    const prompts = deck(vocabulary, 6);
+    expect(prompts[0]).toMatchObject({ text: "( Paris )", targetWord: "( Paris )", stage: "words", kind: "word" });
+    expect(texts(prompts)).not.toContain("two words");
+    expect(texts(prompts)).not.toContain("(...)");
+    expect(isValidRunDeck(wordsConfig(6), prompts)).toBe(true);
+  });
+
   it("words_exact_6_12_no_padding_or_autoshrink", () => {
     vi.spyOn(Date, "now").mockReturnValue(NOW);
     const five = ["c1", "c2", "c3", "c4", "c5"].map((word) => row(word));
