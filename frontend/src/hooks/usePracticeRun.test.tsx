@@ -400,11 +400,12 @@ describe("usePracticeRun", () => {
       act(() => h.run().finish());
     }
     expect(h.run().state?.phase).toBe("summary");
-    expect(h.session.refreshVocabulary).not.toHaveBeenCalled();
+    // Once when the run ends, then once more when Review opens.
+    expect(h.session.refreshVocabulary).toHaveBeenCalledTimes(1);
     act(() => h.run().openReview());
     act(() => h.run().openReview());
     expect(h.run().state?.phase).toBe("review");
-    expect(h.session.refreshVocabulary).toHaveBeenCalledTimes(1);
+    expect(h.session.refreshVocabulary).toHaveBeenCalledTimes(2);
     const candidates = h.run().state?.items.flatMap((item) => item.attempts.flatMap((a) => a.candidates));
     expect(candidates).toEqual([
       { word: "narrow", status: "processed" },
@@ -1141,5 +1142,357 @@ describe("usePracticeRun", () => {
     expect(h.run().state?.mode).toBe("challenge");
     expect(h.run().receipt).toBeNull();
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(6);
+  });
+
+  async function finishRoute(h: Harness, accuracy = 95, words?: WordResult[]) {
+    for (let i = 0; i < 6; i += 1) {
+      await attempt(h, scored(accuracy, words));
+      act(() => h.run().finish());
+    }
+    expect(h.run().state?.phase).toBe("summary");
+  }
+
+  function focusOf(h: Harness) {
+    return h.run().state?.items.find((item) => item.prompt.stage === "focus")?.prompt.targetPhoneme;
+  }
+
+  it("start_snapshots_config_before_await", async () => {
+    const fake = fakeSession();
+    const hook = renderHook(() => usePracticeRun(fake.session));
+    const stats = deferred<never[]>();
+    vi.mocked(fetchPhonemeStats).mockReturnValueOnce(stats.promise);
+    const config = { ...configForChoice({ selection: "target85", routeLength: 6 }) };
+    let starting!: Promise<void>;
+    act(() => {
+      starting = hook.result.current.start(config);
+    });
+    // Audio is unlocked in the gesture, before the data arrives.
+    expect(fake.session.prepareRunAudio).toHaveBeenCalledTimes(1);
+    Object.assign(config, { target: 60, maxExtra: 2 });
+    await act(async () => {
+      stats.resolve([]);
+      await starting;
+    });
+    const run = hook.result.current;
+    expect(run.state?.config).toEqual({ source: "starter", mode: "challenge", length: 6, target: 85, maxExtra: 4 });
+    expect(run.config).toBe(run.state?.config);
+    expect(Object.isFrozen(run.config)).toBe(true);
+    expect(run.maxScores).toBe(10);
+    expect(run.practisedCount).toBe(0);
+    expect(run.nextSoundPhoneme).toBeNull();
+  });
+
+  it("insufficient_pack_throws_before_teardown", async () => {
+    const h = await setup("route");
+    await finishRoute(h);
+    const finished = h.run().state;
+    const receipt = h.run().receipt;
+    const urls = h.run().attemptAudioUrls;
+    await act(async () => {
+      await expect(h.run().start(configForChoice({ selection: "route", routeLength: 12 }))).rejects.toThrow("cannot fill");
+    });
+    expect(h.run().state).toBe(finished);
+    expect(h.run().receipt).toBe(receipt);
+    expect(h.run().attemptAudioUrls).toBe(urls);
+    expect(h.run().starting).toBe(false);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    expect(h.session.enterRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("next_sound_cycles_with_same_config", async () => {
+    const h = await setup("route");
+    expect(focusOf(h)).toBe("θ");
+    expect(h.run().nextSoundPhoneme).toBeNull();
+    // Not finished yet: nothing starts.
+    await act(async () => {
+      await h.run().nextSound();
+    });
+    expect(h.session.enterRun).toHaveBeenCalledTimes(1);
+
+    await finishRoute(h, 90, [word("bright", 50)]);
+    expect(h.run().practisedCount).toBe(6);
+    expect(h.run().nextSoundPhoneme).toBe("ð");
+    vi.mocked(fetchPhonemeStats).mockClear();
+    await act(async () => {
+      await h.run().nextSound();
+    });
+    expect(focusOf(h)).toBe("ð");
+    expect(h.run().config).toEqual(ROUTE);
+    // The destination is the cycle's, not the stats': no stats are fetched for it.
+    expect(fetchPhonemeStats).not.toHaveBeenCalled();
+    // Eligible weak words from the finished run still lead the warm-ups.
+    expect(h.run().state?.items[0].prompt).toMatchObject({ text: "bright", source: "previous-run" });
+
+    act(() => h.run().quit());
+    expect(h.run().nextSoundPhoneme).toBe("ɹ");
+    await act(async () => {
+      await h.run().nextSound();
+    });
+    expect(focusOf(h)).toBe("ɹ");
+
+    // Challenge never offers it.
+    const challenge = await setup("challenge");
+    act(() => challenge.run().quit());
+    expect(challenge.run().nextSoundPhoneme).toBeNull();
+    await act(async () => {
+      await challenge.run().nextSound();
+    });
+    expect(challenge.session.prepareRunAudio).toHaveBeenCalledTimes(1);
+    expect(challenge.session.enterRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("play_again_keeps_stats_policy_not_rotation", async () => {
+    const h = await setup("route");
+    act(() => h.run().quit());
+    vi.mocked(fetchPhonemeStats).mockResolvedValueOnce([{ phoneme: "v", average_accuracy: 40, attempts: 5 } as never]);
+    await act(async () => {
+      await h.run().playAgain();
+    });
+    expect(focusOf(h)).toBe("v");
+    expect(h.run().config).toEqual(ROUTE);
+
+    act(() => h.run().quit());
+    await act(async () => {
+      await h.run().playAgain();
+    });
+    // No stats: the default sound again, not the next one in the cycle.
+    expect(focusOf(h)).toBe("θ");
+  });
+
+  it("hear_first_failure_does_not_block_record", async () => {
+    const h = await setup("route");
+    act(() => h.run().hearFirst());
+    expect(h.session.playCorrect).toHaveBeenCalledTimes(1);
+    expect(h.session.playCorrect).toHaveBeenCalledWith(current(h).prompt.text, expect.objectContaining({ onLoadResult: expect.any(Function) }));
+    act(() => h.loads[0](false));
+    expect(current(h).referenceLoad).toBe("failed");
+    expect(h.run().state?.phase).toBe("ready");
+    await act(async () => {
+      await h.run().record();
+    });
+    expect(h.session.startRunCapture).toHaveBeenCalledTimes(1);
+    expect(h.run().state?.phase).toBe("recording");
+    // Never while recording or paused, and never implicitly.
+    act(() => h.run().hearFirst());
+    expect(h.session.playCorrect).toHaveBeenCalledTimes(1);
+    act(() => h.run().cancelTake());
+    act(() => h.run().pause());
+    act(() => h.run().hearFirst());
+    expect(h.session.playCorrect).toHaveBeenCalledTimes(1);
+
+    // Challenge has no listen before the first reading.
+    const challenge = await setup("challenge");
+    act(() => challenge.run().hearFirst());
+    expect(challenge.session.playCorrect).not.toHaveBeenCalled();
+  });
+
+  it("preview_cancel_on_advance_skip_record_next_finish_pause_exit", async () => {
+    const h = await setup("route");
+    const stop = h.session.stopCurrentSpeech;
+
+    // A refused move (nothing to finish while Ready) leaves the reference playing.
+    act(() => h.run().hearFirst());
+    stop.mockClear();
+    act(() => h.run().finish());
+    expect(stop).not.toHaveBeenCalled();
+
+    act(() => h.run().skip());
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(h.run().state?.index).toBe(1);
+
+    await attempt(h, scored(90));
+    stop.mockClear();
+    act(() => h.run().finish());
+    expect(stop).toHaveBeenCalledTimes(1);
+
+    await attempt(h, scored(90));
+    stop.mockClear();
+    await act(async () => {
+      h.run().recordNext();
+      await Promise.resolve();
+    });
+    // The old item's audio stops before the new item's capture begins.
+    expect(stop).toHaveBeenCalled();
+    expect(stop.mock.invocationCallOrder[0]).toBeLessThan(h.session.startRunCapture.mock.invocationCallOrder.at(-1)!);
+    act(() => h.run().cancelTake());
+
+    stop.mockClear();
+    act(() => h.run().pause());
+    expect(stop).toHaveBeenCalled();
+    stop.mockClear();
+    act(() => h.run().exit());
+    expect(stop).toHaveBeenCalled();
+  });
+
+  it("hear_next_first_advances_once_then_previews_ready_item", async () => {
+    const h = await setup("route");
+    await attempt(h, scored(90));
+    expect(h.run().state?.phase).toBe("feedback");
+    h.session.stopCurrentSpeech.mockClear();
+    act(() => h.run().hearNextFirst());
+    expect(h.run().state).toMatchObject({ index: 1, phase: "ready" });
+    expect(h.session.playCorrect).toHaveBeenCalledTimes(1);
+    expect(h.session.playCorrect).toHaveBeenCalledWith(current(h).prompt.text, expect.anything());
+    // The old item stopped before the new one started to load.
+    expect(h.session.stopCurrentSpeech.mock.invocationCallOrder[0]).toBeLessThan(
+      h.session.playCorrect.mock.invocationCallOrder[0]
+    );
+    expect(current(h).referenceLoad).toBe("pending");
+
+    // Already Ready: the move is refused, so nothing advances and nothing plays.
+    act(() => h.run().hearNextFirst());
+    expect(h.run().state?.index).toBe(1);
+    expect(h.session.playCorrect).toHaveBeenCalledTimes(1);
+
+    // The last item offers Finish instead.
+    for (let i = 1; i < 5; i += 1) {
+      await attempt(h, scored(90));
+      act(() => h.run().finish());
+    }
+    await attempt(h, scored(90));
+    expect(h.run().state?.index).toBe(5);
+    act(() => h.run().hearNextFirst());
+    expect(h.run().state).toMatchObject({ index: 5, phase: "feedback", endReason: null });
+    expect(h.session.playCorrect).toHaveBeenCalledTimes(1);
+
+    // Challenge keeps its own controls.
+    const challenge = await setup("challenge");
+    await attempt(challenge, scored(90));
+    act(() => challenge.run().hearNextFirst());
+    expect(challenge.run().state?.index).toBe(0);
+    expect(challenge.session.playCorrect).not.toHaveBeenCalled();
+  });
+
+  it("next_sound_failure_keeps_old_results_and_receipt", async () => {
+    const h = await setup("route");
+    await finishRoute(h);
+    const finished = h.run().state;
+    const receipt = h.run().receipt;
+    const urls = h.run().attemptAudioUrls;
+    expect(receipt?.outcome).toBe("first-record");
+    vi.mocked(resetCueEvents).mockClear();
+
+    vi.mocked(buildRunDeck).mockImplementationOnce(() => {
+      throw new Error("No deck");
+    });
+    await act(async () => {
+      await expect(h.run().nextSound()).rejects.toThrow("No deck");
+    });
+    expect(h.run().state).toBe(finished);
+    expect(h.run().receipt).toBe(receipt);
+    expect(h.run().attemptAudioUrls).toBe(urls);
+    expect(h.run().starting).toBe(false);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    expect(resetCueEvents).not.toHaveBeenCalled();
+    expect(h.run().nextSoundPhoneme).toBe("ð");
+
+    // Retrying goes to the same sound, not one further.
+    await act(async () => {
+      await h.run().nextSound();
+    });
+    expect(focusOf(h)).toBe("ð");
+    expect(h.run().receipt).toBeNull();
+    expect(resetCueEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it("restart_exit_or_owner_unmount_drops_late_success_error_finally", async () => {
+    // Exit while Next sound loads: the late result never takes over, and starting stays cleared.
+    const h = await setup("route");
+    await finishRoute(h);
+    const words = deferred<never[]>();
+    vi.mocked(listWords).mockReturnValueOnce(words.promise);
+    let pending!: Promise<void>;
+    act(() => {
+      pending = h.run().nextSound();
+    });
+    expect(h.run().starting).toBe(true);
+    act(() => h.run().exit());
+    expect(h.run().starting).toBe(false);
+    await act(async () => {
+      words.reject(new Error("offline"));
+      await expect(pending).resolves.toBeUndefined();
+    });
+    expect(h.run().state).toBeNull();
+    expect(h.run().starting).toBe(false);
+    expect(h.session.enterRun).toHaveBeenCalledTimes(1);
+    expect(h.session.setError).not.toHaveBeenCalled();
+
+    // The owner unmounts while Play again loads: a late success changes nothing.
+    const owner = await setup("route");
+    await finishRoute(owner);
+    const stats = deferred<never[]>();
+    vi.mocked(fetchPhonemeStats).mockReturnValueOnce(stats.promise);
+    let again!: Promise<void>;
+    act(() => {
+      again = owner.run().playAgain();
+    });
+    owner.hook.unmount();
+    await act(async () => {
+      stats.resolve([]);
+      await again;
+    });
+    expect(owner.session.enterRun).toHaveBeenCalledTimes(1);
+    expect(owner.session.setError).not.toHaveBeenCalled();
+    expect(buildRunDeck).toHaveBeenCalledTimes(2);
+  });
+
+  it("pb_receipt_stays_frozen_across_tabs_expiry_and_surfaces", async () => {
+    const target85 = configForChoice({ selection: "target85", routeLength: 6 });
+    const h = await setup(target85);
+    const focus = current(h).prompt.targetPhoneme;
+    for (let i = 0; i < 6; i += 1) {
+      await attempt(h, scored(95));
+      act(() => h.run().finish());
+    }
+    expect(h.run().state?.challengeOutcome).toBe("cleared");
+    const receipt = h.run().receipt;
+    expect(receipt).toMatchObject({ outcome: "first-record", previousPoints: null });
+    // Written under Target 85's own key; the legacy Target 60 key is untouched.
+    const stored = JSON.parse(window.localStorage.getItem(RUN_BEST_KEY) as string);
+    expect(Object.keys(stored)).toEqual([`challenge|${focus}|1|85`]);
+
+    // Another tab stores a better Target 85 run, time passes beyond public expiry, Review opens,
+    // and a failed Play again comes back: the receipt is the one decided at the end of this run.
+    const key = `challenge|${focus}|1|85`;
+    window.localStorage.setItem(RUN_BEST_KEY, JSON.stringify({ [key]: { runId: "other", points: 990, rating: "S", updatedAt: Date.now(), expiresAt: null } }));
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 8 * 24 * 60 * 60 * 1000);
+    h.hook.rerender();
+    act(() => h.run().openReview());
+    vi.mocked(buildRunDeck).mockImplementationOnce(() => {
+      throw new Error("No deck");
+    });
+    await act(async () => {
+      await expect(h.run().playAgain()).rejects.toThrow("No deck");
+    });
+    h.hook.rerender();
+    expect(h.run().receipt).toBe(receipt);
+    expect(readBest({ config: target85, focus, rulesVersion: RUN_RULES_VERSION })?.runId).toBe("other");
+  });
+
+  it("terminal_transition_refreshes_vocabulary_once", async () => {
+    const h = await setup("route");
+    h.session.refreshVocabulary.mockRejectedValue(new Error("offline"));
+    for (let i = 0; i < 5; i += 1) {
+      await attempt(h, scored(90));
+      act(() => h.run().finish());
+    }
+    expect(h.session.refreshVocabulary).not.toHaveBeenCalled();
+    await attempt(h, scored(90));
+    act(() => h.run().finish());
+    // Summary appears at once; the refresh runs alongside and its failure is caught.
+    expect(h.run().state?.phase).toBe("summary");
+    expect(h.session.refreshVocabulary).toHaveBeenCalledTimes(1);
+    act(() => h.run().pause());
+    h.hook.rerender();
+    await flush();
+    expect(h.session.refreshVocabulary).toHaveBeenCalledTimes(1);
+    // Review keeps its own refresh.
+    act(() => h.run().openReview());
+    expect(h.session.refreshVocabulary).toHaveBeenCalledTimes(2);
+
+    // A quit ends the run too.
+    const quitter = await setup("challenge");
+    act(() => quitter.run().quit());
+    expect(quitter.session.refreshVocabulary).toHaveBeenCalledTimes(1);
   });
 });

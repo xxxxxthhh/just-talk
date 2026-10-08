@@ -3,11 +3,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecording } from "../api";
 import { bestBucketForRun, finalizeRunBest } from "../game/personalBest";
 import { getRunPreferences, setRunPreference, useRunPreferences } from "../game/preferences";
-import { isRunConfig, isValidRunDeck } from "../game/runConfig";
-import { buildRunDeck } from "../game/runDeck";
+import { isFocusPhoneme, isRunConfig, isValidRunDeck, maxCountedScores, nextFocusPhoneme } from "../game/runConfig";
+import { buildRunDeck, chooseFocusPhoneme } from "../game/runDeck";
 import { canRecord, nextCapture, runReducer, SENTENCE_COLLECT_MAX } from "../game/runModel";
 import {
   runWeakWords,
+  selectPractisedCount,
   selectReviewSuggestions,
   selectRunScore,
   tierForAccuracy,
@@ -25,6 +26,7 @@ import type {
   RunAction,
   RunBestReceipt,
   RunConfig,
+  RunFocusPhoneme,
   RunPrompt,
   RunState,
   ScoreFailure,
@@ -98,6 +100,13 @@ function isScoreResponse(value: unknown): value is ScoreResponse {
 
 const START_UNAVAILABLE = "This run isn't available right now.";
 
+// Next sound is offered only on a finished starter Route: the fixed successor of its frozen focus.
+function nextSoundFor(run: RunState): RunFocusPhoneme | null {
+  if (run.endReason === null || run.config.source !== "starter" || run.config.mode !== "route") return null;
+  const focus = run.items.find((item) => item.prompt.stage === "focus")?.prompt.targetPhoneme;
+  return isFocusPhoneme(focus) ? nextFocusPhoneme(focus) : null;
+}
+
 function referenceCacheKey(prompt: RunPrompt): string {
   const text = prompt.text.trim().toLowerCase();
   return prompt.kind === "word" ? `word:${text}` : `game:${text}`;
@@ -162,6 +171,10 @@ export function usePracticeRun(session: RunSession) {
     stateRef.current = next;
     if (next) settle(previous, next, action);
     setState(next);
+    // The word bank may have changed while the run scored words; refresh it once, without waiting.
+    if (next && next.endReason !== null && previous?.endReason === null) {
+      session.refreshVocabulary().catch(() => undefined);
+    }
     if (next?.phase === "review" && previous?.phase !== "review") {
       // History, insights, and activity refresh when their own screens open.
       session.refreshVocabulary().catch(() => undefined);
@@ -187,10 +200,16 @@ export function usePracticeRun(session: RunSession) {
     if (captureRef.current) session.cancelRunCapture(reason);
   }
 
-  // Unlocks run audio inside the Start or Play again gesture, before any await. An invalid
-  // configuration or deck rejects before the current run, its replays, or its receipt change.
-  async function start(config: RunConfig, previousWeakWords: readonly string[] = []) {
-    if (!isRunConfig(config)) throw new Error(START_UNAVAILABLE);
+  // The one start path behind Start, Play again, and Next sound. Unlocks run audio inside the
+  // gesture, before any await. The configuration is copied and frozen before any data loads; an
+  // invalid configuration or deck rejects before the current run, its replays, or its receipt change.
+  // A focus override (Next sound) replaces the stats-based choice.
+  async function launch(
+    config: RunConfig,
+    { previousWeakWords = [], focus }: { previousWeakWords?: readonly string[]; focus?: RunFocusPhoneme } = {}
+  ) {
+    // My words decks arrive with their own builder; until then only starter runs can start.
+    if (!isRunConfig(config) || config.source !== "starter") throw new Error(START_UNAVAILABLE);
     const frozen = Object.freeze({ ...config });
     session.prepareRunAudio();
     startTokenRef.current += 1;
@@ -198,17 +217,19 @@ export function usePracticeRun(session: RunSession) {
     setStarting(true);
     try {
       const [phonemeStats, vocabulary] = await Promise.all([
-        fetchPhonemeStats().catch((): PhonemeStat[] => []),
+        focus ? [] : fetchPhonemeStats().catch((): PhonemeStat[] => []),
         listWords().catch((): VocabularyItem[] => [])
       ]);
       if (startTokenRef.current !== token) return;
-      const prompts = buildRunDeck({ phonemeStats, vocabulary, previousWeakWords });
+      const runId = newId("run");
+      const focusPhoneme = focus ?? chooseFocusPhoneme(phonemeStats);
+      const prompts = buildRunDeck({ runId, config: frozen, focusPhoneme, vocabulary, previousWeakWords });
       if (!isValidRunDeck(frozen, prompts)) throw new Error(START_UNAVAILABLE);
       // Replacing a run keeps the session's run audio that this gesture just unlocked.
       if (stateRef.current) teardown(true);
       session.enterRun();
       resetRunLifetime();
-      dispatch({ type: "START", runId: newId("run"), config: frozen, prompts });
+      dispatch({ type: "START", runId, config: frozen, prompts });
     } finally {
       // A newer start owns the flag; exit has already cleared it.
       if (startTokenRef.current === token) setStarting(false);
@@ -322,10 +343,14 @@ export function usePracticeRun(session: RunSession) {
     session.cancelRunCapture("cancel");
   }
 
+  // An accepted item change silences the old item's reference, playing or still loading, before
+  // the next item can play or record. A refused change leaves it alone.
   function itemAction(type: "SKIP" | "ADVANCE") {
     const current = stateRef.current;
     if (!current) return null;
-    return dispatch({ type, runId: current.runId, itemId: current.items[current.index].prompt.itemId });
+    const next = dispatch({ type, runId: current.runId, itemId: current.items[current.index].prompt.itemId });
+    if (next !== current) session.stopCurrentSpeech();
+    return next;
   }
 
   function recordNext() {
@@ -356,6 +381,25 @@ export function usePracticeRun(session: RunSession) {
       ...options,
       onLoadResult: (ok) => dispatch({ type: "REFERENCE_LOADED", runId, itemId, ok })
     });
+  }
+
+  // Route's optional listen before the first reading: only on request, only while Ready and idle.
+  // It never blocks Record, and recording stops it.
+  function hearFirst() {
+    const current = stateRef.current;
+    if (!current || current.config.mode !== "route" || current.phase !== "ready" || current.paused) return;
+    if (current.endReason !== null || current.activeAttemptId !== null || captureRef.current) return;
+    playReference();
+  }
+
+  // Route feedback's secondary action: move on once, then preview the new item if it is Ready.
+  // Nothing plays when the move is refused or on the last item, which offers Finish instead.
+  function hearNextFirst() {
+    const before = stateRef.current;
+    if (!before || before.config.mode !== "route" || before.index >= before.items.length - 1) return;
+    const next = itemAction("ADVANCE");
+    if (!next || next === before || next.index !== before.index + 1 || next.phase !== "ready") return;
+    hearFirst();
   }
 
   function runAction(type: "PAUSE" | "RESUME" | "QUIT" | "OPEN_REVIEW") {
@@ -399,12 +443,26 @@ export function usePracticeRun(session: RunSession) {
     resetRunLifetime();
   }
 
+  async function start(config: RunConfig) {
+    await launch(config);
+  }
+
+  // Keeps the frozen configuration; focus comes from refreshed stats, not the rotation.
   async function playAgain() {
     const current = stateRef.current;
-    if (current) await start(current.config, runWeakWords(current));
+    if (current) await launch(current.config, { previousWeakWords: runWeakWords(current) });
+  }
+
+  // A finished starter Route moves to the next sound in the fixed cycle, keeping its configuration.
+  // Anything else is a no-op. A failed attempt keeps the finished run, so a retry targets the same sound.
+  async function nextSound() {
+    const current = stateRef.current;
+    const focus = current ? nextSoundFor(current) : null;
+    if (current && focus) await launch(current.config, { previousWeakWords: runWeakWords(current), focus });
   }
 
   const score = useMemo(() => (state ? selectRunScore(state) : null), [state]);
+  const nextSoundPhoneme = useMemo(() => (state ? nextSoundFor(state) : null), [state]);
   const suggestions = useMemo(() => (state ? selectReviewSuggestions(state) : []), [state]);
   const topRevisit = useMemo(() => topRevisitOf(suggestions), [suggestions]);
 
@@ -434,6 +492,10 @@ export function usePracticeRun(session: RunSession) {
 
   return {
     state,
+    config: state?.config ?? null,
+    maxScores: state ? maxCountedScores(state.config) : null,
+    practisedCount: state ? selectPractisedCount(state) : 0,
+    nextSoundPhoneme,
     starting,
     attemptAudioUrls,
     score,
@@ -462,11 +524,14 @@ export function usePracticeRun(session: RunSession) {
     finish: () => void itemAction("ADVANCE"),
     skip: () => void itemAction("SKIP"),
     playReference,
+    hearFirst,
+    hearNextFirst,
     pause,
     resume: () => runAction("RESUME"),
     quit,
     openReview: () => runAction("OPEN_REVIEW"),
     exit,
-    playAgain
+    playAgain,
+    nextSound
   };
 }

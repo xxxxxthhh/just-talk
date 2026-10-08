@@ -350,6 +350,54 @@ describe("usePracticeSession run wiring", () => {
     act(() => session.current.setResult(runOnlyResult));
     await waitFor(() => expect(spokenTexts()).toContain("those"));
   });
+  it("existing_preview_guards_suppress_late_audio_and_error", async () => {
+    installRecorder();
+    const play = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal(
+      "Audio",
+      vi.fn(function AudioMock() {
+        return { play, pause: vi.fn(), currentTime: 0 };
+      })
+    );
+    const session = await renderSession();
+    act(() => session.current.enterRun());
+
+    // A Route preview still loading when Record starts: the late audio never plays into the take.
+    const loaded = deferred<FetchResponse>();
+    overrides["/api/speak"] = () => loaded.promise;
+    const onLoadResult = vi.fn();
+    let preview!: Promise<void>;
+    act(() => {
+      preview = session.current.playCorrect("thin", { cacheKey: "word:thin", onLoadResult });
+    });
+    await act(async () => {
+      expect(await session.current.startRunCapture(runOptions(), vi.fn())).toBe(true);
+    });
+    await act(async () => {
+      loaded.resolve(respond({ audio_base64: "YXVkaW8=", content_type: "audio/mpeg" }));
+      await preview;
+    });
+    expect(play).not.toHaveBeenCalled();
+    expect(session.current.speechStatus).not.toBe("playing");
+    act(() => session.current.cancelRunCapture("cancel"));
+
+    // A preview that fails after Record started reports its load, but no stale error.
+    const failed = deferred<FetchResponse>();
+    overrides["/api/speak"] = () => failed.promise;
+    act(() => {
+      preview = session.current.playCorrect("path", { cacheKey: "word:path", onLoadResult });
+    });
+    await act(async () => {
+      expect(await session.current.startRunCapture(runOptions(), vi.fn())).toBe(true);
+    });
+    await act(async () => {
+      failed.resolve(respond({ detail: "TTS unavailable" }, 503));
+      await preview;
+    });
+    expect(play).not.toHaveBeenCalled();
+    expect(session.current.error).toBeFalsy();
+    expect(onLoadResult.mock.calls).toEqual([[true], [false]]);
+  });
 });
 
 const dueWord = {
