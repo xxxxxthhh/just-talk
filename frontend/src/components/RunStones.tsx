@@ -68,7 +68,7 @@ export function RunStones({ items, scores, currentIndex, reducedMotion }: RunSto
       <ol className="run-stones-groups" aria-label="Run progress">
         {STAGES.map(({ stage, label }) => (
           <li key={stage} className="run-stones-group">
-            <ol>
+            <ol aria-label={label}>
               {items.map((item, index) => {
                 if (item.prompt.stage !== stage) return null;
                 const score = scores.find((candidate) => candidate.itemId === item.prompt.itemId);

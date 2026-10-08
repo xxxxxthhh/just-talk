@@ -52,6 +52,19 @@ describe("RunStones", () => {
     gaps.unmount();
   });
 
+  it("stage groups are named for assistive technology", () => {
+    renderStones(runV2Fixtures.routeGaps);
+    for (const [name, texts] of [
+      ["Warm-up", ["for", "songs"]],
+      ["Focus", ["these", "those"]],
+      ["In context", ["These little birds wait by the window.", "Their brother sat over there."]],
+    ] as const) {
+      const stonesInGroup = within(screen.getByRole("list", { name })).getAllByRole("listitem");
+      expect(stonesInGroup).toHaveLength(2);
+      texts.forEach((text, index) => expect(stonesInGroup[index].getAttribute("aria-label")).toContain(`${text}:`));
+    }
+  });
+
   it("rescued stone keeps the first reading tier and marks the rescue separately", () => {
     const { unmount } = renderStones(runV2Fixtures.rescueSaved);
     const saved = stones()[3];
