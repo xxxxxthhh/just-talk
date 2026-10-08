@@ -260,6 +260,8 @@ function Hearts({ run, fresh }: { run: RunState; fresh: boolean }) {
 
 type ScreenProps = PracticeRunProps & { fresh: boolean; feedbackId: string | null };
 
+const ONE_SHOT_PHASES: ReadonlySet<RunRingProps["phase"]> = new Set(["verdict", "rescue", "summary"]);
+
 function ringProps(props: ScreenProps, overrides: Pick<RunRingProps, "phase"> & Partial<RunRingProps>): RunRingProps {
   return {
     telemetry: props.telemetry,
@@ -268,7 +270,8 @@ function ringProps(props: ScreenProps, overrides: Pick<RunRingProps, "phase"> & 
     rating: null,
     reducedMotion: props.reducedMotion,
     feedbackId: props.feedbackId,
-    settled: !props.fresh,
+    // Only one-shot feedback can be already shown; idle breathing and live recording never settle.
+    settled: ONE_SHOT_PHASES.has(overrides.phase) && !props.fresh,
     onStop: props.onStop,
     ...overrides
   };

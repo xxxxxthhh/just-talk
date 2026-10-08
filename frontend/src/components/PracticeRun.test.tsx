@@ -355,6 +355,29 @@ describe("PracticeRun", () => {
     }
   });
 
+  it("the ready ring breathes unless the run is paused or motion is reduced", () => {
+    const ready = runV2Fixtures.ready.run;
+    const normal = renderRun(ready);
+    expect(ring(normal.container)).not.toHaveClass("is-settled");
+    expect(ring(normal.container)).not.toHaveClass("is-reduced");
+    normal.unmount();
+
+    const paused = renderRun(step(ready, { type: "PAUSE", runId: ready.runId }));
+    expect(ring(paused.container)).toHaveClass("is-settled");
+    paused.unmount();
+
+    const reduced = renderRun(ready, { reducedMotion: true });
+    expect(ring(reduced.container)).toHaveClass("is-reduced");
+    reduced.unmount();
+
+    // Recording and scoring are never treated as consumed feedback either.
+    for (const run of [runV2Fixtures.recording.run, runV2Fixtures.scoring.run]) {
+      const view = renderRun(run);
+      expect(ring(view.container)).not.toHaveClass("is-settled");
+      view.unmount();
+    }
+  });
+
   it("heart_overlay_never_intercepts_summary_buttons", () => {
     const callbacks = handlers();
     const { container } = renderRun(runV2Fixtures.summaryUnrated.run, callbacks);
