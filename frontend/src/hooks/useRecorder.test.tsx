@@ -207,4 +207,94 @@ describe("useRecorder", () => {
     expect(second).toHaveBeenCalledTimes(1);
     expect(first).toHaveBeenCalledTimes(1);
   });
+
+  it("analyser_attaches_before_capture_clock_starts", async () => {
+    installMediaDevices();
+    stubUrl();
+    const { MediaRecorderMock, instances } = makeDeferredStopRecorderMock();
+    vi.stubGlobal("MediaRecorder", MediaRecorderMock);
+    const order: string[] = [];
+    let controls!: ReturnType<typeof useRecorder>;
+    function Harness() {
+      controls = useRecorder({ maxMs: 30_000, onUnsupported: vi.fn(), onRecordingReady: vi.fn() });
+      return null;
+    }
+    render(<Harness />);
+    const onReady = vi.fn();
+
+    await act(async () => {
+      await controls.startRecording(onReady, {
+        onStream: () => order.push(`stream:${instances[0].state}`),
+        onStart: () => order.push(`start:${instances[0].state}`),
+        onStop: (stop) => order.push(`stop:${stop.reason}`)
+      });
+    });
+    expect(order).toEqual(["stream:inactive", "start:recording"]);
+
+    act(() => controls.stopRecording());
+    expect(order.at(-1)).toBe("stop:manual");
+    act(() => instances[0].fireStop());
+    expect(onReady).toHaveBeenCalledWith(expect.any(Blob), false, { reason: "manual", durationMs: expect.any(Number) });
+
+    // A throwing hook never stops the recording.
+    await act(async () => {
+      await controls.startRecording(vi.fn(), {
+        onStream: () => {
+          throw new Error("no analyser");
+        }
+      });
+    });
+    expect(controls.recorderState).toBe("recording");
+  });
+
+  it("stop_latch_keeps_first_reason_duration_and_later_discard", async () => {
+    installMediaDevices();
+    stubUrl();
+    const { MediaRecorderMock, instances } = makeDeferredStopRecorderMock();
+    vi.stubGlobal("MediaRecorder", MediaRecorderMock);
+    let now = 1000;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    let controls!: ReturnType<typeof useRecorder>;
+    function Harness() {
+      controls = useRecorder({ maxMs: 30_000, onUnsupported: vi.fn(), onRecordingReady: vi.fn() });
+      return null;
+    }
+    render(<Harness />);
+
+    const kept = vi.fn();
+    await act(async () => {
+      await controls.startRecording(kept);
+    });
+    now = 3000;
+    act(() => controls.stopRecordingWith("silence"));
+    now = 3500;
+    act(() => controls.stopRecording());
+    now = 4000;
+    act(() => instances[0].fireStop());
+    expect(kept).toHaveBeenCalledTimes(1);
+    const [, discarded, stop] = kept.mock.calls[0];
+    expect(discarded).toBe(false);
+    expect(stop).toEqual({ reason: "silence", durationMs: 2000 });
+    expect(Object.isFrozen(stop)).toBe(true);
+
+    // Cancelled after the stop was accepted but before onstop: delivered as a discard.
+    const cancelled = vi.fn();
+    await act(async () => {
+      await controls.startRecording(cancelled);
+    });
+    act(() => controls.stopRecordingWith("silence"));
+    act(() => controls.discardRecording("pause"));
+    act(() => instances[1].fireStop());
+    expect(cancelled.mock.calls[0].slice(1)).toEqual([true, { reason: "pause", durationMs: 0 }]);
+    expect(controls.audioBlob).toBeNull();
+
+    // A stop the browser made on its own was never accepted.
+    const lost = vi.fn();
+    await act(async () => {
+      await controls.startRecording(lost);
+    });
+    now = 4800;
+    act(() => instances[2].fireStop());
+    expect(lost.mock.calls[0].slice(1)).toEqual([false, { reason: "cancel", durationMs: 800 }]);
+  });
 });

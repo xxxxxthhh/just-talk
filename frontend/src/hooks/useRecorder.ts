@@ -1,13 +1,40 @@
 import { useEffect, useRef, useState } from "react";
 
+import type { CaptureStopReason } from "../types";
+
 export type RecorderState = "idle" | "recording" | "recorded";
+
+// The first accepted stop of one capture, timed on its own monotonic clock from recorder.start().
+export type CaptureStop = Readonly<{ reason: CaptureStopReason; durationMs: number }>;
+// discarded is true when the capture was abandoned with discardRecording. Ordinary callers ignore stop.
+export type RecordingReady = (blob: Blob, discarded: boolean, stop: CaptureStop) => void;
+// Optional analysis hooks; a throwing hook never affects the recording.
+export type CaptureHooks = {
+  onStream?: (stream: MediaStream) => void;
+  onStart?: (startedAt: number) => void;
+  onStop?: (stop: CaptureStop) => void;
+};
 
 type UseRecorderOptions = {
   maxMs: number;
   onUnsupported: () => void;
-  // discarded is true when the capture was abandoned with discardRecording.
-  onRecordingReady: (blob: Blob, discarded: boolean) => void;
+  onRecordingReady: RecordingReady;
 };
+
+type Capture = {
+  startedAt: number;
+  stop: CaptureStop | null;
+  discardReason: CaptureStopReason | null;
+  hooks: CaptureHooks;
+};
+
+function callHook(hook: () => void) {
+  try {
+    hook();
+  } catch {
+    // Analysis is optional; the take continues without it.
+  }
+}
 
 export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecorderOptions) {
   const [recorderState, setRecorderState] = useState<RecorderState>("idle");
@@ -17,9 +44,8 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const discardedRef = useRef(new WeakSet<MediaRecorder>());
+  const capturesRef = useRef(new WeakMap<MediaRecorder, Capture>());
   const timerRef = useRef<number | null>(null);
-  const startedAtRef = useRef<number>(0);
 
   useEffect(() => {
     return () => {
@@ -32,21 +58,37 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
     };
   }, [audioUrl]);
 
-  function stopRecording() {
+  // Latches the first stop of a capture; later stop sources for it are no-ops.
+  function latch(capture: Capture, reason: CaptureStopReason): CaptureStop {
+    if (!capture.stop) {
+      capture.stop = Object.freeze({ reason, durationMs: performance.now() - capture.startedAt });
+      const stop = capture.stop;
+      callHook(() => capture.hooks.onStop?.(stop));
+    }
+    return capture.stop;
+  }
+
+  function stopRecordingWith(reason: CaptureStopReason) {
     if (timerRef.current) {
       window.clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    if (mediaRecorderRef.current?.state === "recording") {
-      mediaRecorderRef.current.stop();
+    const recorder = mediaRecorderRef.current;
+    if (recorder?.state === "recording") {
+      const capture = capturesRef.current.get(recorder);
+      if (capture) latch(capture, reason);
+      recorder.stop();
     }
+  }
+
+  // Takes no arguments so it can be a click handler.
+  function stopRecording() {
+    stopRecordingWith("manual");
   }
 
   // onReady is bound to this capture, so a late onstop from a cancelled
   // capture still reaches the callback it was started with.
-  async function startRecording(
-    onReady: (blob: Blob, discarded: boolean) => void = onRecordingReady
-  ): Promise<boolean> {
+  async function startRecording(onReady: RecordingReady = onRecordingReady, hooks: CaptureHooks = {}): Promise<boolean> {
     if (!navigator.mediaDevices?.getUserMedia) {
       onUnsupported();
       return false;
@@ -68,6 +110,8 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
       ? "audio/mp4"
       : "";
     const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const capture: Capture = { startedAt: 0, stop: null, discardReason: null, hooks };
+    capturesRef.current.set(recorder, capture);
     const chunks: Blob[] = [];
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) {
@@ -81,7 +125,13 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
         // hardcoding webm, which mislabels the blob on Safari.
         type: mimeType || recorder.mimeType || "audio/webm"
       });
-      const discarded = discardedRef.current.has(recorder);
+      // A browser-initiated stop (device loss) was never accepted, so a run discards it.
+      const accepted = latch(capture, "cancel");
+      const discarded = capture.discardReason !== null;
+      const stop: CaptureStop = Object.freeze({
+        reason: capture.discardReason ?? accepted.reason,
+        durationMs: accepted.durationMs
+      });
       // A discarded or superseded capture never republishes the shared
       // preview, but its own callback still runs.
       if (!discarded && mediaRecorderRef.current === recorder) {
@@ -93,32 +143,35 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
         setRecorderState("recorded");
         setRecordingStream(null);
       }
-      onReady(blob, discarded);
+      onReady(blob, discarded, stop);
     };
+    // Analysis attaches before the clock starts, so a permission prompt never eats a timeout.
+    callHook(() => hooks.onStream?.(stream));
     recorder.start();
+    capture.startedAt = performance.now();
     mediaRecorderRef.current = recorder;
-    startedAtRef.current = Date.now();
+    callHook(() => hooks.onStart?.(capture.startedAt));
     setElapsedMs(0);
     setAudioBlob(null);
     setRecorderState("recording");
     setRecordingStream(stream);
     timerRef.current = window.setInterval(() => {
-      const nextElapsed = Date.now() - startedAtRef.current;
+      const nextElapsed = performance.now() - capture.startedAt;
       setElapsedMs(nextElapsed);
       if (nextElapsed >= maxMs) {
-        stopRecording();
+        stopRecordingWith("hard-cap");
       }
     }, 150);
     return true;
   }
 
   // Stops the current capture without keeping it: the browser's later onstop
-  // reaches only that capture's callback.
-  function discardRecording() {
-    if (mediaRecorderRef.current) {
-      discardedRef.current.add(mediaRecorderRef.current);
-    }
-    stopRecording();
+  // reaches only that capture's callback. A discard after an accepted stop but
+  // before onstop still turns the delivery into a discard.
+  function discardRecording(reason: CaptureStopReason = "cancel") {
+    const capture = mediaRecorderRef.current && capturesRef.current.get(mediaRecorderRef.current);
+    if (capture) capture.discardReason ??= reason;
+    stopRecordingWith(reason);
     resetRecording();
     setRecordingStream(null);
   }
@@ -141,6 +194,7 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
     recordingStream,
     startRecording,
     stopRecording,
+    stopRecordingWith,
     discardRecording,
     resetRecording
   };
