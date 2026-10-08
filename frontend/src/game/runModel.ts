@@ -374,11 +374,6 @@ export function runReducer(state: RunState | null, action: RunAction): RunState 
       const blocksRescue = !action.ok && index === state.index && state.phase === "rescue" && state.endReason === null;
       return blocksRescue ? cannotConfirm(next, "reference-unavailable") : next;
     }
-    case "CANNOT_CONFIRM": {
-      if (!item || item.prompt.itemId !== action.itemId || !idle(state) || state.phase !== "rescue") return state;
-      // Declining the rescue happens at the reference step: the reading it needs is unavailable.
-      return cannotConfirm(state, "reference-unavailable");
-    }
     case "SKIP": {
       if (!item || item.prompt.itemId !== action.itemId || !idle(state) || item.resolution !== "open") return state;
       if (state.phase !== "ready" && state.phase !== "rescue") return state;
@@ -422,5 +417,8 @@ export function runReducer(state: RunState | null, action: RunAction): RunState 
       return state.phase === "summary" ? { ...state, phase: "review" } : state;
     case "EXIT":
       return null;
+    default:
+      // An action this version does not know changes nothing.
+      return state;
   }
 }

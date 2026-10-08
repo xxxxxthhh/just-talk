@@ -745,9 +745,47 @@ describe("run configurations", () => {
     expect(failed.items[0]).toMatchObject({ verdict: "cannot-confirm", cannotConfirmReason: "reference-unavailable" });
     expect(failed.extraUsed).toBe(0);
     expect(failed.hearts).toBe(2);
+  });
 
-    const declined = reduce(play(start(TARGET_85), scored(80)), { type: "CANNOT_CONFIRM", runId: RUN, itemId: "item-0" });
-    expect(declined.items[0]).toMatchObject({ verdict: "cannot-confirm", cannotConfirmReason: "reference-unavailable" });
+  // Only a failed load is evidence of an unavailable reference. There is no manual way to claim one:
+  // declining a rescue is SKIP.
+  it.each([false, true])("manual_cannot_confirm_cannot_invent_reference_failure_ready_%s", (ready) => {
+    let state = play(start(TARGET_85), scored(80));
+    if (ready) state = loadReference(state);
+    expect(state.items[0].referenceLoad).toBe(ready ? "ready" : "idle");
+    const removed = { type: "CANNOT_CONFIRM", runId: RUN, itemId: itemId(state) } as unknown as RunAction;
+    const after = runReducer(state, removed);
+    expect(after).toBe(state);
+    expect(after?.items[0].cannotConfirmReason).not.toBe("reference-unavailable");
+  });
+
+  it("target85_voluntary_skip_does_not_claim_failed_reference", () => {
+    const state = loadReference(play(start(TARGET_85), scored(80)));
+    const next = reduce(state, { type: "SKIP", runId: RUN, itemId: itemId(state) });
+    expect(next.items[0]).toMatchObject({ resolution: "skipped", verdict: "skipped", cannotConfirmReason: null });
+    expect(next).toMatchObject({ index: 1, hearts: 2, extraUsed: 0, challengeIncomplete: true });
+  });
+
+  it("target85_quota_fourth_extra_refunds_once_and_terminal_stays_unpaused", () => {
+    let state = loadReference(play(start(TARGET_85), scored(80)));
+    for (let i = 0; i < 3; i += 1) state = play(state, noMatch);
+    const [sent, key] = send(state);
+    const paused = reduce(sent, { type: "PAUSE", runId: RUN });
+    const failure: RunAction = { type: "SCORE_FAILED", key, failure: { kind: "quota", message: "Limit" } };
+    const ended = reduce(paused, failure);
+    expect(ended).toMatchObject({ extraUsed: 3, budgetUsed: 4, hearts: 2, phase: "summary", paused: false, endReason: "quota" });
+    expect(reduce(ended, failure)).toBe(ended);
+    expect(reduce(ended, { type: "SCORE_RECEIVED", key, response: scored(40) })).toBe(ended);
+    expectBudgetInvariant(ended);
+  });
+
+  it("target85_four_rescues_then_two_main_scores_still_clears", () => {
+    let state = start(TARGET_85);
+    for (let i = 0; i < 4; i += 1) state = advance(rescue(play(state, scored(80)), scored(85)));
+    for (let i = 0; i < 2; i += 1) state = advance(play(state, scored(85)));
+    expect(state).toMatchObject({ extraUsed: 4, budgetUsed: 10, hearts: 2, endReason: "completed", challengeOutcome: "cleared" });
+    expect(state.items.slice(0, 4).every((item) => item.attempts[0].result?.scores.accuracy === 80)).toBe(true);
+    expectBudgetInvariant(state);
   });
 
   it("refund_once_at_extra_slot_four", () => {

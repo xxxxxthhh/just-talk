@@ -322,7 +322,7 @@ export function usePracticeRun(session: RunSession) {
     session.cancelRunCapture("cancel");
   }
 
-  function itemAction(type: "SKIP" | "ADVANCE" | "CANNOT_CONFIRM") {
+  function itemAction(type: "SKIP" | "ADVANCE") {
     const current = stateRef.current;
     if (!current) return null;
     return dispatch({ type, runId: current.runId, itemId: current.items[current.index].prompt.itemId });
@@ -461,7 +461,6 @@ export function usePracticeRun(session: RunSession) {
     recordNext,
     finish: () => void itemAction("ADVANCE"),
     skip: () => void itemAction("SKIP"),
-    cannotConfirm: () => void itemAction("CANNOT_CONFIRM"),
     playReference,
     pause,
     resume: () => runAction("RESUME"),

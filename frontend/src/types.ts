@@ -316,7 +316,7 @@ export type RunAction =
   | { type: "SYNC_SETTLED"; key: AttemptKey; candidates: readonly WordCandidate[]; failed: boolean }
   | { type: "REFERENCE_CLICKED"; runId: string; itemId: string }
   | { type: "REFERENCE_LOADED"; runId: string; itemId: string; ok: boolean }
-  | { type: "SKIP" | "ADVANCE" | "CANNOT_CONFIRM"; runId: string; itemId: string }
+  | { type: "SKIP" | "ADVANCE"; runId: string; itemId: string }
   | { type: "PAUSE" | "RESUME" | "QUIT" | "OPEN_REVIEW" | "EXIT"; runId: string };
 
 // Game Mode v2 contracts.
