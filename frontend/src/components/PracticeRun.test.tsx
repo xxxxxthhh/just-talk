@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { configForChoice } from "../game/runConfig";
 import { nextCapture, runReducer } from "../game/runModel";
 import type { RunAction, RunMode, RunPrompt, RunState, ScoreFailure, ScoreResponse } from "../types";
 import { PracticeRun, SLOW_SCORE_MS } from "./PracticeRun";
@@ -34,7 +35,12 @@ function step(state: RunState, action: RunAction): RunState {
 }
 
 function start(mode: RunMode): RunState {
-  const started = runReducer(null, { type: "START", runId: `run-${++counter}`, mode, prompts: PROMPTS });
+  const started = runReducer(null, {
+    type: "START",
+    runId: `run-${++counter}`,
+    config: configForChoice({ selection: mode === "route" ? "route" : "target60", routeLength: 6 }),
+    prompts: PROMPTS
+  });
   if (!started) throw new Error("run did not start");
   return started;
 }

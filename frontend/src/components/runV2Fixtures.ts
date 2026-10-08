@@ -1,6 +1,7 @@
 // Typed UI fixtures for Game Mode v2 screens. Run states come from the real reducer and every
 // score, suggestion and revisit from the real selectors.
 import { createTelemetryStore, IDLE_TELEMETRY } from "../game/runAudio";
+import { configForChoice } from "../game/runConfig";
 import { nextCapture, runReducer } from "../game/runModel";
 import { selectReviewSuggestions, selectRunScore, selectTopRevisit, tierForAccuracy } from "../game/scoring";
 import type {
@@ -72,7 +73,7 @@ function step(state: RunState | null, action: RunAction): RunState {
 }
 
 function start(mode: RunMode): RunState {
-  return step(null, { type: "START", runId: `fixture-${mode}`, mode, prompts: PROMPTS });
+  return step(null, { type: "START", runId: `fixture-${mode}`, config: configForChoice({ selection: mode === "route" ? "route" : "target60", routeLength: 6 }), prompts: PROMPTS });
 }
 
 function response(accuracy: number, words: readonly WordReading[], sessionId: string | null = null): ScoreResponse {

@@ -13,6 +13,7 @@ import { RunReview } from "../../components/RunReview";
 import { useReplay } from "../../components/useReplay";
 import { ScoredPassage } from "../../components/ScoredPassage";
 import { ScoreGrid } from "../../components/ScoreGrid";
+import { configForChoice, maxCountedScores } from "../../game/runConfig";
 import { selectRunScore } from "../../game/scoring";
 import { usePracticeRun } from "../../hooks/usePracticeRun";
 import { usePublicScoresLeft } from "../usePublicScoresLeft";
@@ -330,14 +331,8 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
           onSetPreference={run.setPreference}
           choice={runChoice}
           onChoiceChange={setRunChoice}
-          // Until A2's start(config), only the two six-item v2 configurations can start; the
-          // others fail visibly instead of starting a different run.
-          onStart={(choice) =>
-            choice.selection === "target85" || (choice.selection === "route" && choice.routeLength === 12)
-              ? Promise.reject(new Error("This configuration needs the v3 controller."))
-              : run.start(choice.selection === "route" ? "route" : "challenge")
-          }
-          maxScores={null}
+          onStart={(choice) => run.start(configForChoice(choice))}
+          maxScores={maxCountedScores(configForChoice(runChoice))}
           scoresLeft={scoresLeft}
         />
 

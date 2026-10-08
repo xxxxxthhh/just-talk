@@ -1,6 +1,7 @@
 import { act as flush, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { configForChoice } from "../game/runConfig";
 import { nextCapture, runReducer } from "../game/runModel";
 import { selectReviewSuggestions, selectRunScore } from "../game/scoring";
 import type { RunMode, RunPrompt, RunState, ScoreResponse, WordCandidate, WordResult } from "../types";
@@ -28,7 +29,12 @@ const PROMPTS: RunPrompt[] = [
 let counter = 0;
 
 function start(mode: RunMode): RunState {
-  return runReducer(null, { type: "START", runId: `review-run-${++counter}`, mode, prompts: PROMPTS }) as RunState;
+  return runReducer(null, {
+    type: "START",
+    runId: `review-run-${++counter}`,
+    config: configForChoice({ selection: mode === "route" ? "route" : "target60", routeLength: 6 }),
+    prompts: PROMPTS
+  }) as RunState;
 }
 
 function word(text: string, accuracy: number, phoneme = "ə", phonemeAccuracy = accuracy): WordResult {
