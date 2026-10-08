@@ -322,6 +322,39 @@ describe("PracticeRun", () => {
     expect(screen.getByRole("button", { name: "Record again" })).toBeEnabled();
   });
 
+  it("feedback without a score announces its outcome once", () => {
+    const unjudgedSent = send(start("route"));
+    const unjudged = step(unjudgedSent.state, {
+      type: "SCORE_RECEIVED",
+      key: unjudgedSent.key,
+      response: { result: { ...response(70).result, words: [] }, session: null },
+    });
+    const low = score(start("challenge"), 40);
+    const failedReference = step(
+      step(low, { type: "REFERENCE_CLICKED", runId: low.runId, itemId: "warmup-1" }),
+      { type: "REFERENCE_LOADED", runId: low.runId, itemId: "warmup-1", ok: false }
+    );
+    const pending = fail(start("challenge"), { kind: "unknown", message: "network" });
+
+    for (const [run, verdict, text] of [
+      [runV2Fixtures.verdictNoMatch.run, "no-match", "Didn't catch any speech that time. You can try again."],
+      [unjudged, "unjudged", "Couldn't score that one cleanly. You can try again."],
+      [failedReference, "cannot-confirm", "Not confirmed. No heart lost."],
+      [pending, "pending", "Still waiting on that score. You can keep going."],
+    ] as const) {
+      expect(run.phase).toBe("feedback");
+      expect(run.items[run.index].verdict).toBe(verdict);
+      const view = renderRun(run);
+      expect(view.container.querySelectorAll("[aria-live]")).toHaveLength(1);
+      expect(liveRegion(view.container)).toBe(text);
+      // Same event, new object: the announcement neither repeats nor changes.
+      view.rerender(<PracticeRun {...practiceRunProps({ ...run })} />);
+      expect(liveRegion(view.container)).toBe(text);
+      expect(liveRegion(view.container)).not.toMatch(/resend|timed out/i);
+      view.unmount();
+    }
+  });
+
   it("heart_overlay_never_intercepts_summary_buttons", () => {
     const callbacks = handlers();
     const { container } = renderRun(runV2Fixtures.summaryUnrated.run, callbacks);
@@ -496,8 +529,8 @@ describe("PracticeRun", () => {
     const rescue = step(low, { type: "REFERENCE_CLICKED", runId: low.runId, itemId: "warmup-1" });
     const loaded = step(rescue, { type: "REFERENCE_LOADED", runId: rescue.runId, itemId: "warmup-1", ok: true });
     const pending = fail(loaded, { kind: "unknown", message: "network" });
-    renderRun(pending, callbacks);
-    expect(screen.getByText("Still waiting on that score. You can keep going.")).toBeInTheDocument();
+    const view = renderRun(pending, callbacks);
+    expect(status(view.container).getByText("Still waiting on that score. You can keep going.")).toBeInTheDocument();
     expect(ringScore(document.body)).toBe("40");
     expect(screen.getByLabelText(/1\. water: first reading Re-listen 40, result pending/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Record next" })).toBeEnabled();

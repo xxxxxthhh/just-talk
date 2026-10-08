@@ -509,17 +509,22 @@ function FeedbackLine({ item, shown, firstLow }: { item: RunItem; shown: number 
         </>
       );
     case "no-match":
-      return <p className="run-status-main">Didn't catch any speech that time.</p>;
     case "unjudged":
-      return <p className="run-status-main">Couldn't score that one cleanly.</p>;
     case "cannot-confirm":
-      return <p className="run-status-main">Not confirmed. No heart lost.</p>;
     case "pending":
-      return <p className="run-status-main">Still waiting on that score. You can keep going.</p>;
+      return <p className="run-status-main">{NONJUDGMENT_LINES[item.verdict]}</p>;
     default:
       return null;
   }
 }
+
+// Outcomes without a score; pending means the result is unknown, never that it will be resent.
+const NONJUDGMENT_LINES = {
+  "no-match": "Didn't catch any speech that time.",
+  unjudged: "Couldn't score that one cleanly.",
+  "cannot-confirm": "Not confirmed. No heart lost.",
+  pending: "Still waiting on that score. You can keep going."
+} as const;
 
 function summaryKicker(run: RunState): string {
   if (run.mode === "route") return run.endReason === "completed" ? "Route complete" : "Run ended";
@@ -689,6 +694,10 @@ function announcement(
         const chain = score.items[run.index]?.chain ?? 0;
         return `${value}${TIER_LABELS[tier]}.${chain >= 2 ? ` Chain ${chain}.` : ""}`;
       }
+      if (item.verdict === "no-match" || item.verdict === "unjudged") {
+        return `${NONJUDGMENT_LINES[item.verdict]} ${canRecord(run) ? "You can try again." : "You can move on."}`;
+      }
+      if (item.verdict === "cannot-confirm" || item.verdict === "pending") return NONJUDGMENT_LINES[item.verdict];
       return "";
     }
     case "summary": {
