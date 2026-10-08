@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { setRunPreference } from "../game/preferences";
 import MobileApp from "./MobileApp";
 
 function mockApi(payloads: Record<string, unknown>) {
@@ -110,7 +111,8 @@ describe("MobileApp", () => {
 
     expect(screen.getByRole("button", { name: "Record" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Short Drill" })).toHaveAttribute("aria-pressed", "true");
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+    // The run entry card loads the phoneme stats its sound preview uses.
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(5));
     await userEvent.click(screen.getByRole("button", { name: "Change" }));
     expect(screen.getByRole("dialog", { name: "Materials" })).toBeInTheDocument();
   });
@@ -124,7 +126,8 @@ describe("MobileApp", () => {
     expect(screen.getByRole("tab", { name: "Words" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "History" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Insights" })).toBeInTheDocument();
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+    // The run entry card loads the phoneme stats its sound preview uses.
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(5));
   });
 
   test("switches screens when a tab is tapped", async () => {
@@ -295,36 +298,40 @@ const STARTER_TEXTS = [
   "The narrow path leads to our house.",
 ];
 
-async function startRun(user: ReturnType<typeof userEvent.setup>, mode: "Start a run" | "Challenge" = "Start a run") {
-  await user.click(await screen.findByRole("button", { name: mode }));
-  return screen.findByRole("region", { name: mode === "Challenge" ? "Challenge run" : "Route run" });
+async function startRun(user: ReturnType<typeof userEvent.setup>, mode: "Route" | "Challenge" = "Route") {
+  await user.click(await screen.findByRole("radio", { name: new RegExp(`^${mode}`) }));
+  await user.click(await screen.findByRole("button", { name: `Start ${mode}` }));
+  return screen.findByRole("region", { name: `${mode} run` });
 }
 
-// Quit lives behind Pause while the tab bar is hidden.
+// Quit lives behind Pause while the tab bar is hidden, and asks before ending the run.
 async function quitRun(user: ReturnType<typeof userEvent.setup>) {
   if (!screen.queryByRole("button", { name: "Quit run" })) await user.click(await screen.findByRole("button", { name: "Pause run" }));
   await user.click(await screen.findByRole("button", { name: "Quit run" }));
+  await user.click(await screen.findByRole("button", { name: "End run" }));
 }
 
 // Takes shorter than the manual minimum are rejected locally, so each take lasts 600 ms on the
-// capture's monotonic clock.
+// capture's monotonic clock. The clock only ever moves forward (see beforeEach).
+let clockOffset = 0;
+
 async function recordAndStop(user: ReturnType<typeof userEvent.setup>, recordName = "Record") {
   await user.click(screen.getByRole("button", { name: recordName }));
   const stop = await screen.findByRole("button", { name: "Stop" });
-  const now = performance.now();
-  const clock = vi.spyOn(performance, "now").mockReturnValue(now + 600);
-  try {
-    await user.click(stop);
-  } finally {
-    clock.mockRestore();
-  }
+  clockOffset += 600;
+  await user.click(stop);
 }
 
 describe("MobileApp game run", () => {
   let getUserMedia: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    const realNow = performance.now.bind(performance);
+    clockOffset = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => realNow() + clockOffset);
     FakeMediaRecorder.instances = [];
+    setRunPreference("autoStop", true);
+    setRunPreference("sfx", true);
     vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
     getUserMedia = vi.fn(async () => ({ getTracks: () => [{ stop: () => undefined }] }));
     Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
@@ -385,31 +392,35 @@ describe("MobileApp game run", () => {
 
     await startRun(user);
     await recordAndStop(user);
-    expect(await screen.findByText("77")).toBeInTheDocument();
+    expect(await screen.findByText("77. Good.")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Score" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /View score/ })).not.toBeInTheDocument();
 
+    // History is reachable once the run is over, and its sheet still opens.
+    await quitRun(user);
+    await user.click(await screen.findByRole("button", { name: "Done" }));
     await user.click(screen.getByRole("tab", { name: "History" }));
     await user.click(await screen.findByRole("button", { name: /90/ }));
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm).not.toHaveBeenCalled();
     expect(await screen.findByRole("dialog", { name: "Score" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Route run" })).not.toBeInTheDocument();
   });
 
-  test("tab_pause_resume_preserves_run_without_auto_recording", async () => {
+  test("immersive_run_hides_tabs_and_pause_resume_is_explicit", async () => {
     const user = userEvent.setup();
     const scored = installRunApi();
     render(<MobileApp />);
+    expect(screen.getByRole("tab", { name: "Words" })).toBeInTheDocument();
 
     await startRun(user);
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Record" }));
     await screen.findByRole("button", { name: "Stop" });
     expect(getUserMedia).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("tab", { name: "Words" }));
+    // Pause discards the open take and never records again on its own.
+    await user.click(screen.getByRole("button", { name: "Pause run" }));
     expect(FakeMediaRecorder.instances[0].state).toBe("inactive");
-    await user.click(screen.getByRole("tab", { name: "Practice" }));
-
     expect(screen.getByText("Paused.", { selector: ".run-status-main" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Record" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Resume" }));
@@ -419,13 +430,116 @@ describe("MobileApp game run", () => {
 
     // Backgrounding the page pauses the same way.
     await recordAndStop(user);
-    expect(await screen.findByText("Strong.")).toBeInTheDocument();
+    expect(await screen.findByText("Strong.", { selector: ".run-status-main" })).toBeInTheDocument();
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
     act(() => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
     expect(await screen.findByText("Paused.", { selector: ".run-status-main" })).toBeInTheDocument();
     expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(scored).toEqual(["thin"]);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+
+    // The tabs stay hidden through the summary and come back on Done.
+    await quitRun(user);
+    expect(await screen.findByRole("heading", { name: "Run ended" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByRole("tab", { name: "Words" })).toBeInTheDocument();
+  });
+
+  test("entry_preferences_and_frozen_focus_best_are_shared", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(
+      "jt.runBest.v1",
+      JSON.stringify({ "route|θ|1": { runId: "old", points: 861, rating: "A", updatedAt: 1, expiresAt: null } })
+    );
+    installRunApi();
+    render(<MobileApp />);
+
+    // No stats yet means the starter focus /θ/, the same rule the run freezes.
+    const hero = await screen.findByRole("region", { name: "This run's sound" });
+    expect(await within(hero).findByText("/θ/")).toBeInTheDocument();
+    expect(within(hero).getByText("Best · /θ/ · Route").parentElement).toHaveTextContent("861A");
+    await user.click(within(hero).getByRole("radio", { name: /^Challenge/ }));
+    expect(within(hero).getByText("No best yet")).toBeInTheDocument();
+    await user.click(within(hero).getByRole("radio", { name: /^Route/ }));
+
+    // One preference, shared by the card and the run.
+    await user.click(within(hero).getByRole("button", { name: "Auto-stop on" }));
+    expect(within(hero).getByRole("button", { name: "Auto-stop off" })).toHaveAttribute("aria-pressed", "false");
+    await startRun(user);
+    expect(screen.getByText("Route · /θ/")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Auto-stop off" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Sound" }));
+    await quitRun(user);
+    await user.click(await screen.findByRole("button", { name: "Done" }));
+    expect(screen.getByRole("button", { name: "Sound off" })).toHaveAttribute("aria-pressed", "false");
+    window.localStorage.removeItem("jt.runBest.v1");
+  });
+
+  test("quit_confirmation_calls_quit_not_exit", async () => {
+    const user = userEvent.setup();
+    const scored = installRunApi();
+    render(<MobileApp />);
+    await startRun(user);
+    await recordAndStop(user);
+    expect(await screen.findByText("Strong.", { selector: ".run-status-main" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Pause run" }));
+    await user.click(screen.getByRole("button", { name: "Quit run" }));
+    const dialog = screen.getByRole("alertdialog", { name: "End this run?" });
+    expect(within(dialog).getByRole("button", { name: "Keep paused" })).toHaveFocus();
+    await user.click(within(dialog).getByRole("button", { name: "End run" }));
+
+    // Quit keeps the results: the summary and its review are still there.
+    expect(await screen.findByRole("heading", { name: "Run ended" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "See review" }));
+    expect(await screen.findByRole("region", { name: "Run review" })).toBeInTheDocument();
+    expect(scored).toEqual(["thin"]);
+  });
+
+  test("quit_dialog_cancels_capture_before_waiting", async () => {
+    const user = userEvent.setup();
+    const scored = installRunApi();
+    render(<MobileApp />);
+    await startRun(user);
+    await user.click(screen.getByRole("button", { name: "Record" }));
+    await screen.findByRole("button", { name: "Stop" });
+
+    // Quit is behind Pause, which has already discarded the open take.
+    await user.click(screen.getByRole("button", { name: "Pause run" }));
+    expect(FakeMediaRecorder.instances[0].state).toBe("inactive");
+    await user.click(screen.getByRole("button", { name: "Quit run" }));
+    expect(screen.getByRole("alertdialog", { name: "End this run?" })).toBeInTheDocument();
+    // Waiting on the dialog never lets a take reach the scorer.
+    clockOffset += 31_000;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(scored).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "End run" }));
+    expect(await screen.findByRole("heading", { name: "Run ended" })).toBeInTheDocument();
+    expect(scored).toEqual([]);
+  });
+
+  test("cancel_quit_keeps_paused_run_and_results", async () => {
+    const user = userEvent.setup();
+    const scored = installRunApi();
+    render(<MobileApp />);
+    await startRun(user);
+    await recordAndStop(user);
+    expect(await screen.findByText("Strong.", { selector: ".run-status-main" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Pause run" }));
+    const quit = screen.getByRole("button", { name: "Quit run" });
+    await user.click(quit);
+    await user.click(screen.getByRole("button", { name: "Keep paused" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(quit).toHaveFocus();
+    expect(screen.getByText("Paused.", { selector: ".run-status-main" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Resume" }));
+    expect(screen.getByText("Strong.", { selector: ".run-status-main" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^1\. thin: first reading Great 90/)).toBeInTheDocument();
     expect(scored).toEqual(["thin"]);
   });
 
@@ -451,25 +565,17 @@ describe("MobileApp game run", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<MobileApp />);
 
+    // During a run the other tabs, and their practice entries, are out of reach.
     await startRun(user);
-    await user.click(screen.getByRole("tab", { name: /Words/ }));
-    await user.click(await screen.findByRole("button", { name: /^water/ }));
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("heading", { name: "Word Bank" })).toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Practice" }));
-    expect(screen.getByRole("region", { name: "Route run" })).toBeInTheDocument();
-    // Cancelling also left the session alone: leaving the run shows no "water" drill.
-    await user.click(screen.getByRole("button", { name: "Resume" }));
+    expect(screen.queryByRole("tab", { name: /Words/ })).not.toBeInTheDocument();
     await quitRun(user);
     await user.click(await screen.findByRole("button", { name: "Done" }));
     expect(screen.getByRole("textbox", { name: "Passage" })).not.toHaveValue("water");
-    await startRun(user);
 
-    confirm.mockReturnValue(true);
+    // Without a run, an entry practises directly with no confirmation.
     await user.click(screen.getByRole("tab", { name: /Words/ }));
     await user.click(await screen.findByRole("button", { name: /^water/ }));
-    expect(confirm).toHaveBeenCalledTimes(2);
-    expect(screen.queryByRole("region", { name: "Route run" })).not.toBeInTheDocument();
+    expect(confirm).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: "Passage" })).toHaveValue("water");
   });
 
@@ -542,12 +648,12 @@ describe("MobileApp game run", () => {
     expect(screen.queryByRole("region", { name: "Route run" })).not.toBeInTheDocument();
     expect(await screen.findByText("Generating a drill for /θ/…")).toBeInTheDocument();
     // A drill landing mid-run would replace the run's material, so no run starts meanwhile.
-    expect(screen.getByRole("button", { name: "Start a run" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start Route" })).toBeDisabled();
 
     act(() => fail({ status: 503, body: { detail: "Drill unavailable." } }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Drill unavailable.");
     expect(screen.queryByText(/Generating a drill/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Start a run" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Start Route" })).toBeEnabled();
   });
 
   test("generate_drill_success_from_review_loads_the_drill", async () => {

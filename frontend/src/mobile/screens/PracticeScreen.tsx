@@ -1,5 +1,5 @@
 import { Clock3, Loader2, Mic, Square, UploadCloud, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 
 import { AudioPlayer } from "../../components/AudioPlayer";
 import { AudioVisualizer } from "../../components/AudioVisualizer";
@@ -8,13 +8,13 @@ import {
   MaterialLibrary,
 } from "../../components/MaterialLibrary";
 import { PracticeRun } from "../../components/PracticeRun";
+import { RunHero } from "../../components/RunHero";
 import { RunReview } from "../../components/RunReview";
-import { IDLE_TELEMETRY } from "../../components/RunRing";
 import { ScoredPassage } from "../../components/ScoredPassage";
 import { ScoreGrid } from "../../components/ScoreGrid";
-import { setRunPreference, useRunPreferences } from "../../game/preferences";
-import { selectRunScore, selectTopRevisit } from "../../game/scoring";
+import { selectRunScore } from "../../game/scoring";
 import { usePracticeRun } from "../../hooks/usePracticeRun";
+import { usePublicScoresLeft } from "../usePublicScoresLeft";
 import { PUBLIC_MODE } from "../../publicMode";
 import { scoreValue } from "../../scoreUtils";
 import { usePracticeSession } from "../../usePracticeSession";
@@ -45,13 +45,8 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
   const resultChipRef = useRef<HTMLButtonElement | null>(null);
   const focusReturnRef = useRef<HTMLElement | null>(null);
   const [isResultSheetOpen, setIsResultSheetOpen] = useState(false);
-  const runPreferences = useRunPreferences();
   const reducedMotion = useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion);
-  // Interim until the run controller holds consumed feedback for the run's lifetime.
-  const [consumedFeedbackIds, setConsumedFeedbackIds] = useState<ReadonlySet<string>>(() => new Set());
-  const markFeedbackConsumed = useCallback((id: string) => {
-    setConsumedFeedbackIds((previous) => (previous.has(id) ? previous : new Set(previous).add(id)));
-  }, []);
+  const scoresLeft = usePublicScoresLeft();
   const {
     activeMaterial,
     activeSpokenWordIndex,
@@ -216,28 +211,32 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
         ) : (
           <PracticeRun
             run={run.state}
-            score={selectRunScore(run.state)}
-            topRevisit={selectTopRevisit(run.state)}
-            receipt={null}
-            telemetry={IDLE_TELEMETRY}
-            preferences={runPreferences}
+            // run.score is null only without a run, which this branch excludes.
+            score={run.score ?? selectRunScore(run.state)}
+            topRevisit={run.topRevisit}
+            receipt={run.receipt}
+            telemetryStore={run.telemetryStore}
+            preferences={run.preferences}
             reducedMotion={reducedMotion}
-            consumedFeedbackIds={consumedFeedbackIds}
-            onFeedbackConsumed={markFeedbackConsumed}
-            onSetPreference={setRunPreference}
+            consumedFeedbackIds={run.consumedFeedbackIds}
+            onFeedbackConsumed={run.markFeedbackConsumed}
+            onSetPreference={run.setPreference}
             onRecord={() => void run.record()}
             onStop={run.stop}
+            onCancelTake={run.cancelTake}
             onRecordNext={run.recordNext}
             onFinish={run.finish}
             onSkip={run.skip}
             onPlayReference={() => run.playReference()}
-            onUseManualStop={() => setRunPreference("autoStop", false)}
+            onUseManualStop={run.useManualStopNextTake}
             onPause={run.pause}
             onResume={run.resume}
             onQuit={run.quit}
             onOpenReview={run.openReview}
             onPlayAgain={() => void run.playAgain()}
             onDone={run.exit}
+            onPlayRevisit={run.playReference}
+            scoresLeft={scoresLeft}
           />
         )}
       </section>
@@ -310,30 +309,13 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
           </div>
         ) : null}
 
-        <div className="m-run-entry">
-          <div className="m-run-entry-info">
-            <strong>Quick run</strong>
-            <span>Six short items, one verdict each</span>
-          </div>
-          <div className="m-run-entry-actions">
-            <button
-              className="m-small-button m-run-start"
-              type="button"
-              disabled={!canStartRun}
-              onClick={() => void run.start("route")}
-            >
-              Start a run
-            </button>
-            <button
-              className="m-small-button"
-              type="button"
-              disabled={!canStartRun}
-              onClick={() => void run.start("challenge")}
-            >
-              Challenge
-            </button>
-          </div>
-        </div>
+        <RunHero
+          canStart={canStartRun}
+          preferences={run.preferences}
+          onSetPreference={run.setPreference}
+          onStart={(mode) => run.start(mode)}
+          scoresLeft={scoresLeft}
+        />
 
         <div className="m-segmented" aria-label="Practice mode">
           <button

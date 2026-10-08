@@ -77,11 +77,14 @@ export default function MobileApp() {
         </div>
       ) : null}
 
-      <MobileTabBar
-        activeTab={tab}
-        dueCount={session.dueWordCount}
-        onTabChange={selectTab}
-      />
+      {/* A run is immersive: paused, summary and review included, until Done or exit. */}
+      {run.state ? null : (
+        <MobileTabBar
+          activeTab={tab}
+          dueCount={session.dueWordCount}
+          onTabChange={selectTab}
+        />
+      )}
     </main>
   );
 }

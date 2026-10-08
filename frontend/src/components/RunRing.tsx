@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { useCaptureTelemetry, type TelemetryStore } from "../game/runAudio";
 import { tierForAccuracy } from "../game/scoring";
 import type { CaptureTelemetry, RunRating, RunTier } from "../types";
 
@@ -14,15 +15,6 @@ export type RunRingProps = {
   // This feedback was already shown (e.g. before a remount): render its final state with no entrance motion.
   settled: boolean;
   onStop: () => void;
-};
-
-// Telemetry when no capture is open.
-export const IDLE_TELEMETRY: CaptureTelemetry = {
-  captureId: null,
-  level: 0,
-  silenceProgress: 0,
-  autoStopState: "off",
-  elapsedMs: 0
 };
 
 // Taps on the ring within this window of a capture starting are ignored; the bottom Stop has no guard.
@@ -164,4 +156,12 @@ export function RunRing({ phase, telemetry, accuracy, tier, rating, reducedMotio
       {recording ? <button type="button" className="run-ring-stop" aria-label="Stop recording" onClick={stop} /> : null}
     </div>
   );
+}
+
+export type LiveRunRingProps = Omit<RunRingProps, "telemetry"> & { store: TelemetryStore };
+
+// Subscribes to capture telemetry here, beside the ring, so only the ring re-renders per audio frame.
+export function LiveRunRing({ store, ...props }: LiveRunRingProps) {
+  const telemetry = useCaptureTelemetry(store);
+  return <RunRing {...props} telemetry={telemetry} />;
 }

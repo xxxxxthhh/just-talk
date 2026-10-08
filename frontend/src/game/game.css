@@ -1527,3 +1527,203 @@
   padding: 12px var(--g-gutter) calc(12px + env(safe-area-inset-bottom));
   background: linear-gradient(180deg, rgba(27, 21, 17, 0) 0%, #1f1813 30%);
 }
+
+/* ---- Entry hero ---- */
+
+.run-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 20px 18px 18px;
+  border: 1px solid rgba(255, 240, 220, 0.1);
+  border-radius: var(--g-radius-hero);
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(251, 146, 60, 0.18) 0%, rgba(251, 146, 60, 0.04) 55%, rgba(37, 28, 22, 0.9) 100%),
+    var(--g-panel);
+  color: var(--g-text);
+  font-family: var(--font-body);
+}
+
+.run-hero-sound {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.run-hero-kicker {
+  color: var(--g-accent-hi);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.run-hero-ipa {
+  font-family: var(--font-display);
+  font-size: 56px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.run-hero-examples {
+  color: var(--g-text-soft);
+  font-size: 14px;
+}
+
+.run-hero-examples b {
+  color: var(--g-text);
+  font-weight: 600;
+}
+
+.run-stones.is-placeholder .run-stone.is-pending .run-stone-shape {
+  stroke: rgba(251, 146, 60, 0.55);
+}
+
+.run-hero-best {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--g-radius-card);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.run-hero-best-label,
+.run-hero-best-none {
+  color: var(--g-text-muted);
+  font-size: 13px;
+}
+
+.run-hero-best-value {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-display);
+}
+
+.run-hero-best-points {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.run-hero-best-rating {
+  color: var(--g-tier);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.run-hero-modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.run-hero-mode {
+  min-height: 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--g-line-strong);
+  border-radius: var(--g-radius-tile);
+  background: transparent;
+  color: var(--g-text);
+  text-align: left;
+}
+
+.run-hero-mode[aria-checked="true"] {
+  border: 1.5px solid var(--g-accent);
+  background: rgba(251, 146, 60, 0.12);
+}
+
+.run-hero-mode-name {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.run-hero-mode-hearts {
+  color: var(--g-heart);
+  font-size: 13px;
+}
+
+.run-hero-mode-line {
+  color: var(--g-text-muted);
+  font-size: 12px;
+}
+
+.run-hero-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.run-hero-usage {
+  margin: 0;
+  color: var(--g-text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ---- Quit confirmation and summary revisit ---- */
+
+.run-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 var(--g-gutter) calc(16px + env(safe-area-inset-bottom));
+  background: rgba(10, 8, 6, 0.72);
+}
+
+.run-dialog {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--g-line-strong);
+  border-radius: var(--g-radius-hero);
+  background: var(--g-panel);
+}
+
+.run-dialog-title {
+  margin: 0;
+  color: var(--g-text);
+  font-family: var(--font-display);
+  font-size: 22px;
+}
+
+.run-revisit {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.run-revisit-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.run-revisit-play {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(251, 146, 60, 0.5);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--g-accent);
+}
+
+/* IPA keeps its case inside uppercase labels: /ð/ must never become /Ð/. */
+.run-ipa {
+  text-transform: none;
+}

@@ -1,5 +1,6 @@
 // Typed UI fixtures for Game Mode v2 screens. Run states come from the real reducer and every
 // score, suggestion and revisit from the real selectors.
+import { createTelemetryStore, IDLE_TELEMETRY } from "../game/runAudio";
 import { nextCapture, runReducer } from "../game/runModel";
 import { selectReviewSuggestions, selectRunScore, selectTopRevisit, tierForAccuracy } from "../game/scoring";
 import type {
@@ -16,7 +17,7 @@ import type {
   ScoreResponse
 } from "../types";
 import type { PracticeRunProps } from "./PracticeRun";
-import { IDLE_TELEMETRY, type RunRingProps } from "./RunRing";
+import type { RunRingProps } from "./RunRing";
 
 export type RunV2Fixture = Readonly<{
   run: RunState;
@@ -321,15 +322,21 @@ export const runV2Fixtures = {
   review
 } satisfies Record<string, RunV2Fixture>;
 
-// PracticeRun props for a run with no-op actions; tests override what they observe.
-export function practiceRunProps(run: RunState, overrides: Partial<PracticeRunProps> = {}): PracticeRunProps {
+// PracticeRun props for a run with no-op actions; tests override what they observe. A plain
+// telemetry value becomes a store, as the controller provides.
+export function practiceRunProps(
+  run: RunState,
+  { telemetry = IDLE_TELEMETRY, ...overrides }: Partial<PracticeRunProps> & { telemetry?: CaptureTelemetry } = {}
+): PracticeRunProps {
   const noop = () => {};
+  const telemetryStore = createTelemetryStore();
+  telemetryStore.set(telemetry);
   return {
     run,
     score: selectRunScore(run),
     topRevisit: selectTopRevisit(run),
     receipt: null,
-    telemetry: IDLE_TELEMETRY,
+    telemetryStore,
     preferences: { sfx: true, autoStop: true },
     reducedMotion: false,
     consumedFeedbackIds: new Set<string>(),
@@ -349,6 +356,8 @@ export function practiceRunProps(run: RunState, overrides: Partial<PracticeRunPr
     onOpenReview: noop,
     onPlayAgain: noop,
     onDone: noop,
+    onPlayRevisit: noop,
+    scoresLeft: null,
     ...overrides
   };
 }

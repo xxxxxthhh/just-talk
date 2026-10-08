@@ -115,3 +115,27 @@ export function RunStones({ items, scores, currentIndex, reducedMotion }: RunSto
     </div>
   );
 }
+
+// Six empty stones for the entry card, before any run exists. Decorative: the card says what they are.
+export function RunStonePlaceholders({ highlight }: { highlight?: RunPrompt["stage"] }) {
+  return (
+    <div className="run-stones is-placeholder" aria-hidden="true">
+      <ol className="run-stones-groups">
+        {STAGES.map(({ stage, label }) => (
+          <li key={stage} className="run-stones-group">
+            <ol>
+              {[0, 1].map((slot) => (
+                <li key={slot} className={`run-stone${stage === highlight ? " is-pending" : ""}`}>
+                  <svg viewBox="0 0 28 28" focusable="false">
+                    <polygon className="run-stone-shape" points={STONE} />
+                  </svg>
+                </li>
+              ))}
+            </ol>
+            <span className="run-stones-label">{label}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}

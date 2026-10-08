@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import "../game/game.css";
 import type { RunPreferences } from "../game/preferences";
-import { canAdvance, canRecord, runReducer } from "../game/runModel";
+import type { TelemetryStore } from "../game/runAudio";
+import { canAdvance, canRecord, MAX_EXTRA_ATTEMPTS, runReducer } from "../game/runModel";
 import { firstValid, latestValid, tierForAccuracy, validAccuracy } from "../game/scoring";
 import type {
-  CaptureTelemetry,
+  AutoStopState,
+  RunPrompt,
   RevisitSuggestion,
   RunBestReceipt,
   RunItem,
@@ -15,7 +17,7 @@ import type {
   RunTier,
   ScoreResult
 } from "../types";
-import { formatRunScore, RunRing, TIER_LABELS, useRolledNumber, type RunRingProps } from "./RunRing";
+import { formatRunScore, LiveRunRing, TIER_LABELS, useRolledNumber, type RunRingProps } from "./RunRing";
 import { RunStones } from "./RunStones";
 
 export const SLOW_SCORE_MS = 5000;
@@ -46,7 +48,8 @@ export type PracticeRunProps = {
   score: RunScoreView;
   topRevisit: RevisitSuggestion | null;
   receipt: RunBestReceipt | null;
-  telemetry: CaptureTelemetry;
+  // Subscribed beside the ring; the rest of the run only follows the auto-stop state.
+  telemetryStore: TelemetryStore;
   preferences: RunPreferences;
   reducedMotion: boolean;
   // Run-lifetime feedback already shown, so remounts don't replay pops, rolls, haptics or announcements.
@@ -69,6 +72,10 @@ export type PracticeRunProps = {
   onOpenReview: () => void;
   onPlayAgain: () => void;
   onDone: () => void;
+  // Plays the Coach reference for the summary's "One thing to revisit" word.
+  onPlayRevisit: (prompt: RunPrompt) => void;
+  // Public mode's score requests left today, for the Play again note; null when unknown.
+  scoresLeft: number | null;
 };
 
 function canRecordNext(run: RunState): boolean {
@@ -141,14 +148,16 @@ function useSlowScoring(run: RunState): boolean {
   return waitingId !== null && slowId === waitingId;
 }
 
-function autoStopHint(telemetry: CaptureTelemetry): string {
-  if (telemetry.autoStopState === "off") return "Auto-stop off · tap Stop";
-  if (telemetry.autoStopState === "fallback") return "Noisy · tap Stop";
+function autoStopHint(autoStopState: AutoStopState): string {
+  if (autoStopState === "off") return "Auto-stop off · tap Stop";
+  if (autoStopState === "fallback") return "Noisy · tap Stop";
   return "Speak. I'll stop for you.";
 }
 
 export function PracticeRun(props: PracticeRunProps) {
-  const { run, score, telemetry, preferences, reducedMotion, consumedFeedbackIds, onFeedbackConsumed } = props;
+  const { run, score, telemetryStore, preferences, reducedMotion, consumedFeedbackIds, onFeedbackConsumed } = props;
+  // A primitive snapshot, so audio frames that keep the same state never re-render the run.
+  const autoStopState = useSyncExternalStore(telemetryStore.subscribe, () => telemetryStore.get().autoStopState);
   const feedbackId = feedbackIdFor(run);
   const fresh = useFreshFeedback(feedbackId, consumedFeedbackIds, onFeedbackConsumed);
   const rejectionFresh = useFreshFeedback(rejectionIdFor(run), consumedFeedbackIds, onFeedbackConsumed);
@@ -220,11 +229,18 @@ export function PracticeRun(props: PracticeRunProps) {
       {summary ? (
         <RunSummary {...props} fresh={fresh} feedbackId={feedbackId} />
       ) : (
-        <PlayScreen {...props} item={item} fresh={fresh} feedbackId={feedbackId} slow={slow} />
+        <PlayScreen
+          {...props}
+          item={item}
+          fresh={fresh}
+          feedbackId={feedbackId}
+          slow={slow}
+          autoStopState={autoStopState}
+        />
       )}
 
       <p className="visually-hidden" aria-live="polite">
-        {announcement(run, score, telemetry, fresh, rejectionFresh, slow)}
+        {announcement(run, score, autoStopState, fresh, rejectionFresh, slow)}
       </p>
     </section>
   );
@@ -262,9 +278,10 @@ type ScreenProps = PracticeRunProps & { fresh: boolean; feedbackId: string | nul
 
 const ONE_SHOT_PHASES: ReadonlySet<RunRingProps["phase"]> = new Set(["verdict", "rescue", "summary"]);
 
-function ringProps(props: ScreenProps, overrides: Pick<RunRingProps, "phase"> & Partial<RunRingProps>): RunRingProps {
+type RingFace = Omit<RunRingProps, "telemetry">;
+
+function ringProps(props: ScreenProps, overrides: Pick<RingFace, "phase"> & Partial<RingFace>): RingFace {
   return {
-    telemetry: props.telemetry,
     accuracy: null,
     tier: null,
     rating: null,
@@ -279,8 +296,10 @@ function ringProps(props: ScreenProps, overrides: Pick<RunRingProps, "phase"> & 
 
 type Action = { label: ReactNode; onClick?: () => void; disabled?: boolean; tone?: "stop" };
 
-function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean }) {
-  const { run, item, score, telemetry, preferences, slow } = props;
+function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean; autoStopState: AutoStopState }) {
+  const { run, item, score, autoStopState, preferences, slow } = props;
+  const [confirmingQuit, setConfirmingQuit] = useState(false);
+  const secondaryRef = useRef<HTMLButtonElement | null>(null);
   const recordable = canRecord(run);
   const next = run.items[run.index + 1] ?? null;
   const itemScore = score.items[run.index];
@@ -291,7 +310,7 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean }) {
   const reviewing = run.phase === "feedback" || run.phase === "rescue";
   const stage = `${run.index + 1} / ${run.items.length} · ${STAGE_LABELS[item.prompt.stage]}`;
 
-  let ring: RunRingProps;
+  let ring: RingFace;
   let status: ReactNode;
   let primary: Action;
   let secondary: Action | null = null;
@@ -301,13 +320,13 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean }) {
     ring = ringProps(props, { phase: "ready", settled: true });
     status = <p className="run-status-main">Paused.</p>;
     primary = { label: "Resume", onClick: props.onResume };
-    secondary = { label: "Quit run", onClick: props.onQuit };
+    secondary = { label: "Quit run", onClick: () => setConfirmingQuit(true) };
   } else if (run.phase === "recording") {
     ring = ringProps(props, { phase: "recording" });
     status = (
       <>
-        <p className="run-status-main">{autoStopHint(telemetry)}</p>
-        {telemetry.autoStopState !== "off" && telemetry.autoStopState !== "fallback" ? (
+        <p className="run-status-main">{autoStopHint(autoStopState)}</p>
+        {autoStopState !== "off" && autoStopState !== "fallback" ? (
           <p className="run-status-sub">The orange arc fills while you're quiet</p>
         ) : null}
       </>
@@ -419,7 +438,7 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean }) {
             {item.prompt.text}
           </p>
         </div>
-        <RunRing {...ring} />
+        <LiveRunRing {...ring} store={props.telemetryStore} />
         <div className="run-status">{status}</div>
       </div>
 
@@ -444,8 +463,8 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean }) {
             </button>
           ) : (
             <span className="run-toggle is-static">
-              <span className={`run-toggle-dot${telemetry.autoStopState !== "off" ? " is-on" : ""}`} aria-hidden="true" />
-              {telemetry.autoStopState === "off" ? "Auto-stop off" : "Auto-stop on"}
+              <span className={`run-toggle-dot${autoStopState !== "off" ? " is-on" : ""}`} aria-hidden="true" />
+              {autoStopState === "off" ? "Auto-stop off" : "Auto-stop on"}
             </span>
           )}
         </div>
@@ -458,14 +477,68 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean }) {
           {primary.label}
         </button>
         {secondary ? (
-          <button type="button" className="run-secondary" disabled={secondary.disabled} onClick={secondary.onClick}>
+          <button
+            ref={secondaryRef}
+            type="button"
+            className="run-secondary"
+            disabled={secondary.disabled}
+            onClick={secondary.onClick}
+          >
             {secondary.label}
           </button>
         ) : (
           <span className="run-secondary-spacer" aria-hidden="true" />
         )}
       </footer>
+      {confirmingQuit && run.paused ? (
+        <QuitDialog
+          onCancel={() => {
+            setConfirmingQuit(false);
+            secondaryRef.current?.focus();
+          }}
+          onConfirm={() => {
+            setConfirmingQuit(false);
+            props.onQuit();
+          }}
+        />
+      ) : null}
     </>
+  );
+}
+
+// Only reachable while paused, so no capture is open to be submitted while it waits.
+function QuitDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
+  const id = useId();
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => cancelRef.current?.focus(), []);
+  return (
+    <div className="run-dialog-backdrop">
+      <div
+        className="run-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={`${id}-title`}
+        aria-describedby={`${id}-body`}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onCancel();
+        }}
+      >
+        <h2 id={`${id}-title`} className="run-dialog-title">
+          End this run?
+        </h2>
+        <p id={`${id}-body`} className="run-status-sub">
+          Your readings so far are kept and you'll see the summary.
+        </p>
+        <div className="run-summary-buttons">
+          <button ref={cancelRef} type="button" className="run-secondary-v2" onClick={onCancel}>
+            Keep paused
+          </button>
+          <button type="button" className="run-primary-v2" onClick={onConfirm}>
+            End run
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -548,6 +621,19 @@ function RunSummary(props: ScreenProps) {
     handler();
   };
   const revisit = topRevisit?.evidence[0] ?? null;
+  // The Coach says just the word, even when it came from a sentence.
+  const revisitItem = revisit ? run.items.find((candidate) => candidate.prompt.itemId === revisit.itemId) : undefined;
+  const revisitPrompt: RunPrompt | null =
+    revisit && revisitItem
+      ? {
+          ...revisitItem.prompt,
+          itemId: `revisit:${revisitItem.prompt.itemId}`,
+          kind: "word",
+          text: revisit.word,
+          targetWord: revisit.word
+        }
+      : null;
+  const playAgainCost = run.items.length + MAX_EXTRA_ATTEMPTS;
   const unratedLine = score.unratedReason ? `Not rated · ${score.unratedReason}` : "Not rated";
 
   return (
@@ -569,7 +655,7 @@ function RunSummary(props: ScreenProps) {
           <p className="run-status-sub">Trial usage ran out for today. Your results so far are kept.</p>
         ) : null}
         <div className="run-summary-ring">
-          <RunRing {...ringProps(props, { phase: "summary", rating: score.rating, settled })} />
+          <LiveRunRing {...ringProps(props, { phase: "summary", rating: score.rating, settled })} store={props.telemetryStore} />
           {outOfHearts ? (
             <span className="run-summary-cracked" aria-hidden="true">
               ♥
@@ -613,7 +699,9 @@ function RunSummary(props: ScreenProps) {
           </div>
           {receipt ? (
             <div className="run-tile">
-              <span className="run-tile-label">Best · {focusLabel(run)}</span>
+              <span className="run-tile-label">
+                Best · <span className="run-ipa">{focusLabel(run)}</span>
+              </span>
               <span className="run-tile-value">
                 {receipt.previousPoints !== null ? receipt.previousPoints : "None yet"}
               </span>
@@ -622,13 +710,25 @@ function RunSummary(props: ScreenProps) {
         </div>
         {revisit ? (
           <div className="run-revisit">
-            <span className="run-tile-label">One thing to revisit</span>
-            <span className="run-revisit-word">
-              {revisit.phoneme ? `/${revisit.phoneme}/ in “${revisit.word}”` : revisit.word}{" "}
-              <span className="run-revisit-score">
-                {revisit.scoreSource === "phoneme" ? "sound" : "word"} {formatRunScore(revisit.accuracy)}
+            <span className="run-revisit-text">
+              <span className="run-tile-label">One thing to revisit</span>
+              <span className="run-revisit-word">
+                {revisit.phoneme ? `/${revisit.phoneme}/ in “${revisit.word}”` : revisit.word}{" "}
+                <span className="run-revisit-score">
+                  {revisit.scoreSource === "phoneme" ? "sound" : "word"} {formatRunScore(revisit.accuracy)}
+                </span>
               </span>
             </span>
+            {revisitPrompt ? (
+              <button
+                type="button"
+                className="run-revisit-play"
+                aria-label={`Hear ${revisit.word}`}
+                onClick={() => props.onPlayRevisit(revisitPrompt)}
+              >
+                <span aria-hidden="true">▶</span>
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -642,7 +742,10 @@ function RunSummary(props: ScreenProps) {
             Play again
           </button>
         </div>
-        <p className="run-summary-note">Play again uses new score calls</p>
+        <p className="run-summary-note">
+          Play again uses up to {playAgainCost} new scores
+          {props.scoresLeft !== null ? ` · ${props.scoresLeft} left today` : ""}
+        </p>
         <button type="button" className="run-secondary" onClick={act(props.onDone)}>
           Done
         </button>
@@ -661,7 +764,7 @@ function focusLabel(run: RunState): string {
 function announcement(
   run: RunState,
   score: RunScoreView,
-  telemetry: CaptureTelemetry,
+  autoStopState: AutoStopState,
   fresh: boolean,
   rejectionFresh: boolean,
   slow: boolean
@@ -677,7 +780,7 @@ function announcement(
     case "ready":
       return `${run.index + 1} of ${run.items.length}: ${item.prompt.text}`;
     case "recording":
-      return telemetry.autoStopState === "fallback" ? "Recording. Noisy, tap Stop." : "Recording.";
+      return autoStopState === "fallback" ? "Recording. Noisy, tap Stop." : "Recording.";
     case "scoring":
       return slow ? "Still waiting for your result." : "Got it, listening.";
     case "rescue": {

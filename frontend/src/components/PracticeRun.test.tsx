@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { nextCapture, runReducer } from "../game/runModel";
 import type { RunAction, RunMode, RunPrompt, RunState, ScoreFailure, ScoreResponse } from "../types";
-import { PracticeRun, SLOW_SCORE_MS, type PracticeRunProps } from "./PracticeRun";
+import { PracticeRun, SLOW_SCORE_MS } from "./PracticeRun";
 import { SCORE_ROLL_MS } from "./RunRing";
 import { practiceRunProps, runV2Fixtures } from "./runV2Fixtures";
 
@@ -105,7 +105,7 @@ function handlers() {
   };
 }
 
-function renderRun(run: RunState, overrides: Partial<PracticeRunProps> = {}) {
+function renderRun(run: RunState, overrides: Parameters<typeof practiceRunProps>[1] = {}) {
   const props = practiceRunProps(run, overrides);
   return { ...render(<PracticeRun {...props} />), props };
 }
@@ -378,6 +378,46 @@ describe("PracticeRun", () => {
     }
   });
 
+  it("live telemetry drives the ring while the run follows only the auto-stop state", () => {
+    const recording = runV2Fixtures.recording;
+    const props = practiceRunProps(recording.run, { telemetry: recording.ring.telemetry });
+    const { container } = render(<PracticeRun {...props} />);
+    expect(container.querySelector(".run-ring-silence")).toHaveStyle({ strokeDasharray: "0.35 1" });
+    expect(screen.getByText("Speak. I'll stop for you.")).toBeInTheDocument();
+
+    act(() => props.telemetryStore.set({ ...recording.ring.telemetry, silenceProgress: 0.8, level: 0.2 }));
+    expect(container.querySelector(".run-ring-silence")).toHaveStyle({ strokeDasharray: "0.8 1" });
+    act(() => props.telemetryStore.set({ ...recording.ring.telemetry, autoStopState: "fallback" }));
+    expect(screen.getByText("Noisy · tap Stop")).toBeInTheDocument();
+    expect(liveRegion(container)).toBe("Recording. Noisy, tap Stop.");
+  });
+
+  it("summary revisit plays the word and play again states its cost", () => {
+    const onPlayRevisit = vi.fn();
+    const rated = runV2Fixtures.summaryRated;
+    const view = renderRun(rated.run, { receipt: rated.receipt, reducedMotion: true, onPlayRevisit, scoresLeft: 14 });
+    fireEvent.click(screen.getByRole("button", { name: "Hear birds" }));
+    expect(onPlayRevisit).toHaveBeenCalledWith(expect.objectContaining({ kind: "word", text: "birds" }));
+    expect(screen.getByText("Play again uses up to 8 new scores · 14 left today")).toBeInTheDocument();
+    view.unmount();
+
+    renderRun(rated.run, { receipt: rated.receipt, reducedMotion: true });
+    expect(screen.getByText("Play again uses up to 8 new scores")).toBeInTheDocument();
+  });
+
+  it("the quit dialog closes on Escape and keeps the run", () => {
+    const callbacks = handlers();
+    const paused = step(runV2Fixtures.ready.run, { type: "PAUSE", runId: runV2Fixtures.ready.run.runId });
+    renderRun(paused, callbacks);
+    fireEvent.click(screen.getByRole("button", { name: "Quit run" }));
+    const dialog = screen.getByRole("alertdialog", { name: "End this run?" });
+    expect(within(dialog).getByRole("button", { name: "Keep paused" })).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Quit run" })).toHaveFocus();
+    expect(callbacks.onQuit).not.toHaveBeenCalled();
+  });
+
   it("heart_overlay_never_intercepts_summary_buttons", () => {
     const callbacks = handlers();
     const { container } = renderRun(runV2Fixtures.summaryUnrated.run, callbacks);
@@ -538,6 +578,8 @@ describe("PracticeRun", () => {
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     expect(callbacks.onResume).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Quit run" }));
+    expect(callbacks.onQuit).not.toHaveBeenCalled();
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: "End this run?" })).getByRole("button", { name: "End run" }));
     expect(callbacks.onQuit).toHaveBeenCalledTimes(1);
     view.unmount();
 
