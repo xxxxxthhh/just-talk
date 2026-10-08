@@ -77,8 +77,9 @@ export default function MobileApp() {
         </div>
       ) : null}
 
-      {/* A run is immersive: paused, summary and review included, until Done or exit. */}
-      {run.state ? null : (
+      {/* A run is immersive from the accepted Start (its deck may still be loading), through
+          paused, summary and review, until Done or exit. */}
+      {run.state || run.starting ? null : (
         <MobileTabBar
           activeTab={tab}
           dueCount={session.dueWordCount}

@@ -311,6 +311,7 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
 
         <RunHero
           canStart={canStartRun}
+          starting={run.starting}
           preferences={run.preferences}
           onSetPreference={run.setPreference}
           onStart={(mode) => run.start(mode)}

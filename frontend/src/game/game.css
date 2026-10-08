@@ -1673,6 +1673,13 @@
   gap: 8px;
 }
 
+.run-hero-error {
+  margin: 0;
+  color: var(--g-relisten-hi);
+  font-size: 13px;
+  text-align: center;
+}
+
 .run-hero-usage {
   margin: 0;
   color: var(--g-text-muted);

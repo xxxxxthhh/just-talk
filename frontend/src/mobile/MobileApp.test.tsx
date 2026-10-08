@@ -244,13 +244,17 @@ function scoreReply(text: string, accuracy: number): FakeReply {
 }
 
 type RunApiOptions = {
+  // Holds a request until the returned promise settles; undefined answers at once.
+  hold?: (url: string) => Promise<void> | undefined;
   score?: (text: string) => FakeReply | Promise<FakeReply>;
   drill?: () => FakeReply | Promise<FakeReply>;
-  words?: unknown[];
+  // A function answers each /api/words request in turn.
+  words?: unknown[] | (() => unknown[]);
   extra?: Record<string, unknown>;
 };
 
 function installRunApi({
+  hold,
   score = (text) => scoreReply(text, 90),
   drill,
   words = [],
@@ -261,6 +265,7 @@ function installRunApi({
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      await hold?.(url);
       let reply: FakeReply | undefined;
       if (url === "/api/score") {
         const text = String((init?.body as FormData).get("reference_text"));
@@ -274,7 +279,7 @@ function installRunApi({
         const payloads: Record<string, unknown> = {
           "/api/health": health,
           "/api/sessions": [],
-          "/api/words": words,
+          "/api/words": typeof words === "function" ? words() : words,
           "/api/materials": [],
           "/api/phoneme-stats": [],
           ...extra,
@@ -576,6 +581,63 @@ describe("MobileApp game run", () => {
     expect(play).toHaveBeenCalledTimes(1);
     await user.click(buttons[0]);
     expect(play).toHaveBeenCalledTimes(2);
+  });
+
+  test("deferred_start_hides_tabs_until_the_run_appears", async () => {
+    const user = userEvent.setup();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let statsCalls = 0;
+    // The entry card's own preview answers at once; the run's deck request waits.
+    installRunApi({ hold: (url) => (url === "/api/phoneme-stats" && ++statsCalls > 1 ? gate : undefined) });
+    render(<MobileApp />);
+    await screen.findByText("/θ/");
+
+    await user.click(screen.getByRole("button", { name: "Start Route" }));
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    const pending = screen.getByRole("button", { name: "Starting…" });
+    expect(pending).toBeDisabled();
+    await user.click(pending);
+    expect(statsCalls).toBe(2);
+
+    await act(async () => release());
+    expect(await screen.findByRole("region", { name: "Route run" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  });
+
+  test("failed_start_brings_tabs_back_with_an_error", async () => {
+    const user = userEvent.setup();
+    // A due word with no text, served only to the run's own request, makes the deck itself
+    // unbuildable, so start() rejects.
+    let broken = false;
+    installRunApi({ words: () => (broken ? [{ id: "bad", word: null, status: "active", due_at: null }] : []) });
+    render(<MobileApp />);
+    await screen.findByText("/θ/");
+    broken = true;
+    await user.click(screen.getByRole("button", { name: "Start Route" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't start the run. Try again.");
+    expect(screen.getByRole("tab", { name: "Words" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Route run" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start Route" })).toBeEnabled();
+  });
+
+  test("a start abandoned by a remount never takes over the new app", async () => {
+    const user = userEvent.setup();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let statsCalls = 0;
+    installRunApi({ hold: (url) => (url === "/api/phoneme-stats" && ++statsCalls === 2 ? gate : undefined) });
+    const first = render(<MobileApp />);
+    await screen.findByText("/θ/");
+    await user.click(screen.getByRole("button", { name: "Start Route" }));
+    first.unmount();
+
+    render(<MobileApp />);
+    await screen.findByText("/θ/");
+    await act(async () => release());
+    expect(screen.queryByRole("region", { name: "Route run" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Words" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start Route" })).toBeEnabled();
   });
 
   test("cancel_quit_keeps_paused_run_and_results", async () => {

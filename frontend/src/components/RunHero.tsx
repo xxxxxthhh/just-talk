@@ -18,6 +18,8 @@ const MODES: readonly { mode: RunMode; name: string; line: string }[] = [
 type RunHeroProps = {
   // False while an ordinary take is recording or scoring, or a drill is generating.
   canStart: boolean;
+  // The controller's accepted start, until its deck is ready or abandoned.
+  starting: boolean;
   preferences: RunPreferences;
   onSetPreference: (name: keyof RunPreferences, value: boolean) => void;
   onStart: (mode: RunMode) => Promise<void>;
@@ -27,10 +29,10 @@ type RunHeroProps = {
 
 // The run's entry card. The sound it previews comes from the same stats and rule the run uses
 // to freeze its focus, so the Best shown here is the bucket the run will be compared with.
-export function RunHero({ canStart, preferences, onSetPreference, onStart, scoresLeft }: RunHeroProps) {
+export function RunHero({ canStart, starting, preferences, onSetPreference, onStart, scoresLeft }: RunHeroProps) {
   const [mode, setMode] = useState<RunMode>("route");
   const [stats, setStats] = useState<readonly PhonemeStat[] | null>(null);
-  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -50,13 +52,10 @@ export function RunHero({ canStart, preferences, onSetPreference, onStart, score
   const best = focus ? readBest({ mode, focus, rulesVersion: RUN_RULES_VERSION }) : null;
   const modeName = mode === "challenge" ? "Challenge" : "Route";
 
-  const start = async () => {
-    setStarting(true);
-    try {
-      await onStart(mode);
-    } finally {
-      setStarting(false);
-    }
+  // The start itself runs in this tap, so run audio is unlocked inside the gesture.
+  const start = () => {
+    setStartError(false);
+    onStart(mode).catch(() => setStartError(true));
   };
 
   return (
@@ -144,9 +143,14 @@ export function RunHero({ canStart, preferences, onSetPreference, onStart, score
         </button>
       </div>
 
-      <button type="button" className="run-primary-v2" disabled={!canStart || starting} onClick={() => void start()}>
-        Start {modeName}
+      <button type="button" className="run-primary-v2" disabled={!canStart || starting} onClick={start}>
+        {starting ? "Starting…" : `Start ${modeName}`}
       </button>
+      {startError ? (
+        <p className="run-hero-error" role="alert">
+          Couldn't start the run. Try again.
+        </p>
+      ) : null}
       {scoresLeft !== null ? <p className="run-hero-usage">{scoresLeft} scores left today</p> : null}
     </section>
   );
