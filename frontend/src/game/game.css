@@ -370,6 +370,12 @@
   list-style: none;
 }
 
+.run-stones-group > ol.is-grid {
+  display: grid;
+  grid-template-columns: repeat(2, var(--g-stone-size));
+  gap: 4px 8px;
+}
+
 .run-stones-label {
   color: var(--g-text-muted);
   font-size: 10px;
@@ -434,6 +440,37 @@
 
 .run-stone.is-rescued .run-stone-halo {
   opacity: 1;
+}
+
+/* A confirmed heart loss keeps the first reading's fill; the red ring and crack sit over it and
+   replace the current-item halo. Not used for a first reading below target or a cannot-confirm. */
+.run-stone.is-heart-lost .run-stone-halo {
+  opacity: 0;
+}
+
+.run-stone-crack-ring {
+  fill: none;
+  stroke: var(--g-heart);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-dasharray: 5 4 63;
+}
+
+.run-stone-crack-outer,
+.run-stone-crack-inner {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.run-stone-crack-outer {
+  stroke: var(--g-heart);
+  stroke-width: 1.8;
+}
+
+.run-stone-crack-inner {
+  stroke: var(--g-on-accent);
+  stroke-width: 1.6;
 }
 
 .run-stone.is-current svg {

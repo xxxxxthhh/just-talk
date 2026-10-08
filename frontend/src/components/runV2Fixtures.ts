@@ -54,7 +54,7 @@ const PROMPTS: readonly RunPrompt[] = [
   }
 ];
 
-type WordReading = readonly [word: string, accuracy: number, phoneme?: readonly [string, number]];
+export type WordReading = readonly [word: string, accuracy: number, phoneme?: readonly [string, number]];
 
 const BIRDS_WORDS: readonly WordReading[] = [
   ["these", 94],
@@ -66,7 +66,7 @@ const BIRDS_WORDS: readonly WordReading[] = [
   ["window", 90]
 ];
 
-function step(state: RunState | null, action: RunAction): RunState {
+export function step(state: RunState | null, action: RunAction): RunState {
   const next = runReducer(state, action);
   if (!next) throw new Error(`fixture step ${action.type} ended the run`);
   return next;
@@ -76,7 +76,7 @@ function start(mode: RunMode): RunState {
   return step(null, { type: "START", runId: `fixture-${mode}`, config: configForChoice({ selection: mode === "route" ? "route" : "target60", routeLength: 6 }), prompts: PROMPTS });
 }
 
-function response(accuracy: number, words: readonly WordReading[], sessionId: string | null = null): ScoreResponse {
+export function response(accuracy: number, words: readonly WordReading[], sessionId: string | null = null): ScoreResponse {
   const scores = { accuracy, fluency: null, completeness: null, prosody: null, pronunciation: null };
   return {
     result: {
@@ -101,7 +101,7 @@ function response(accuracy: number, words: readonly WordReading[], sessionId: st
   };
 }
 
-function record(state: RunState): { state: RunState; key: AttemptKey } {
+export function record(state: RunState): { state: RunState; key: AttemptKey } {
   const capture = nextCapture(state);
   if (!capture) throw new Error("fixture has no capture available");
   const item = state.items[state.index];
@@ -111,7 +111,7 @@ function record(state: RunState): { state: RunState; key: AttemptKey } {
   return { state: next, key };
 }
 
-function send(state: RunState): { state: RunState; key: AttemptKey } {
+export function send(state: RunState): { state: RunState; key: AttemptKey } {
   const recorded = record(state);
   return { state: step(recorded.state, { type: "SCORE_SENT", key: recorded.key }), key: recorded.key };
 }
@@ -133,13 +133,13 @@ function scored(state: RunState, accuracy: number, sessionId: string | null = nu
   });
 }
 
-function loadReference(state: RunState): RunState {
+export function loadReference(state: RunState): RunState {
   const itemId = state.items[state.index].prompt.itemId;
   const clicked = step(state, { type: "REFERENCE_CLICKED", runId: state.runId, itemId });
   return step(clicked, { type: "REFERENCE_LOADED", runId: state.runId, itemId, ok: true });
 }
 
-function advance(state: RunState): RunState {
+export function advance(state: RunState): RunState {
   return step(state, { type: "ADVANCE", runId: state.runId, itemId: state.items[state.index].prompt.itemId });
 }
 
@@ -253,7 +253,7 @@ const savedRun = scored(rescueLoadedRun, 72);
 const rescueSaved = fixture(savedRun, verdictRing(savedRun, 72));
 
 // A Route mid-run with every non-judgment mark: 100, skipped, no match, result unknown, now on item 5.
-function noMatch(state: RunState): RunState {
+export function noMatch(state: RunState): RunState {
   const sent = send(state);
   const empty = response(0, []);
   return step(sent.state, {

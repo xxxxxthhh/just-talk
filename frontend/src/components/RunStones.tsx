@@ -26,6 +26,9 @@ const TIER_LABELS: Record<RunTier, string> = {
 // Pointy-top hexagons in a 28px box: the stone, and an outer ring for the current and rescued marks.
 const STONE = "14,4 22.66,9 22.66,19 14,24 5.34,19 5.34,9";
 const HALO = "14,1 25.26,7.5 25.26,20.5 14,27 2.74,20.5 2.74,7.5";
+// A confirmed heart loss: the outer ring breaks where a crack runs in from the top-right corner.
+const CRACK_OUTER = "M22.6 2.6 L20.4 5.2 L21.4 6.6 L19.6 8.4";
+const CRACK_INNER = "M19.6 8.4 L17.2 10.2 L18.2 12 L15.4 13.8 L16.2 15.6 L13.6 17.4";
 
 function stoneStatus(item: RunItem): "skipped" | "unjudged" | "pending" | null {
   if (item.resolution === "skipped") return "skipped";
@@ -36,6 +39,11 @@ function stoneStatus(item: RunItem): "skipped" | "unjudged" | "pending" | null {
 
 const STATUS_LABELS = { skipped: "skipped", unjudged: "not judged", pending: "result pending" } as const;
 
+// A cannot-confirm item may still have a judged first reading; then it is the outcome that is open.
+function statusLabel(item: RunItem, status: NonNullable<ReturnType<typeof stoneStatus>>, judged: boolean): string {
+  return item.verdict === "cannot-confirm" && judged ? "not confirmed" : STATUS_LABELS[status];
+}
+
 function stoneLabel(position: number, item: RunItem, score: RunItemScore | undefined, current: boolean): string {
   const status = stoneStatus(item);
   const parts: string[] = [];
@@ -45,7 +53,8 @@ function stoneLabel(position: number, item: RunItem, score: RunItemScore | undef
     parts.push(`first reading ${TIER_LABELS[score.tier]} ${formatRunScore(score.firstAccuracy)}`);
   }
   if (item.verdict === "saved") parts.push("rescued");
-  if (status) parts.push(STATUS_LABELS[status]);
+  if (item.verdict === "heart-lost") parts.push("one heart used");
+  if (status) parts.push(statusLabel(item, status, parts.length > 0));
   if (parts.length === 0) parts.push(current ? "now" : "not reached");
   return `${position}. ${item.prompt.text}: ${parts.join(", ")}`;
 }
@@ -71,7 +80,8 @@ export function RunStones({ items, scores, currentIndex, reducedMotion }: RunSto
       <ol className="run-stones-groups" aria-label="Run progress">
         {STAGES.map(({ stage, label }) => (
           <li key={stage} className="run-stones-group">
-            <ol aria-label={label}>
+            {/* Four stones per stage (Route 12) sit two by two; six-item runs keep one row. */}
+            <ol aria-label={label} className={items.filter((item) => item.prompt.stage === stage).length > 2 ? "is-grid" : undefined}>
               {items.map((item, index) => {
                 if (item.prompt.stage !== stage) return null;
                 const score = scores.find((candidate) => candidate.itemId === item.prompt.itemId);
@@ -82,7 +92,8 @@ export function RunStones({ items, scores, currentIndex, reducedMotion }: RunSto
                   "run-stone",
                   status ? `is-${status}` : "",
                   current ? "is-current" : "",
-                  item.verdict === "saved" ? "is-rescued" : ""
+                  item.verdict === "saved" ? "is-rescued" : "",
+                  item.verdict === "heart-lost" ? "is-heart-lost" : ""
                 ]
                   .filter(Boolean)
                   .join(" ");
@@ -103,6 +114,13 @@ export function RunStones({ items, scores, currentIndex, reducedMotion }: RunSto
                       />
                       {status === "unjudged" && !tier ? (
                         <polygon className="run-stone-stripes" points={STONE} fill={`url(#${stripesId})`} />
+                      ) : null}
+                      {item.verdict === "heart-lost" ? (
+                        <g className="run-stone-crack">
+                          <polygon className="run-stone-crack-ring" points={HALO} />
+                          <path className="run-stone-crack-outer" d={CRACK_OUTER} />
+                          <path className="run-stone-crack-inner" d={CRACK_INNER} />
+                        </g>
                       ) : null}
                     </svg>
                   </li>

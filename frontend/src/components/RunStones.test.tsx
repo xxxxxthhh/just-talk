@@ -3,9 +3,10 @@ import { describe, expect, it } from "vitest";
 
 import { tierForAccuracy } from "../game/scoring";
 import { RunStones } from "./RunStones";
-import { runV2Fixtures, type RunV2Fixture } from "./runV2Fixtures";
+import { runV2Fixtures } from "./runV2Fixtures";
+import { runV3Fixtures, type RunV3Fixture } from "./runV3Fixtures";
 
-function renderStones(fixture: RunV2Fixture, reducedMotion = false) {
+function renderStones(fixture: RunV3Fixture, reducedMotion = false) {
   return render(
     <RunStones
       items={fixture.run.items}
@@ -114,5 +115,108 @@ describe("RunStones", () => {
   it("reduced motion stops the current stone breathing", () => {
     const { container } = renderStones(runV2Fixtures.recording, true);
     expect(container.querySelector(".run-stones")).toHaveClass("is-reduced");
+  });
+
+  it("stones_render_labelled_2_2_2_and_4_4_4", () => {
+    const groupSizes = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll(".run-stones-group > ol")).map((group) => group.querySelectorAll(".run-stone").length);
+
+    const six = renderStones(runV3Fixtures.route6Ready);
+    expect(groupSizes(six.container)).toEqual([2, 2, 2]);
+    expect(six.container.querySelector(".is-grid")).toBeNull();
+    six.unmount();
+
+    const twelve = renderStones(runV3Fixtures.route12Ready);
+    expect(groupSizes(twelve.container)).toEqual([4, 4, 4]);
+    expect(twelve.container.querySelectorAll(".run-stones-group > ol.is-grid")).toHaveLength(3);
+    expect(Array.from(twelve.container.querySelectorAll(".run-stones-label")).map((label) => label.textContent)).toEqual([
+      "Warm-up",
+      "Focus",
+      "In context"
+    ]);
+    // Source order inside each named group; the first five carry their first-reading tiers.
+    for (const [name, texts] of [
+      ["Warm-up", ["thin", "thick", "thumb", "thing"]],
+      ["Focus", ["think", "thank", "three", "teeth"]],
+      [
+        "In context",
+        [
+          "I think we can walk home now.",
+          "The narrow path leads to our house.",
+          "We bought three tickets for the show.",
+          "Both cups of tea are still hot."
+        ]
+      ]
+    ] as const) {
+      const group = within(screen.getByRole("list", { name })).getAllByRole("listitem");
+      texts.forEach((text, index) => expect(group[index].getAttribute("aria-label")).toContain(`${text}:`));
+    }
+    expect(stones().map((stone) => stone.dataset.tier ?? null)).toEqual([
+      "great", "perfect", "good", "perfect", "great", null, null, null, null, null, null, null
+    ]);
+    expect(stones()[5]).toHaveAttribute("aria-current", "step");
+    expect(stones()[5]).toHaveAccessibleName("6. thank: now");
+    expect(stones()[11]).toHaveAccessibleName("12. Both cups of tea are still hot.: not reached");
+  });
+
+  it("heart_lost_mark_preserves_first_good_fill", () => {
+    const { unmount } = renderStones(runV3Fixtures.target85HeartLost);
+    const lost = stones()[2];
+    expect(lost).toHaveAttribute("data-tier", "good");
+    expect(lost).toHaveClass("is-heart-lost");
+    expect(lost).not.toHaveClass("is-rescued");
+    expect(lost.querySelector(".run-stone-crack")).not.toBeNull();
+    expect(lost).toHaveAccessibleName("3. think: first reading Good 80, one heart used");
+    expect(document.querySelectorAll(".run-stone-crack")).toHaveLength(1);
+    unmount();
+
+    // The same mark at Target 60, over a Re-listen fill.
+    renderStones(runV3Fixtures.target60HeartLost);
+    expect(stones()[0]).toHaveAttribute("data-tier", "relisten");
+    expect(stones()[0]).toHaveAccessibleName("1. thin: first reading Re-listen 46, one heart used");
+  });
+
+  it("only_saved_has_rescue_outline", () => {
+    const marks = (stone: HTMLElement) => ({
+      rescued: stone.classList.contains("is-rescued"),
+      crack: stone.querySelector(".run-stone-crack") !== null
+    });
+
+    const saved = renderStones(runV3Fixtures.target85Saved);
+    expect(marks(stones()[2])).toEqual({ rescued: true, crack: false });
+    expect(stones()[2]).toHaveAttribute("data-tier", "good");
+    expect(stones()[2]).toHaveAccessibleName("3. think: first reading Good 80, rescued");
+    saved.unmount();
+
+    // A first reading below target is not an outcome yet: no mark.
+    const below = renderStones(runV3Fixtures.target85Rescue);
+    expect(marks(stones()[2])).toEqual({ rescued: false, crack: false });
+    expect(stones()[2]).toHaveAccessibleName("3. think: first reading Good 80");
+    below.unmount();
+
+    // An exhausted pool confirms nothing: no heart mark, and the label says so.
+    const exhausted = renderStones(runV3Fixtures.target85UnjudgedEmpty);
+    expect(marks(stones()[0])).toEqual({ rescued: false, crack: false });
+    expect(stones()[0]).toHaveAttribute("data-tier", "good");
+    expect(stones()[0]).toHaveAccessibleName("1. thin: first reading Good 80, not confirmed");
+    // No valid reading at all: the unjudged stripes, still without a heart mark.
+    expect(marks(stones()[1])).toEqual({ rescued: false, crack: false });
+    expect(stones()[1].querySelector(".run-stone-stripes")).not.toBeNull();
+    expect(stones()[1]).toHaveAccessibleName("2. thick: not judged");
+    exhausted.unmount();
+  });
+
+  it("stone_labels_keep_raw_boundary_and_outcome", () => {
+    renderStones(runV3Fixtures.target85Boundary);
+    expect(stones()[0]).toHaveAttribute("data-tier", "good");
+    expect(stones()[0]).toHaveAccessibleName("1. thin: first reading Good 84.9, rescued");
+  });
+
+  it("stones_have_static_reduced_motion", () => {
+    const { container } = renderStones(runV3Fixtures.target85HeartLost, true);
+    expect(container.querySelector(".run-stones")).toHaveClass("is-reduced");
+    // Facts are in the first frame: fill, mark and label need no timer or effect.
+    expect(stones()[2]).toHaveClass("is-heart-lost");
+    expect(stones()[2]).toHaveAttribute("data-tier", "good");
   });
 });
