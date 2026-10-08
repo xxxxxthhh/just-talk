@@ -2,7 +2,7 @@
 
 **Revision:** r1 · 2026-10-08 · new rows drafted with AI assistance
 
-**Status:** Draft for owner review. This is not an approval record.
+**Status:** All 60 rows of revision r1 approved by the owner on 2026-10-08 (see Owner decisions).
 
 This table proposes the v3 starter pack:
 
@@ -113,6 +113,6 @@ Fill this in during review. Record each decision by ID against revision r1. Appr
 
 | ID(s) | Decision (approved / reworded / rejected) | Final wording or correction | Owner and date |
 | --- | --- | --- | --- |
-| | | | |
+| All 60 rows (r1) | Approved | Unchanged from r1 | Owner, 2026-10-08 (approved in chat with the lead: "通过") |
 
 Runtime integration waits until all 60 rows are approved. Rows that are reworded or rejected go back for review before then. A partial approval is not reported as "60 approved".
