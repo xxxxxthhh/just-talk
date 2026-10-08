@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { WordBankPanel, type WordBankTab } from "../../components/WordBankPanel";
+import { radioKeys } from "../../components/radioKeys";
 import { maxCountedScores, wordsConfig } from "../../game/runConfig";
 import type { RunLength } from "../../types";
 import { usePracticeSession } from "../../usePracticeSession";
@@ -78,6 +79,9 @@ function WordsRunCard({ session, wordsRun }: { session: PracticeSessionState; wo
   // The same busy facts as the Practice entry: an ordinary take, its scoring, or a drill.
   const busy = session.recorderState === "recording" || session.isScoring || Boolean(session.insights.generatingPhoneme);
   const canStart = length === 12 ? availability.canStart12 : availability.canStart6;
+  // One tab stop: the checked length, or the first available one when that is unavailable.
+  const available = LENGTHS.filter((option) => (option === 12 ? availability.canStart12 : availability.canStart6));
+  const tabStop = available.includes(length) ? length : available[0];
   const shortage = !availability.canStart6
     ? "Add more active single words to start a 6-word run."
     : !availability.canStart12
@@ -91,7 +95,12 @@ function WordsRunCard({ session, wordsRun }: { session: PracticeSessionState; wo
         <p>Due words first · no hearts</p>
       </div>
       <div className="m-words-run-row">
-        <div className="m-words-run-lengths" role="radiogroup" aria-label="Words run length">
+        <div
+          className="m-words-run-lengths"
+          role="radiogroup"
+          aria-label="Words run length"
+          onKeyDown={starting ? undefined : radioKeys(available, length, wordsRun.onLengthChange)}
+        >
           {LENGTHS.map((option) => {
             const available = option === 12 ? availability.canStart12 : availability.canStart6;
             return (
@@ -101,6 +110,8 @@ function WordsRunCard({ session, wordsRun }: { session: PracticeSessionState; wo
                 role="radio"
                 aria-checked={option === length}
                 aria-label={`${option} words`}
+                tabIndex={option === tabStop ? 0 : -1}
+                data-radio-value={option}
                 className="m-words-run-length"
                 disabled={starting || !available}
                 onClick={() => wordsRun.onLengthChange(option)}

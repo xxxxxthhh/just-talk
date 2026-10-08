@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useState } from "react";
 
 import { fetchPhonemeStats } from "../api";
 import "../game/game.css";
@@ -10,6 +10,7 @@ import { RUN_RULES_VERSION } from "../game/scoring";
 import { STARTER_PACK } from "../game/starterPack";
 import { PUBLIC_MODE } from "../publicMode";
 import type { PhonemeStat, RunChoice, RunLength, RunSelection } from "../types";
+import { radioKeys } from "./radioKeys";
 
 const SELECTIONS: readonly { selection: RunSelection; name: string; label: string; target: 60 | 85 | null }[] = [
   { selection: "route", name: "Route", label: "Route", target: null },
@@ -17,19 +18,6 @@ const SELECTIONS: readonly { selection: RunSelection; name: string; label: strin
   { selection: "target85", name: "Target 85", label: "Challenge, target 85", target: 85 }
 ];
 const LENGTHS: readonly RunLength[] = [6, 12];
-
-// Arrow keys move the checked radio within its group, wrapping, as native radios do.
-function radioKeys<T>(options: readonly T[], current: T, choose: (value: T) => void) {
-  return (event: KeyboardEvent<HTMLElement>) => {
-    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
-    if (!step) return;
-    event.preventDefault();
-    const index = (options.indexOf(current) + step + options.length) % options.length;
-    choose(options[index]);
-    const radios = event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]');
-    radios[index]?.focus();
-  };
-}
 
 type RunHeroProps = {
   // False while an ordinary take is recording or scoring, or a drill is generating.
@@ -139,6 +127,7 @@ export function RunHero({
               aria-checked={checked}
               aria-label={option.label}
               tabIndex={checked ? 0 : -1}
+              data-radio-value={option.selection}
               className="run-hero-mode"
               disabled={starting}
               onClick={() => choose(option.selection)}
@@ -174,6 +163,7 @@ export function RunHero({
                   aria-checked={checked}
                   aria-label={`${length} items`}
                   tabIndex={checked ? 0 : -1}
+                  data-radio-value={length}
                   className="run-hero-chip"
                   disabled={starting}
                   onClick={() => chooseLength(length)}
