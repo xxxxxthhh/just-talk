@@ -112,9 +112,13 @@ function feedbackIdFor(run: RunState): string | null {
   return null;
 }
 
+// The item-level phases a rejected take returns to; the summary is a new event of its own.
+const REJECTION_PHASES: ReadonlySet<RunState["phase"]> = new Set(["ready", "feedback", "rescue"]);
+
 // A rejected take is its own event, wherever the reducer returns to: ready, feedback or rescue.
 function rejectionIdFor(run: RunState): string | null {
-  const rejection = run.paused ? null : run.items[run.index]?.lastRejection;
+  if (run.paused || !REJECTION_PHASES.has(run.phase)) return null;
+  const rejection = run.items[run.index]?.lastRejection;
   return rejection ? `rejection:${rejection.attemptId}` : null;
 }
 
@@ -773,7 +777,7 @@ function announcement(
   if (!item) return "";
   if (run.paused) return "Paused.";
   // The latest rejected take outranks the feedback it returned to.
-  if (item.lastRejection && run.phase !== "recording" && run.phase !== "scoring") {
+  if (item.lastRejection && REJECTION_PHASES.has(run.phase)) {
     return rejectionFresh ? rejectionText(item.lastRejection) : "";
   }
   switch (run.phase) {

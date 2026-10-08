@@ -298,6 +298,48 @@ describe("PracticeRun", () => {
     expect(screen.getByRole("img", { name: "1 of 2 hearts left" })).toBeInTheDocument();
   });
 
+  it("a rejection left on the last item never hides the summary announcement", () => {
+    function rejectNow(state: RunState, kind: "too-short" | "no-speech" | "server") {
+      const capture = nextCapture(state);
+      if (!capture) throw new Error("no capture available");
+      const key = { runId: state.runId, itemId: state.items[state.index].prompt.itemId, attemptId: `end-${++counter}` };
+      const begun = step(state, { type: "BEGIN_CAPTURE", key, ...capture });
+      if (kind !== "server") return step(begun, { type: "LOCAL_REJECT", key, reason: kind });
+      const sent = step(step(begun, { type: "BLOB_READY", key, blob: new Blob(["audio"]) }), { type: "SCORE_SENT", key });
+      return step(sent, { type: "SCORE_FAILED", key, failure: { kind: "rejected", message: "Recording too short." } });
+    }
+
+    for (const kind of ["too-short", "no-speech", "server"] as const) {
+      for (const ending of ["final skip", "quit"] as const) {
+        // The controller's consumed set is live and never re-renders on its own.
+        const consumed = new Set<string>();
+        const live = { consumedFeedbackIds: consumed, onFeedbackConsumed: (id: string) => void consumed.add(id) };
+        let run = ending === "final skip" ? start("route") : start("challenge");
+        if (ending === "final skip") {
+          for (let i = 0; i < 5; i += 1) run = step(run, { type: "SKIP", runId: run.runId, itemId: run.items[run.index].prompt.itemId });
+        }
+        run = rejectNow(run, kind);
+        const view = renderRun(run, live);
+        expect(liveRegion(view.container), `${kind}/${ending}`).toMatch(/Too short|Didn't catch anything|didn't count/);
+
+        const ended =
+          ending === "final skip"
+            ? step(run, { type: "SKIP", runId: run.runId, itemId: run.items[run.index].prompt.itemId })
+            : step(run, { type: "QUIT", runId: run.runId });
+        expect(ended.phase).toBe("summary");
+        expect(ended.items[ended.index].lastRejection).not.toBeNull();
+        view.rerender(<PracticeRun {...practiceRunProps(ended, live)} />);
+        const expected = ending === "final skip" ? /^Route complete\. 0 points\. Not rated/ : /^Challenge incomplete\. 0 points\. Not rated/;
+        expect(liveRegion(view.container), `${kind}/${ending}`).toMatch(expected);
+        // Its own event: the same summary does not change on a later render.
+        const text = liveRegion(view.container);
+        view.rerender(<PracticeRun {...practiceRunProps({ ...ended }, live)} />);
+        expect(liveRegion(view.container)).toBe(text);
+        view.unmount();
+      }
+    }
+  });
+
   it("rescue keeps the current word or sentence on screen before and after the reference loads", () => {
     const prompt = (container: HTMLElement) => container.querySelector(".run-middle .run-prompt-v2");
     const word = renderRun(runV2Fixtures.rescue.run);
