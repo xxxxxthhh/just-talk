@@ -523,6 +523,8 @@ describe("MobileApp game run", () => {
   async function generateDrillFromReview(user: ReturnType<typeof userEvent.setup>) {
     await startRun(user);
     await quitRun(user);
+    // A finished or quit Route shows its summary first.
+    await user.click(await screen.findByRole("button", { name: "See review" }));
     await user.click(await screen.findByRole("button", { name: "Generate a drill for /θ/" }));
   }
 
@@ -606,6 +608,8 @@ describe("MobileApp game run", () => {
     }
     await waitFor(() => expect(screen.getByRole("button", { name: "Finish" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Finish" }));
+    expect(await screen.findByRole("heading", { name: "Route complete" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "See review" }));
     expect(await screen.findByRole("region", { name: "Run review" })).toBeInTheDocument();
     expect(screen.getByText(/^Route complete · chain \d\/6$/)).toBeInTheDocument();
     expect(screen.getByRole("list", { name: "All readings" }).children).toHaveLength(6);
