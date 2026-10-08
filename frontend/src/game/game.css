@@ -1371,6 +1371,11 @@
   color: var(--g-on-accent);
 }
 
+.run-mini-button:disabled,
+.run-take:disabled {
+  opacity: 0.45;
+}
+
 .run-mini-button.is-playing {
   border-color: var(--g-accent);
 }

@@ -267,7 +267,7 @@ export function RunReview({
   onGenerateDrill,
   onExit
 }: RunReviewProps) {
-  const [player, playerElement] = useYouPlayer(coach, onStopReference);
+  const [player, playerElement] = useYouPlayer(coach, onStopReference, run.paused);
   const [showUnreached, setShowUnreached] = useState(false);
   const shared: Shared = { player, coach, attemptAudioUrls, onPlayReference, onStopReference };
 

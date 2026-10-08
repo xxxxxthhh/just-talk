@@ -214,6 +214,49 @@ describe("RunReview", () => {
     expect(revoke).not.toHaveBeenCalled();
   });
 
+  it("pausing a mounted review stops and blocks playback, and resume never replays", async () => {
+    const room = score(start("route"), response(90, [word("room", 90)]));
+    const ended = act(room.state, "QUIT");
+    const urls = { [room.key.attemptId]: "blob:room" };
+    const stopReference = vi.fn();
+    // The controller hands over a new stop function on every render.
+    const props = () => ({ attemptAudioUrls: urls, onStopReference: () => stopReference() });
+    const view = renderReview(ended, props());
+    const audio = view.container.querySelector("audio");
+
+    fireEvent.click(screen.getByRole("button", { name: "Play your take of room" }));
+    expect(audio).toHaveAttribute("src", "blob:room");
+    const paused = step(ended, { type: "PAUSE", runId: ended.runId });
+    const pauses = pause.mock.calls.length;
+    view.rerender(<RunReview {...view.props} {...props()} run={paused} />);
+    expect(pause.mock.calls.length).toBeGreaterThan(pauses);
+    expect(audio).not.toHaveAttribute("src");
+    expect(stopReference).toHaveBeenCalled();
+    const you = screen.getByRole("button", { name: "Play your take of room" });
+    expect(you).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Play coach reference of room" })).toBeDisabled();
+    fireEvent.click(you);
+    expect(play).toHaveBeenCalledTimes(1);
+
+    // A play() still pending when the run pauses can't bring the take back.
+    const resumed = step(paused, { type: "RESUME", runId: paused.runId });
+    view.rerender(<RunReview {...view.props} {...props()} run={resumed} />);
+    let settle: () => void = () => {};
+    play.mockImplementationOnce(() => new Promise<void>((resolve) => (settle = resolve)));
+    fireEvent.click(screen.getByRole("button", { name: "Play your take of room" }));
+    view.rerender(<RunReview {...view.props} {...props()} run={paused} />);
+    settle();
+    await Promise.resolve();
+    expect(screen.getByRole("button", { name: "Play your take of room" })).toBeDisabled();
+    expect(audio).not.toHaveAttribute("src");
+
+    // Resuming leaves both voices silent until asked.
+    view.rerender(<RunReview {...view.props} {...props()} run={resumed} />);
+    expect(screen.getByRole("button", { name: "Play your take of room" })).toBeEnabled();
+    expect(play).toHaveBeenCalledTimes(2);
+    expect(audio).not.toHaveAttribute("src");
+  });
+
   it("unreached_collapses_and_missing_audio_has_no_player", () => {
     let run = start("route");
     run = advance(score(run, response(90, [word("room", 90)])).state);

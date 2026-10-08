@@ -13,6 +13,8 @@ type YouState = { attemptId: string | null; status: "idle" | "playing" | "error"
 export type YouPlayer = Readonly<{
   attemptId: string | null;
   status: YouState["status"];
+  // While the run is paused nothing plays; buttons stay visible but disabled.
+  paused: boolean;
   play: (attemptId: string, url: string) => void;
   stop: () => void;
 }>;
@@ -20,9 +22,14 @@ export type YouPlayer = Readonly<{
 // One audio element for every recording in the review. Starting it stops the Coach first; a
 // play() that settles after a newer request (or a stop) never changes what is shown; and a Coach
 // load that lands while You plays is stopped rather than mixed in.
-export function useYouPlayer(coach: CoachPlayback, stopCoach: () => void): [YouPlayer, ReactElement] {
+export function useYouPlayer(
+  coach: CoachPlayback,
+  stopCoach: () => void,
+  paused: boolean
+): [YouPlayer, ReactElement] {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const request = useRef(0);
+  const pausedRef = useRef(paused);
   const [state, setState] = useState<YouState>({ attemptId: null, status: "idle" });
 
   const stop = useCallback(() => {
@@ -37,6 +44,7 @@ export function useYouPlayer(coach: CoachPlayback, stopCoach: () => void): [YouP
 
   const play = useCallback(
     (attemptId: string, url: string) => {
+      if (pausedRef.current) return;
       stopCoach();
       const audio = audioRef.current;
       if (!audio) return;
@@ -55,6 +63,19 @@ export function useYouPlayer(coach: CoachPlayback, stopCoach: () => void): [YouP
     },
     [stopCoach]
   );
+
+  // Pausing the run silences both voices and invalidates a play() still pending; resuming never
+  // replays on its own.
+  const stopCoachRef = useRef(stopCoach);
+  useEffect(() => {
+    stopCoachRef.current = stopCoach;
+  }, [stopCoach]);
+  useEffect(() => {
+    pausedRef.current = paused;
+    if (!paused) return;
+    stop();
+    stopCoachRef.current();
+  }, [paused, stop]);
 
   const youPlaying = state.status === "playing";
   useEffect(() => {
@@ -85,7 +106,7 @@ export function useYouPlayer(coach: CoachPlayback, stopCoach: () => void): [YouP
       }}
     />
   );
-  return [{ attemptId: current, status: state.status, play, stop }, element];
+  return [{ attemptId: current, status: state.status, paused, play, stop }, element];
 }
 
 export function coachIsActive(coach: CoachPlayback, prompt: RunPrompt): boolean {
@@ -129,6 +150,7 @@ export function RunMiniPlayer({
   };
 
   const toggleCoach = () => {
+    if (player.paused) return;
     if (coachActive) {
       onStopCoach();
       return;
@@ -153,6 +175,7 @@ export function RunMiniPlayer({
               type="button"
               className="run-take"
               aria-pressed={take.attemptId === selected?.attemptId}
+              disabled={player.paused}
               onClick={() => chooseTake(take.attemptId)}
             >
               {take.label}
@@ -165,6 +188,7 @@ export function RunMiniPlayer({
           <button
             type="button"
             className={`run-mini-button is-you${youPlaying ? " is-playing" : ""}`}
+            disabled={player.paused}
             aria-label={`${youPlaying ? "Stop" : "Play"} your take of ${subject}${playable.length > 1 ? `, ${selected.label}` : ""}`}
             onClick={toggleYou}
           >
@@ -180,6 +204,7 @@ export function RunMiniPlayer({
         <button
           type="button"
           className={`run-mini-button is-coach${coachActive ? " is-playing" : ""}`}
+          disabled={player.paused}
           aria-label={`${coachActive ? "Stop" : "Play"} coach reference of ${coachPrompt.text}`}
           onClick={toggleCoach}
         >

@@ -19,7 +19,7 @@ type HarnessProps = { coach: CoachPlayback; onPlayCoach: (prompt: RunPrompt) => 
 
 // Two players over one shared recording element, as the review uses them.
 function Harness({ coach, onPlayCoach, onStopCoach }: HarnessProps) {
-  const [player, element] = useYouPlayer(coach, onStopCoach);
+  const [player, element] = useYouPlayer(coach, onStopCoach, false);
   return (
     <>
       <RunMiniPlayer
