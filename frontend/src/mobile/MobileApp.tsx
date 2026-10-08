@@ -51,11 +51,18 @@ export default function MobileApp() {
   // My words entry: its length, pending start and error live here, above Words and Practice, so they
   // survive tab changes. An accepted start opens Practice; Cancel abandons it and any late result.
   const [wordsLength, setWordsLength] = useState<RunLength>(6);
-  const [wordsError, setWordsError] = useState<string | null>(null);
+  // The most recent run accepted from anywhere. A Words-entry failure belongs to the moment it
+  // happened: once a newer run has started, the old failure no longer describes the bank.
+  const runId = run.state?.runId ?? null;
+  const [latestRun, setLatestRun] = useState<string | null>(null);
+  if (runId !== null && runId !== latestRun) setLatestRun(runId);
+  const [wordsFailure, setWordsFailure] = useState<{ message: string; afterRun: string | null } | null>(null);
+  const wordsError = wordsFailure !== null && wordsFailure.afterRun === latestRun ? wordsFailure.message : null;
   const wordsAttempt = useRef(0);
   function startWords(length: RunLength) {
     const id = ++wordsAttempt.current;
-    setWordsError(null);
+    const afterRun = latestRun;
+    setWordsFailure(null);
     // Called within the tap, so the controller unlocks run audio inside the gesture.
     run.startWords(length).then(
       () => {
@@ -63,7 +70,10 @@ export default function MobileApp() {
       },
       (error: unknown) => {
         if (wordsAttempt.current !== id) return;
-        setWordsError(error instanceof Error && error.message ? error.message : "Couldn't start the run. Try again.");
+        setWordsFailure({
+          message: error instanceof Error && error.message ? error.message : "Couldn't start the run. Try again.",
+          afterRun
+        });
       }
     );
   }

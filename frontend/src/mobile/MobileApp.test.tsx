@@ -861,6 +861,34 @@ describe("MobileApp game run", () => {
     expect(screen.getByText(`1 / ${length} · Word bank`, { selector: ".run-stage-label" })).toBeInTheDocument();
   });
 
+  test("old_words_entry_error_does_not_survive_a_newer_run", async () => {
+    const user = userEvent.setup();
+    let fresh = 6;
+    installRunApi({ words: () => bankRows(BANK.slice(0, fresh)) });
+    render(<MobileApp />);
+    let card = await openWords(user);
+    await within(card).findByText("6 active words");
+    fresh = 3;
+    await user.click(within(card).getByRole("button", { name: "Start 6 words" }));
+    expect(await within(card).findByRole("alert")).toBeInTheDocument();
+
+    // A plain tab round trip keeps the error...
+    await user.click(screen.getByRole("tab", { name: "Practice" }));
+    card = await openWords(user);
+    expect(within(card).getByRole("alert")).toBeInTheDocument();
+
+    // ...but a newer run, started and finished elsewhere, retires it.
+    fresh = 12;
+    await user.click(screen.getByRole("tab", { name: "Practice" }));
+    await startRun(user);
+    await quitRun(user);
+    await user.click(await screen.findByRole("button", { name: "Done" }));
+    card = await openWords(user);
+    await within(card).findByText("12 active words");
+    expect(within(card).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Start 6 words" })).toBeEnabled();
+  });
+
   test("production_has_no_interim_fixture_wiring", () => {
     const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
     const screenSource = read("src/mobile/screens/PracticeScreen.tsx");
