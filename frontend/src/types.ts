@@ -266,12 +266,12 @@ export type Attempt = {
 
 export type RunPrompt = {
   itemId: string;
-  stage: "warmup" | "focus" | "context";
+  stage: "warmup" | "focus" | "context" | "words";
   kind: "word" | "sentence";
   text: string;
   targetPhoneme: string | null;
   targetWord: string | null;
-  source: "due-word" | "starter" | "previous-run";
+  source: "due-word" | "starter" | "previous-run" | "word-bank" | "run-review";
 };
 
 export type RunItem = {
@@ -357,4 +357,29 @@ export type RevisitSuggestion = Readonly<{
 export type RunBestReceipt = Readonly<{
   runId: string; previousPoints: number | null;
   outcome: "first-record" | "new-best" | "none";
+}>;
+
+// Game Mode v3 contracts. RunMode stays the business vocabulary; RunConfig is frozen at Start.
+export type RunLength = 6 | 12;
+export type RunFocusPhoneme = "θ" | "ð" | "ɹ" | "l" | "v";
+export type RunSelection = "route" | "target60" | "target85";
+export type StarterRunConfig = Readonly<
+  | { source: "starter"; mode: "route"; length: 6; target: null; maxExtra: 2 }
+  | { source: "starter"; mode: "route"; length: 12; target: null; maxExtra: 4 }
+  | { source: "starter"; mode: "challenge"; length: 6; target: 60; maxExtra: 2 }
+  | { source: "starter"; mode: "challenge"; length: 6; target: 85; maxExtra: 4 }
+>;
+export type WordsRunConfig = Readonly<
+  | { source: "words"; mode: "route"; length: 6; target: null; maxExtra: 2 }
+  | { source: "words"; mode: "route"; length: 12; target: null; maxExtra: 4 }
+>;
+export type RunConfig = StarterRunConfig | WordsRunConfig;
+// The persisted entry choice (starter only); configForChoice turns it into a StarterRunConfig.
+export type RunChoice = Readonly<{
+  selection: RunSelection; routeLength: RunLength;
+}>;
+// Replaces START in RunAction together with the reducer (A2); no separate mode/target overrides.
+export type RunStartAction = Readonly<{
+  type: "START"; runId: string; config: RunConfig;
+  prompts: readonly Readonly<RunPrompt>[];
 }>;
