@@ -123,8 +123,9 @@ describe("run model", () => {
     }
     expect(state.items.every((item) => item.resolution === "resolved")).toBe(true);
     expect(state.endReason).toBe("completed");
-    expect(state.phase).toBe("review");
+    expect(state.phase).toBe("summary");
     expect(state.challengeOutcome).toBeNull();
+    expect(reduce(state, { type: "OPEN_REVIEW", runId: RUN }).phase).toBe("review");
     expect(state.budgetUsed).toBe(6);
     expectBudgetInvariant(state);
   });
@@ -414,7 +415,7 @@ describe("run model", () => {
     const [sending, sentKey] = send(state);
     const quit = reduce(sending, { type: "QUIT", runId: RUN });
     expect(quit.endReason).toBe("quit");
-    expect(quit.phase).toBe("review");
+    expect(quit.phase).toBe("summary");
     expect(quit.items[0].resolution).toBe("pending");
     expect(reduce(quit, { type: "SCORE_RECEIVED", key: sentKey, response: scored(90) })).toBe(quit);
     expect(runReducer(quit, { type: "EXIT", runId: RUN })).toBeNull();

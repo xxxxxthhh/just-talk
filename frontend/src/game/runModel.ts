@@ -122,7 +122,8 @@ function markIncomplete(state: RunState): RunState {
 
 function endRun(state: RunState, endReason: NonNullable<RunState["endReason"]>): RunState {
   let next: RunState = { ...state, endReason, activeAttemptId: null };
-  if (next.mode === "route") return { ...next, phase: "review" };
+  // Every run ends on its summary, rated or not; review opens from there.
+  if (next.mode === "route") return { ...next, phase: "summary" };
   if (next.items.some((item) => item.resolution !== "resolved")) next = markIncomplete(next);
   const challengeOutcome = next.hearts === 0 ? "failed" : next.challengeIncomplete ? "incomplete" : "cleared";
   return { ...next, phase: "summary", challengeOutcome };

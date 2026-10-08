@@ -262,6 +262,8 @@ describe("usePracticeRun", () => {
     expect(current(h).attempts[0].sync).toBe("manual");
     expect(current(h).attempts[0].candidates).toEqual([{ word: "river", status: "save-manually" }]);
     act(() => h.run().finish());
+    expect(h.run().state?.phase).toBe("summary");
+    act(() => h.run().openReview());
     expect(h.run().state?.phase).toBe("review");
   });
 
@@ -440,7 +442,7 @@ describe("usePracticeRun", () => {
       await attempt(h, scored(90));
       act(() => h.run().finish());
     }
-    expect(h.run().state?.phase).toBe("review");
+    expect(h.run().state?.phase).toBe("summary");
     const stats = deferred<never[]>();
     vi.mocked(fetchPhonemeStats).mockReturnValueOnce(stats.promise);
     let again!: Promise<void>;
