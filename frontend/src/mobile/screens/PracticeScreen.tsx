@@ -238,6 +238,10 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             onStop={run.stop}
             onCancelTake={run.cancelTake}
             onRecordNext={run.recordNext}
+            // Interim until A4's hearFirst/hearNextFirst (B5): play the current reference, and
+            // advance to the next Ready, where Hear it first is offered.
+            onHearFirst={() => run.playReference()}
+            onHearNextFirst={run.finish}
             onFinish={run.finish}
             onSkip={run.skip}
             onPlayReference={() => run.playReference()}

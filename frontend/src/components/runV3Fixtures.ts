@@ -1,6 +1,5 @@
 // Typed UI fixtures for Game Mode v3 screens: the six frozen configurations from the real
-// constructors, and run states from the real reducer. Points and ratings wait for A3's planned-N
-// scoring; until then only per-item facts (tiers, first readings, verdicts) are meaningful here.
+// constructors, run states from the real reducer, and every score from the real selectors.
 import { configForChoice, wordsConfig } from "../game/runConfig";
 import { selectRunScore } from "../game/scoring";
 import type { RunConfig, RunPrompt, RunScoreView, RunState, StarterRunConfig, WordsRunConfig } from "../types";
@@ -66,6 +65,17 @@ function fixture(run: RunState): RunV3Fixture {
 export const ROUTE_12_READINGS = [92, 100, 72, 95, 86, 88, 90, 97, 85, 64, 93, 96] as const;
 const route12Ready = fixture(readings(start(STARTER_ROUTE_12), ROUTE_12_READINGS.slice(0, 5)));
 const route12Complete = fixture(readings(start(STARTER_ROUTE_12), ROUTE_12_READINGS));
+// Item 6 ("thank") reads 88: Great, ×3 in a row, with "three" next.
+const route12Feedback = fixture(scored(route12Ready.run, ROUTE_12_READINGS[5]));
+// The last item's feedback offers Finish rather than a next item.
+const route12LastFeedback = fixture(scored(readings(start(STARTER_ROUTE_12), ROUTE_12_READINGS.slice(0, 11)), 96));
+// Eleven 100s, then 84.9: 972 points but a broken chain, so A rather than S.
+const route12BrokenChain = fixture(readings(start(STARTER_ROUTE_12), [...Array<number>(11).fill(100), 84.9]));
+// Six 95s, then quit: the planned twelve still divide the score (450, not rated).
+const partialRun = readings(start(STARTER_ROUTE_12), Array<number>(6).fill(95));
+const route12Partial = fixture(
+  step(step(partialRun, { type: "PAUSE", runId: partialRun.runId }), { type: "QUIT", runId: partialRun.runId })
+);
 
 // Target 85: 100, 98, then "thank" reads 80 — Good, but below this run's target.
 const target85RescueRun = scored(readings(start(TARGET_85), [100, 98]), 80);
@@ -86,6 +96,20 @@ const target85Exhausted = fixture(exhaustedRun);
 // With the pool empty, the next item's first reading finds no match: no valid reading exists.
 const target85UnjudgedEmpty = fixture(noMatch(advance(exhaustedRun)));
 
+// The reference for a rescue cannot load: not confirmed, and no low second reading is implied.
+const referenceFailedRun = scored(start(TARGET_85), 80);
+const target85ReferenceFailed = fixture(
+  step(step(referenceFailedRun, { type: "REFERENCE_CLICKED", runId: referenceFailedRun.runId, itemId: "warmup-1" }), {
+    type: "REFERENCE_LOADED",
+    runId: referenceFailedRun.runId,
+    itemId: "warmup-1",
+    ok: false
+  })
+);
+
+// A Target 85 run whose third item passes at 96: Challenge keeps Record next / Hear it again.
+const target85Passed = fixture(scored(readings(start(TARGET_85), [100, 98]), 96));
+
 // Target 60 keeps v2's rule at its own target: 46 → 52 uses a heart.
 const target60HeartLost = fixture(scored(loadReference(scored(start(TARGET_60), 46)), 52));
 
@@ -95,11 +119,17 @@ export const runV3Fixtures = {
   route6Ready,
   route12Ready,
   route12Complete,
+  route12Feedback,
+  route12LastFeedback,
+  route12BrokenChain,
+  route12Partial,
   target85Rescue,
   target85HeartLost,
   target85Saved,
   target85Boundary,
   target85Exhausted,
   target85UnjudgedEmpty,
+  target85ReferenceFailed,
+  target85Passed,
   target60HeartLost
 } satisfies Record<string, RunV3Fixture>;

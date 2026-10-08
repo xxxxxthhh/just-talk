@@ -715,6 +715,56 @@
   font-weight: 700;
 }
 
+.run-readings[data-tier] {
+  color: var(--g-tier-hi);
+}
+
+/* Route Ready: an optional listen before the first reading. It never blocks Record. */
+.run-hear-first {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--g-line-strong);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--g-text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.run-hear-first:disabled {
+  color: var(--g-text-muted);
+}
+
+.run-hear-first svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.run-status-hint {
+  margin: 0;
+  color: var(--g-text-faint);
+  font-size: 12px;
+}
+
+/* The challenge status beside an unchanged tier: below this run's target, not "wrong". */
+.run-target-line {
+  max-width: 320px;
+  margin: 0;
+  color: var(--g-text);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
 .run-rescue-steps {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

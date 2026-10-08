@@ -347,6 +347,8 @@ export function practiceRunProps(
     onStop: noop,
     onCancelTake: noop,
     onRecordNext: noop,
+    onHearFirst: noop,
+    onHearNextFirst: noop,
     onFinish: noop,
     onSkip: noop,
     onPlayReference: noop,

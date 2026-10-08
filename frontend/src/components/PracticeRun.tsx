@@ -64,6 +64,10 @@ export type PracticeRunProps = {
   onCancelTake?: () => void;
   // Advances to the next item and starts recording it in one tap.
   onRecordNext: () => void;
+  // Route only: plays the current item's reference from Ready; never blocks Record.
+  onHearFirst: () => void;
+  // Route only: advances to the next item and previews it, staying Ready with Record usable.
+  onHearNextFirst: () => void;
   onFinish: () => void;
   onSkip: () => void;
   onPlayReference: () => void;
@@ -188,7 +192,8 @@ export function PracticeRun(props: PracticeRunProps) {
   if (run.phase === "review" || !item) return null;
 
   const focusSound = run.items.find((candidate) => candidate.prompt.stage === "focus")?.prompt.targetPhoneme ?? null;
-  const title = `${run.mode === "challenge" ? "Challenge" : "Route"}${focusSound ? ` · /${focusSound}/` : ""}`;
+  const shape = run.config.target === null ? `Route · ${run.config.length} items` : `Challenge · Target ${run.config.target}`;
+  const title = `${shape}${focusSound ? ` · /${focusSound}/` : ""}`;
   const summary = run.phase === "summary";
 
   return (
@@ -374,6 +379,11 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean; autoSto
     );
     status = (
       <>
+        {/* The tier stays on the ring; the run's own target is a separate fact. */}
+        <p className="run-target-line">
+          Below this run's target {run.config.target} ·<br />
+          listen, then read again
+        </p>
         {hint ? <p className="run-evidence-hint">{hint}</p> : null}
         <ol className="run-rescue-steps">
           <li className={loaded ? "is-done" : "is-active"}>
@@ -418,7 +428,7 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean; autoSto
             ) : null}
           </p>
         ) : null}
-        <FeedbackLine item={item} shown={shown} firstLow={firstLowAccuracy} />
+        <FeedbackLine item={item} shown={shown} firstLow={firstLowAccuracy} target={run.config.target} />
         {hint ? <p className="run-evidence-hint">{hint}</p> : null}
         {syncing ? <p className="run-status-sub">Checking words from that sentence…</p> : null}
       </>
@@ -428,14 +438,42 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean; autoSto
       secondary = { label: next ? "Move on" : "Finish", onClick: props.onFinish, disabled: !canAdvance(run) };
     } else if (next) {
       primary = { label: "Record next", onClick: props.onRecordNext, disabled: !canRecordNext(run) };
-      secondary = { label: "Hear it again", onClick: props.onPlayReference };
+      // Route previews the next item instead of replaying this one; Challenge keeps its fast path.
+      secondary =
+        run.mode === "route"
+          ? { label: "Hear next first", onClick: props.onHearNextFirst, disabled: !canAdvance(run) }
+          : { label: "Hear it again", onClick: props.onPlayReference };
     } else {
       primary = { label: "Finish", onClick: props.onFinish, disabled: !canAdvance(run) };
       secondary = { label: "Hear it again", onClick: props.onPlayReference };
     }
   } else {
     ring = ringProps(props, { phase: "ready" });
-    status = <Rejection item={item} onUseManualStop={props.onUseManualStop} />;
+    status = (
+      <>
+        {run.mode === "route" ? (
+          <>
+            <button
+              type="button"
+              className="run-hear-first"
+              disabled={item.referenceLoad === "pending"}
+              onClick={props.onHearFirst}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M11 5 6 9H3v6h3l5 4V5z" />
+                <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+                <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+              </svg>
+              {item.referenceLoad === "pending" ? "Loading…" : "Hear it first"}
+            </button>
+            <p className="run-status-hint">
+              {item.referenceLoad === "failed" ? "Couldn't load it" : "Optional"} · Record works any time
+            </p>
+          </>
+        ) : null}
+        <Rejection item={item} onUseManualStop={props.onUseManualStop} />
+      </>
+    );
     primary = { label: "Record", onClick: props.onRecord, disabled: !recordable };
     secondary = { label: "Skip", onClick: props.onSkip };
   }
@@ -611,7 +649,17 @@ function Rejection({ item, onUseManualStop }: { item: RunItem; onUseManualStop: 
   return <p className="run-status-sub">{rejectionText(rejection)}</p>;
 }
 
-function FeedbackLine({ item, shown, firstLow }: { item: RunItem; shown: number | null; firstLow: number | null }) {
+function FeedbackLine({
+  item,
+  shown,
+  firstLow,
+  target
+}: {
+  item: RunItem;
+  shown: number | null;
+  firstLow: number | null;
+  target: number | null;
+}) {
   switch (item.verdict) {
     case "passed":
     case "practiced": {
@@ -627,16 +675,18 @@ function FeedbackLine({ item, shown, firstLow }: { item: RunItem; shown: number 
     case "heart-lost":
       return (
         <>
-          <p className="run-readings">
+          {/* Both readings keep their own tier color: two Goods below 85 stay amber. */}
+          <p className="run-readings" data-tier={tierForAccuracy(shown) ?? undefined}>
             {firstLow !== null ? formatRunScore(firstLow) : "--"} → {shown !== null ? formatRunScore(shown) : "--"}
           </p>
-          <p className="run-status-main">Two low readings. One heart used.</p>
+          <p className="run-status-main">Both readings below {target} · one heart used</p>
           <p className="run-status-sub">Both takes are saved for the review.</p>
         </>
       );
+    case "cannot-confirm":
+      return <p className="run-status-main">{cannotConfirmLine(item)}</p>;
     case "no-match":
     case "unjudged":
-    case "cannot-confirm":
     case "pending":
       return <p className="run-status-main">{NONJUDGMENT_LINES[item.verdict]}</p>;
     default:
@@ -648,9 +698,19 @@ function FeedbackLine({ item, shown, firstLow }: { item: RunItem; shown: number 
 const NONJUDGMENT_LINES = {
   "no-match": "Didn't catch any speech that time.",
   unjudged: "Couldn't score that one cleanly.",
-  "cannot-confirm": "Not confirmed. No heart lost.",
   pending: "Still waiting on that score. You can keep going."
 } as const;
+
+// Each cause says what actually happened; only an exhausted rescue implies an earlier low reading.
+const CANNOT_CONFIRM_LINES: Record<NonNullable<RunItem["cannotConfirmReason"]>, string> = {
+  "rescue-budget": "No rescue scores left · not confirmed. No heart lost.",
+  "unjudged-budget": "No extra scores left · this item has no valid reading. No heart lost.",
+  "reference-unavailable": "Couldn't load the reference · not confirmed. No heart lost."
+};
+
+function cannotConfirmLine(item: RunItem): string {
+  return item.cannotConfirmReason ? CANNOT_CONFIRM_LINES[item.cannotConfirmReason] : "Not confirmed. No heart lost.";
+}
 
 function summaryKicker(run: RunState): string {
   if (run.mode === "route") return run.endReason === "completed" ? "Route complete" : "Run ended";
@@ -842,15 +902,18 @@ function announcement(
       if (!fresh) return "";
       const low = item.attempts.find((attempt) => attempt.key.attemptId === item.firstLowAttemptId);
       const accuracy = low ? validAccuracy(low) : null;
-      return `${accuracy !== null ? `${formatRunScore(accuracy)}. ` : ""}One more listen. No heart lost yet.`;
+      const tier = tierForAccuracy(accuracy);
+      const reading = accuracy !== null && tier ? `${formatRunScore(accuracy)}. ${TIER_LABELS[tier]}. ` : "";
+      return `${reading}Below this run's target ${run.config.target}. Listen, then read again. No heart lost yet.`;
     }
     case "feedback": {
       if (!fresh) return "";
       const latest = latestValid(item);
-      const value = latest ? `${formatRunScore(latest.accuracy)}. ` : "";
-      if (item.verdict === "heart-lost") return `${value}Two low readings. One heart used.`;
-      if (item.verdict === "saved") return `${value}Heart kept.`;
       const tier = tierForAccuracy(latest?.accuracy ?? null);
+      const value = latest ? `${formatRunScore(latest.accuracy)}. ` : "";
+      const tierText = tier ? `${TIER_LABELS[tier]}. ` : "";
+      if (item.verdict === "heart-lost") return `${value}${tierText}Both readings below ${run.config.target}. One heart used.`;
+      if (item.verdict === "saved") return `${value}${tierText}Heart kept.`;
       if ((item.verdict === "passed" || item.verdict === "practiced") && tier) {
         const chain = score.items[run.index]?.chain ?? 0;
         return `${value}${TIER_LABELS[tier]}.${chain >= 2 ? ` Chain ${chain}.` : ""}`;
@@ -858,7 +921,8 @@ function announcement(
       if (item.verdict === "no-match" || item.verdict === "unjudged") {
         return `${NONJUDGMENT_LINES[item.verdict]} ${canRecord(run) ? "You can try again." : "You can move on."}`;
       }
-      if (item.verdict === "cannot-confirm" || item.verdict === "pending") return NONJUDGMENT_LINES[item.verdict];
+      if (item.verdict === "cannot-confirm") return cannotConfirmLine(item);
+      if (item.verdict === "pending") return NONJUDGMENT_LINES[item.verdict];
       return "";
     }
     case "summary": {

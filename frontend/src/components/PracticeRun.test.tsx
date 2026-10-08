@@ -8,6 +8,7 @@ import type { RunAction, RunMode, RunPrompt, RunState, ScoreFailure, ScoreRespon
 import { PracticeRun, SLOW_SCORE_MS } from "./PracticeRun";
 import { SCORE_ROLL_MS } from "./RunRing";
 import { practiceRunProps, runV2Fixtures } from "./runV2Fixtures";
+import { runV3Fixtures } from "./runV3Fixtures";
 
 const PROMPTS: RunPrompt[] = [
   ["warmup-1", "warmup", "word", "water"],
@@ -97,6 +98,8 @@ function handlers() {
     onStop: vi.fn(),
     onCancelTake: vi.fn(),
     onRecordNext: vi.fn(),
+    onHearFirst: vi.fn(),
+    onHearNextFirst: vi.fn(),
     onFinish: vi.fn(),
     onSkip: vi.fn(),
     onPlayReference: vi.fn(),
@@ -301,7 +304,7 @@ describe("PracticeRun", () => {
 
     renderRun(runV2Fixtures.heartLost.run);
     expect(screen.getByText("46 → 52")).toBeInTheDocument();
-    expect(screen.getByText("Two low readings. One heart used.")).toBeInTheDocument();
+    expect(screen.getByText("Both readings below 60 · one heart used")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "1 of 2 hearts left" })).toBeInTheDocument();
   });
 
@@ -388,7 +391,7 @@ describe("PracticeRun", () => {
     for (const [run, verdict, text] of [
       [runV2Fixtures.verdictNoMatch.run, "no-match", "Didn't catch any speech that time. You can try again."],
       [unjudged, "unjudged", "Couldn't score that one cleanly. You can try again."],
-      [failedReference, "cannot-confirm", "Not confirmed. No heart lost."],
+      [failedReference, "cannot-confirm", "Couldn't load the reference · not confirmed. No heart lost."],
       [pending, "pending", "Still waiting on that score. You can keep going."],
     ] as const) {
       expect(run.phase).toBe("feedback");
@@ -687,4 +690,213 @@ describe("PracticeRun", () => {
     expect(screen.getByLabelText(/1\. water: first reading Re-listen 40, result pending/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Record next" })).toBeEnabled();
   });
+
+  describe("Game Mode v3 run screens", () => {
+    const title = (container: HTMLElement) => container.querySelector(".run-bar-title")?.textContent;
+
+    it("route_hear_first_does_not_block_record", () => {
+      const callbacks = handlers();
+      const ready = runV3Fixtures.route12Ready.run;
+      const view = renderRun(ready, callbacks);
+      expect(title(view.container)).toBe("Route · 12 items · /θ/");
+      expect(view.container.querySelector(".run-stage-label")).toHaveTextContent("6 / 12 · Focus");
+      expect(status(view.container).getByText("Optional · Record works any time")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Hear it first" }));
+      expect(callbacks.onHearFirst).toHaveBeenCalledTimes(1);
+      expect(callbacks.onPlayReference).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Record" })).toBeEnabled();
+
+      // Loading: the capsule waits, Record never does.
+      const itemId = ready.items[ready.index].prompt.itemId;
+      const loading = step(ready, { type: "REFERENCE_CLICKED", runId: ready.runId, itemId });
+      view.rerender(<PracticeRun {...practiceRunProps(loading, callbacks)} />);
+      expect(screen.getByRole("button", { name: "Loading…" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Record" }));
+      expect(callbacks.onRecord).toHaveBeenCalledTimes(1);
+
+      // Failure: readable, retryable, and still no block on Record.
+      const failed = step(loading, { type: "REFERENCE_LOADED", runId: ready.runId, itemId, ok: false });
+      view.rerender(<PracticeRun {...practiceRunProps(failed, callbacks)} />);
+      expect(status(view.container).getByText("Couldn't load it · Record works any time")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Hear it first" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Record" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Skip" })).toBeEnabled();
+    });
+
+    it("route_record_next_and_hear_next_first_are_distinct", () => {
+      const callbacks = handlers();
+      const view = renderRun(runV3Fixtures.route12Feedback.run, callbacks);
+      expect(view.container.querySelector(".run-next-v2")).toHaveTextContent("Next · Focusthree");
+      fireEvent.click(screen.getByRole("button", { name: "Record next" }));
+      fireEvent.click(screen.getByRole("button", { name: "Hear next first" }));
+      expect(callbacks.onRecordNext).toHaveBeenCalledTimes(1);
+      expect(callbacks.onHearNextFirst).toHaveBeenCalledTimes(1);
+      expect(callbacks.onPlayReference).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button", { name: "Hear it again" })).not.toBeInTheDocument();
+      view.unmount();
+
+      // The last item finishes; with nothing next, the secondary replays this item.
+      renderRun(runV3Fixtures.route12LastFeedback.run, callbacks);
+      expect(screen.getByRole("button", { name: "Finish" })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: "Hear next first" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Hear it again" }));
+      expect(callbacks.onPlayReference).toHaveBeenCalledTimes(1);
+    });
+
+    it("challenge_controls_unchanged", () => {
+      const callbacks = handlers();
+      const view = renderRun(runV3Fixtures.target85Passed.run, callbacks);
+      expect(title(view.container)).toBe("Challenge · Target 85 · /θ/");
+      fireEvent.click(screen.getByRole("button", { name: "Hear it again" }));
+      expect(callbacks.onPlayReference).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: "Record next" })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: "Hear next first" })).not.toBeInTheDocument();
+      view.unmount();
+
+      // Challenge Ready has no listen-first capsule.
+      const ready = renderRun(advance(runV3Fixtures.target85Passed.run), callbacks);
+      expect(screen.getByRole("button", { name: "Record" })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: "Hear it first" })).not.toBeInTheDocument();
+      expect(ready.container.querySelector(".run-status-hint")).toBeNull();
+      ready.unmount();
+
+      renderRun(runV3Fixtures.route6Ready.run);
+      expect(screen.getByText("Route · 6 items · /θ/")).toBeInTheDocument();
+    });
+
+    it("target85_good_tier_and_rescue_status_are_separate", () => {
+      const view = renderRun(runV3Fixtures.target85Rescue.run);
+      expect(ringScore(view.container)).toBe("80");
+      expect(ring(view.container)).toHaveAttribute("data-tier", "good");
+      expect(view.container.querySelector(".run-ring-tier")).toHaveTextContent("Good");
+      expect(screen.getByRole("heading", { name: "One more listen" })).toBeInTheDocument();
+      expect(screen.getByText("No heart lost yet")).toBeInTheDocument();
+      expect(view.container.querySelector(".run-target-line")).toHaveTextContent(
+        "Below this run's target 85 ·listen, then read again"
+      );
+      view.unmount();
+
+      // 80 → 88: the heart is kept, the ring shows the rescue's Great, the first reading still scores.
+      const saved = renderRun(runV3Fixtures.target85Saved.run, { reducedMotion: true });
+      expect(ringScore(saved.container)).toBe("88");
+      expect(saved.container.querySelector(".run-ring-tier")).toHaveTextContent("Great");
+      expect(status(saved.container).getByText("Heart kept · 80 → 88")).toBeInTheDocument();
+      expect(screen.getByLabelText("3. think: first reading Good 80, rescued")).toBeInTheDocument();
+      expect(screen.getByRole("img", { name: "2 of 2 hearts left" })).toBeInTheDocument();
+      saved.unmount();
+
+      // 84.9 is below 85 and keeps its decimal; a rescue at 85 is Great.
+      const boundary = renderRun(runV3Fixtures.target85Boundary.run);
+      expect(status(boundary.container).getByText("Heart kept · 84.9 → 85")).toBeInTheDocument();
+    });
+
+    it("target85_relisten_verdict_never_labels_80_relisten", () => {
+      const rescue = runV3Fixtures.target85Rescue.run;
+      // The reducer's verdict for the first 80 is relisten; nothing shown may say so.
+      expect(rescue.items[rescue.index].verdict).toBe("relisten");
+      const view = renderRun(rescue);
+      expect(view.container).not.toHaveTextContent(/re-listen/i);
+      expect(liveRegion(view.container)).not.toMatch(/re-listen/i);
+      expect(screen.getByLabelText("3. think: first reading Good 80")).toBeInTheDocument();
+      view.unmount();
+
+      const lost = renderRun(runV3Fixtures.target85HeartLost.run);
+      expect(lost.container).not.toHaveTextContent(/re-listen/i);
+      expect(liveRegion(lost.container)).not.toMatch(/re-listen/i);
+    });
+
+    it("target85_both_good_readings_can_lose_one_heart", () => {
+      const view = renderRun(runV3Fixtures.target85HeartLost.run, { reducedMotion: true });
+      expect(ringScore(view.container)).toBe("82");
+      expect(view.container.querySelector(".run-ring-tier")).toHaveTextContent("Good");
+      const readings = view.container.querySelector(".run-readings");
+      expect(readings).toHaveTextContent("80 → 82");
+      expect(readings).toHaveAttribute("data-tier", "good");
+      expect(status(view.container).getByText("Both readings below 85 · one heart used")).toBeInTheDocument();
+      expect(status(view.container).getByText("Both takes are saved for the review.")).toBeInTheDocument();
+      expect(screen.getByRole("img", { name: "1 of 2 hearts left" })).toBeInTheDocument();
+      expect(screen.getByLabelText("3. think: first reading Good 80, one heart used")).toBeInTheDocument();
+      // Challenge keeps its fast path after a heart loss.
+      expect(screen.getByRole("button", { name: "Record next" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Hear it again" })).toBeEnabled();
+    });
+
+    it("cannot_confirm_distinguishes_rescue_unjudged_and_reference_failure", () => {
+      for (const [fixture, reason, text] of [
+        [runV3Fixtures.target85Exhausted, "rescue-budget", "No rescue scores left · not confirmed. No heart lost."],
+        [
+          runV3Fixtures.target85UnjudgedEmpty,
+          "unjudged-budget",
+          "No extra scores left · this item has no valid reading. No heart lost."
+        ],
+        [
+          runV3Fixtures.target85ReferenceFailed,
+          "reference-unavailable",
+          "Couldn't load the reference · not confirmed. No heart lost."
+        ]
+      ] as const) {
+        const item = fixture.run.items[fixture.run.index];
+        expect(item.cannotConfirmReason).toBe(reason);
+        const view = renderRun(fixture.run);
+        expect(status(view.container).getByText(text)).toBeInTheDocument();
+        expect(liveRegion(view.container)).toBe(text);
+        // No heart is charged and no second low reading is shown.
+        expect(screen.getByRole("img", { name: "2 of 2 hearts left" })).toBeInTheDocument();
+        expect(view.container.querySelector(".run-readings")).toBeNull();
+        expect(view.container.querySelector(".run-stone-crack")).toBeNull();
+        view.unmount();
+      }
+    });
+
+    it("single_announcement_uses_final_target_tier_and_points", () => {
+      for (const [fixture, text] of [
+        [runV3Fixtures.target85Rescue, "80. Good. Below this run's target 85. Listen, then read again. No heart lost yet."],
+        [runV3Fixtures.target85HeartLost, "82. Good. Both readings below 85. One heart used."],
+        [runV3Fixtures.target85Saved, "88. Great. Heart kept."],
+        [runV3Fixtures.route12Feedback, "88. Great. Chain 3."]
+      ] as const) {
+        const view = renderRun(fixture.run);
+        expect(view.container.querySelectorAll("[aria-live]")).toHaveLength(1);
+        expect(liveRegion(view.container)).toBe(text);
+        view.rerender(<PracticeRun {...practiceRunProps({ ...fixture.run })} />);
+        expect(liveRegion(view.container)).toBe(text);
+        view.unmount();
+      }
+
+      // First-reading points come from the planned-twelve selector, shown once on the feedback.
+      const feedback = renderRun(runV3Fixtures.route12Feedback.run);
+      const item = runV3Fixtures.route12Feedback.score.items[5];
+      expect(feedback.container.querySelector(".run-points-base")).toHaveTextContent(`+${Math.round(item.basePoints)}`);
+      expect(feedback.container.querySelector(".run-points .run-chain-chip")).toHaveTextContent(
+        `×3 in a row +${Math.round(item.chainPoints)}`
+      );
+      expect(Math.round(item.basePoints)).toBe(66);
+    });
+
+    it("v2_local_reject_stop_guard_and_live_controls_hold", () => {
+      const callbacks = handlers();
+      const ready = runV3Fixtures.route12Ready.run;
+      const capture = nextCapture(ready);
+      if (!capture) throw new Error("no capture");
+      const key = { runId: ready.runId, itemId: ready.items[ready.index].prompt.itemId, attemptId: "thank-take1" };
+      const recording = step(step(ready, { type: "BEGIN_CAPTURE", key, ...capture }), { type: "BLOB_READY", key, blob: new Blob(["a"]) });
+      // While recording, Stop and Cancel take stay live and the capsule is gone.
+      const view = renderRun(step(ready, { type: "BEGIN_CAPTURE", key, ...capture }), callbacks);
+      expect(screen.queryByRole("button", { name: "Hear it first" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+      fireEvent.click(screen.getByRole("button", { name: "Cancel take" }));
+      expect(callbacks.onStop).toHaveBeenCalledTimes(1);
+      expect(callbacks.onCancelTake).toHaveBeenCalledTimes(1);
+
+      // A local no-speech reject returns to Ready with Use manual Stop beside Hear it first.
+      const rejected = step(recording, { type: "LOCAL_REJECT", key, reason: "no-speech" });
+      view.rerender(<PracticeRun {...practiceRunProps(rejected, callbacks)} />);
+      expect(screen.getByRole("button", { name: "Hear it first" })).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "Use manual Stop" }));
+      expect(callbacks.onUseManualStop).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: "Record" })).toBeEnabled();
+      expect(rejected.extraUsed).toBe(0);
+    });
+  });
 });
+

@@ -519,7 +519,7 @@ describe("MobileApp game run", () => {
     await user.click(within(hero).getByRole("button", { name: "Auto-stop on" }));
     expect(within(hero).getByRole("button", { name: "Auto-stop off" })).toHaveAttribute("aria-pressed", "false");
     await startRun(user);
-    expect(screen.getByText("Route · /θ/")).toBeInTheDocument();
+    expect(screen.getByText("Route · 6 items · /θ/")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Auto-stop off" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Sound" }));
     await quitRun(user);

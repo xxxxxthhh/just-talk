@@ -7,6 +7,7 @@ import { selectReviewSuggestions, selectRunScore } from "../game/scoring";
 import type { RunMode, RunPrompt, RunState, ScoreResponse, WordCandidate, WordResult } from "../types";
 import { PracticeRun } from "./PracticeRun";
 import { practiceRunProps, runV2Fixtures } from "./runV2Fixtures";
+import { runV3Fixtures } from "./runV3Fixtures";
 import { RunReview } from "./RunReview";
 
 const PROMPTS: RunPrompt[] = [
@@ -353,3 +354,14 @@ function step(state: RunState, action: Parameters<typeof runReducer>[1]): RunSta
   if (!next) throw new Error("run ended");
   return next;
 }
+
+describe("RunReview under Target 85", () => {
+  it("target85_relisten_verdict_never_labels_80_relisten", () => {
+    // Target 85's first 80 carries an internal relisten verdict; the review reads it as Good.
+    const lost = runV3Fixtures.target85HeartLost.run;
+    const ended = step(step(lost, { type: "PAUSE", runId: lost.runId }), { type: "QUIT", runId: lost.runId });
+    const { container } = renderReview(step(ended, { type: "OPEN_REVIEW", runId: lost.runId }));
+    expect(container).not.toHaveTextContent(/re-listen/i);
+    expect(container).toHaveTextContent("Good");
+  });
+});

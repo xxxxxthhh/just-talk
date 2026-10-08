@@ -131,7 +131,10 @@ export function RunRing({ phase, telemetry, accuracy, tier, rating, reducedMotio
           {shownScore === accuracy ? formatRunScore(shownScore) : Math.floor(shownScore)}
         </span>
       ) : null}
-      {phase === "verdict" && tier ? <span className="run-ring-tier">{TIER_LABELS[tier]}</span> : null}
+      {/* A rescue keeps the first reading's tier visible: under Target 85 an 80 is still Good. */}
+      {(phase === "verdict" || (phase === "rescue" && accuracy !== null)) && tier ? (
+        <span className="run-ring-tier">{TIER_LABELS[tier]}</span>
+      ) : null}
       {phase === "summary" && rating ? <span className="run-ring-rating">{rating}</span> : null}
     </div>
   );
