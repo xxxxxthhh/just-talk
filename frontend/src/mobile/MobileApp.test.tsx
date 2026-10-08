@@ -640,6 +640,118 @@ describe("MobileApp game run", () => {
     expect(screen.getByRole("button", { name: "Start Route" })).toBeEnabled();
   });
 
+  // A gate the next deck requests wait behind, opened by the test.
+  function deckGate() {
+    let release: () => void = () => {};
+    let promise = Promise.resolve();
+    let closed = false;
+    return {
+      close() {
+        closed = true;
+        promise = new Promise<void>((resolve) => (release = resolve));
+      },
+      open() {
+        closed = false;
+        release();
+      },
+      hold: (url: string) => (closed && url === "/api/phoneme-stats" ? promise : undefined),
+    };
+  }
+
+  async function finishWithOneTake(user: ReturnType<typeof userEvent.setup>, surface: "summary" | "review") {
+    await startRun(user);
+    await recordAndStop(user);
+    expect(await screen.findByText("Strong.", { selector: ".run-status-main" })).toBeInTheDocument();
+    await quitRun(user);
+    expect(await screen.findByRole("heading", { name: "Run ended" })).toBeInTheDocument();
+    if (surface === "review") {
+      await user.click(screen.getByRole("button", { name: "See review" }));
+      expect(await screen.findByRole("region", { name: "Run review" })).toBeInTheDocument();
+    }
+  }
+
+  test("deferred_replay_from_summary_and_review_is_pending_and_single", async () => {
+    for (const surface of ["summary", "review"] as const) {
+      const user = userEvent.setup();
+      const gate = deckGate();
+      let deckRequests = 0;
+      installRunApi({
+        hold: (url) => {
+          if (url === "/api/phoneme-stats") deckRequests += 1;
+          return gate.hold(url);
+        },
+      });
+      const view = render(<MobileApp />);
+      await finishWithOneTake(user, surface);
+
+      gate.close();
+      const before = deckRequests;
+      await user.click(screen.getByRole("button", { name: "Play again" }));
+      const pending = screen.getByRole("button", { name: "Starting…" });
+      expect(pending, surface).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Done" }), surface).toBeEnabled();
+      // A second tap starts nothing more.
+      await user.click(pending);
+      expect(deckRequests - before, surface).toBe(1);
+      // The finished run stays on screen until the new deck is ready.
+      expect(screen.getByRole("region", { name: surface === "review" ? "Run review" : "Route run" })).toBeInTheDocument();
+
+      await act(async () => gate.open());
+      expect(await screen.findByRole("button", { name: "Record" }), surface).toBeEnabled();
+      expect(screen.getByText("1 / 6 · Warm-up")).toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
+  test("done_during_replay_abandons_it", async () => {
+    const user = userEvent.setup();
+    const gate = deckGate();
+    installRunApi({ hold: gate.hold });
+    render(<MobileApp />);
+    await finishWithOneTake(user, "summary");
+
+    gate.close();
+    await user.click(screen.getByRole("button", { name: "Play again" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByRole("tab", { name: "Words" })).toBeInTheDocument();
+    // The deck that arrives later never takes over.
+    await act(async () => gate.open());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("region", { name: "Route run" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start Route" })).toBeEnabled();
+  });
+
+  test("failed_replay_keeps_results_then_retry_succeeds", async () => {
+    for (const surface of ["summary", "review"] as const) {
+      const user = userEvent.setup();
+      // A due word with no text makes only the replay's deck unbuildable.
+      let broken = false;
+      installRunApi({ words: () => (broken ? [{ id: "bad", word: null, status: "active", due_at: null }] : []) });
+      const view = render(<MobileApp />);
+      await finishWithOneTake(user, surface);
+
+      broken = true;
+      await user.click(screen.getByRole("button", { name: "Play again" }));
+      expect(await screen.findByRole("alert"), surface).toHaveTextContent(
+        "Couldn't start a new run. Your results are still here. Try again."
+      );
+      // The old results are still all there.
+      if (surface === "summary") {
+        expect(screen.getByRole("heading", { name: "Run ended" })).toBeInTheDocument();
+        expect(screen.getByLabelText(/^1\. thin: first reading Great 90/)).toBeInTheDocument();
+      } else {
+        expect(screen.getByRole("region", { name: "Run review" })).toBeInTheDocument();
+        expect(within(screen.getByRole("list", { name: "Takes of thin" })).getByText("90")).toBeInTheDocument();
+      }
+
+      broken = false;
+      await user.click(screen.getByRole("button", { name: "Play again" }));
+      expect(await screen.findByRole("button", { name: "Record" }), surface).toBeEnabled();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
   test("cancel_quit_keeps_paused_run_and_results", async () => {
     const user = userEvent.setup();
     const scored = installRunApi();

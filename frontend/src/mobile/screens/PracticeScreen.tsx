@@ -201,7 +201,8 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             publicMode={PUBLIC_MODE}
             drillsEnabled={Boolean(session.health?.passage_check_configured)}
             onPlayReference={run.playReference}
-            onPlayAgain={() => void run.playAgain()}
+            onPlayAgain={run.playAgain}
+            starting={run.starting}
             onGenerateDrill={(phoneme) => {
               run.exit();
               void session.insights.generateDrill(phoneme);
@@ -233,7 +234,8 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             onResume={run.resume}
             onQuit={run.quit}
             onOpenReview={run.openReview}
-            onPlayAgain={() => void run.playAgain()}
+            onPlayAgain={run.playAgain}
+            starting={run.starting}
             onDone={run.exit}
             onPlayRevisit={run.playReference}
             scoresLeft={scoresLeft}

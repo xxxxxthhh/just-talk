@@ -1673,6 +1673,7 @@
   gap: 8px;
 }
 
+.run-replay-error,
 .run-hero-error {
   margin: 0;
   color: var(--g-relisten-hi);

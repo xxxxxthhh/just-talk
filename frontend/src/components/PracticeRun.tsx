@@ -19,6 +19,7 @@ import type {
 } from "../types";
 import { formatRunScore, LiveRunRing, TIER_LABELS, useRolledNumber, type RunRingProps } from "./RunRing";
 import { RunStones } from "./RunStones";
+import { REPLAY_FAILED, useReplay } from "./useReplay";
 
 export const SLOW_SCORE_MS = 5000;
 const SUMMARY_ROLL_DELAY_MS = 350;
@@ -70,7 +71,10 @@ export type PracticeRunProps = {
   onResume: () => void;
   onQuit: () => void;
   onOpenReview: () => void;
-  onPlayAgain: () => void;
+  // Resolves once the new run has started; rejects if it can't be built.
+  onPlayAgain: () => Promise<void>;
+  // A new run's deck is loading (from Start or Play again).
+  starting: boolean;
   onDone: () => void;
   // Plays the Coach reference for the summary's "One thing to revisit" word.
   onPlayRevisit: (prompt: RunPrompt) => void;
@@ -658,6 +662,7 @@ function RunSummary(props: ScreenProps) {
   const [ended, setEnded] = useState(false);
   const settled = ended || !fresh || reducedMotion;
   const points = useRolledNumber(score.points, props.feedbackId, !settled, 450, SUMMARY_ROLL_DELAY_MS);
+  const replay = useReplay(props.onPlayAgain);
   const outOfHearts = run.endReason === "hearts-exhausted";
   const act = (handler: () => void) => () => {
     setEnded(true);
@@ -781,10 +786,15 @@ function RunSummary(props: ScreenProps) {
           <button type="button" className="run-secondary-v2" onClick={act(props.onOpenReview)}>
             See review
           </button>
-          <button type="button" className="run-primary-v2" onClick={act(props.onPlayAgain)}>
-            Play again
+          <button type="button" className="run-primary-v2" disabled={props.starting} onClick={act(replay.playAgain)}>
+            {props.starting ? "Starting…" : "Play again"}
           </button>
         </div>
+        {replay.failed ? (
+          <p className="run-replay-error" role="alert">
+            {REPLAY_FAILED}
+          </p>
+        ) : null}
         <p className="run-summary-note">
           Play again uses up to {playAgainCost} new scores
           {props.scoresLeft !== null ? ` · ${props.scoresLeft} left today` : ""}
