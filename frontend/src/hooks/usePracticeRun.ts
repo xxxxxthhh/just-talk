@@ -3,13 +3,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecording } from "../api";
 import { bestBucketForRun, finalizeRunBest } from "../game/personalBest";
 import { getRunPreferences, setRunPreference, useRunPreferences } from "../game/preferences";
-import { isFocusPhoneme, isRunConfig, isValidRunDeck, maxCountedScores, nextFocusPhoneme } from "../game/runConfig";
+import {
+  isFocusPhoneme,
+  isRunConfig,
+  isValidRunDeck,
+  maxCountedScores,
+  nextFocusPhoneme,
+  wordsConfig
+} from "../game/runConfig";
 import { buildRunDeck, chooseFocusPhoneme } from "../game/runDeck";
 import { canRecord, nextCapture, runReducer, SENTENCE_COLLECT_MAX } from "../game/runModel";
 import {
   runWeakWords,
   selectPractisedCount,
   selectReviewSuggestions,
+  selectRevisitWordSeeds,
   selectRunScore,
   tierForAccuracy,
   topRevisitOf,
@@ -17,16 +25,19 @@ import {
 } from "../game/scoring";
 import { cancelCues, cueForSummary, cueForVerdict, playCue, resetCueEvents } from "../game/sfx";
 import { classifyCapture } from "../game/vad";
+import { buildWordsDeck, snapshotDueWordIds, wordsBankSnapshot } from "../game/wordDeck";
 import { normalizedWord, weakWordsFromResult } from "../scoreUtils";
 import type {
   AttemptKey,
   CaptureStopReason,
   CaptureSummary,
   PhonemeStat,
+  RevisitWordSeed,
   RunAction,
   RunBestReceipt,
   RunConfig,
   RunFocusPhoneme,
+  RunLength,
   RunPrompt,
   RunState,
   ScoreFailure,
@@ -51,6 +62,7 @@ export type RunSession = Pick<
   | "speechCurrentTime"
   | "speechDuration"
   | "refreshVocabulary"
+  | "vocabulary"
   | "setError"
 >;
 
@@ -200,30 +212,48 @@ export function usePracticeRun(session: RunSession) {
     if (captureRef.current) session.cancelRunCapture(reason);
   }
 
-  // The one start path behind Start, Play again, and Next sound. Unlocks run audio inside the
-  // gesture, before any await. The configuration is copied and frozen before any data loads; an
-  // invalid configuration or deck rejects before the current run, its replays, or its receipt change.
-  // A focus override (Next sound) replaces the stats-based choice.
+  // The one start path behind Start, Play again, Next sound, and both My words starts. Unlocks run
+  // audio inside the gesture, before any await. The configuration is copied and frozen before any
+  // data loads; an invalid configuration or deck, or a words shortage, rejects before the current
+  // run, its replays, or its receipt change. A focus override (Next sound) replaces the stats-based
+  // choice; review seeds lead a words deck.
   async function launch(
     config: RunConfig,
-    { previousWeakWords = [], focus }: { previousWeakWords?: readonly string[]; focus?: RunFocusPhoneme } = {}
+    {
+      previousWeakWords = [],
+      focus,
+      reviewSeeds
+    }: { previousWeakWords?: readonly string[]; focus?: RunFocusPhoneme; reviewSeeds?: readonly RevisitWordSeed[] } = {}
   ) {
-    // My words decks arrive with their own builder; until then only starter runs can start.
-    if (!isRunConfig(config) || config.source !== "starter") throw new Error(START_UNAVAILABLE);
+    if (!isRunConfig(config)) throw new Error(START_UNAVAILABLE);
     const frozen = Object.freeze({ ...config });
     session.prepareRunAudio();
     startTokenRef.current += 1;
     const token = startTokenRef.current;
     setStarting(true);
     try {
-      const [phonemeStats, vocabulary] = await Promise.all([
-        focus ? [] : fetchPhonemeStats().catch((): PhonemeStat[] => []),
-        listWords().catch((): VocabularyItem[] => [])
-      ]);
-      if (startTokenRef.current !== token) return;
       const runId = newId("run");
-      const focusPhoneme = focus ?? chooseFocusPhoneme(phonemeStats);
-      const prompts = buildRunDeck({ runId, config: frozen, focusPhoneme, vocabulary, previousWeakWords });
+      let prompts: readonly Readonly<RunPrompt>[];
+      if (frozen.source === "words") {
+        // The bank is read fresh at every words Start; without it there is no deck, and no fallback.
+        let vocabulary: VocabularyItem[];
+        try {
+          vocabulary = await listWords();
+        } catch (err) {
+          if (startTokenRef.current !== token) return;
+          throw err;
+        }
+        if (startTokenRef.current !== token) return;
+        prompts = buildWordsDeck({ config: frozen, vocabulary, dueWordIds: snapshotDueWordIds(vocabulary), reviewSeeds });
+      } else {
+        const [phonemeStats, vocabulary] = await Promise.all([
+          focus ? [] : fetchPhonemeStats().catch((): PhonemeStat[] => []),
+          listWords().catch((): VocabularyItem[] => [])
+        ]);
+        if (startTokenRef.current !== token) return;
+        const focusPhoneme = focus ?? chooseFocusPhoneme(phonemeStats);
+        prompts = buildRunDeck({ runId, config: frozen, focusPhoneme, vocabulary, previousWeakWords });
+      }
       if (!isValidRunDeck(frozen, prompts)) throw new Error(START_UNAVAILABLE);
       // Replacing a run keeps the session's run audio that this gesture just unlocked.
       if (stateRef.current) teardown(true);
@@ -448,9 +478,26 @@ export function usePracticeRun(session: RunSession) {
   }
 
   // Keeps the frozen configuration; focus comes from refreshed stats, not the rotation.
+  // A words run rebuilds from the fresh bank, without carrying its seeds over.
   async function playAgain() {
     const current = stateRef.current;
-    if (current) await launch(current.config, { previousWeakWords: runWeakWords(current) });
+    if (!current) return;
+    await launch(current.config, current.config.source === "starter" ? { previousWeakWords: runWeakWords(current) } : {});
+  }
+
+  // My words entry: a words Route of the chosen length from the fresh bank.
+  async function startWords(length: RunLength) {
+    await launch(wordsConfig(length));
+  }
+
+  // Any finished run becomes a words Route of its length (a Challenge gives six), led by the words its
+  // first readings left below 85. The finished run, its receipt, and these seeds stay until the new
+  // deck is accepted, so a retry repeats the same request.
+  async function runWithRevisitWords() {
+    const current = stateRef.current;
+    if (!current || current.endReason === null) return;
+    const reviewSeeds = selectRevisitWordSeeds(current);
+    if (reviewSeeds.length > 0) await launch(wordsConfig(current.config.length), { reviewSeeds });
   }
 
   // A finished starter Route moves to the next sound in the fixed cycle, keeping its configuration.
@@ -465,6 +512,24 @@ export function usePracticeRun(session: RunSession) {
   const nextSoundPhoneme = useMemo(() => (state ? nextSoundFor(state) : null), [state]);
   const suggestions = useMemo(() => (state ? selectReviewSuggestions(state) : []), [state]);
   const topRevisit = useMemo(() => topRevisitOf(suggestions), [suggestions]);
+  const revisitWordSeeds = useMemo(() => (state ? selectRevisitWordSeeds(state) : []), [state]);
+  // From the cached bank: a hint for the entry and Summary, never a reservation. Start refetches.
+  const eligibleWords = useMemo(() => wordsBankSnapshot(session.vocabulary).length, [session.vocabulary]);
+  const wordsEntry = useMemo(
+    () => ({ eligibleCount: eligibleWords, canStart6: eligibleWords >= 6, canStart12: eligibleWords >= 12 }),
+    [eligibleWords]
+  );
+  // Only the finished run's own seeds can disable the Summary action; the cached count cannot.
+  const terminal = state !== null && state.endReason !== null;
+  const revisitWords = useMemo(
+    () => ({
+      seedCount: revisitWordSeeds.length,
+      eligibleCount: eligibleWords,
+      canStart: terminal && revisitWordSeeds.length > 0,
+      reason: revisitWordSeeds.length === 0 ? ("no-seeds" as const) : null
+    }),
+    [revisitWordSeeds, eligibleWords, terminal]
+  );
 
   // The owner's lifetime ends at unmount: pending starts and late results are dropped, the take is
   // cancelled, and this run's review URLs are released. Shared audio and cues belong to the
@@ -532,6 +597,11 @@ export function usePracticeRun(session: RunSession) {
     openReview: () => runAction("OPEN_REVIEW"),
     exit,
     playAgain,
-    nextSound
+    nextSound,
+    startWords,
+    runWithRevisitWords,
+    revisitWordSeeds,
+    wordsEntry,
+    revisitWords
   };
 }

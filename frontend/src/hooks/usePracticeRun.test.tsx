@@ -3,7 +3,7 @@ import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecording } from "../api";
-import { readBest, RUN_BEST_KEY } from "../game/personalBest";
+import { finalizeRunBest, readBest, RUN_BEST_KEY } from "../game/personalBest";
 import { configForChoice } from "../game/runConfig";
 import { buildRunDeck } from "../game/runDeck";
 import { setRunPreference } from "../game/preferences";
@@ -16,6 +16,7 @@ import type {
   RunConfig,
   RunMode,
   ScoreResponse,
+  VocabularyItem,
   WordResult
 } from "../types";
 import { usePracticeRun, type RunSession } from "./usePracticeRun";
@@ -31,6 +32,11 @@ vi.mock("../game/starterPack", async (importOriginal) => {
       return pack.small ? small : actual.STARTER_PACK;
     }
   };
+});
+
+vi.mock("../game/personalBest", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../game/personalBest")>();
+  return { ...actual, finalizeRunBest: vi.fn(actual.finalizeRunBest), readBest: vi.fn(actual.readBest) };
 });
 
 vi.mock("../game/runDeck", async (importOriginal) => {
@@ -118,6 +124,7 @@ function fakeSession() {
     speechCurrentTime: 0,
     speechDuration: 0,
     refreshVocabulary: vi.fn(async () => undefined),
+    vocabulary: [] as VocabularyItem[],
     setError: vi.fn()
   };
   return { session: session as unknown as RunSession & typeof session, loads, take, fire };
@@ -1519,5 +1526,316 @@ describe("usePracticeRun", () => {
     const quitter = await setup("challenge");
     act(() => quitter.run().quit());
     expect(quitter.session.refreshVocabulary).toHaveBeenCalledTimes(1);
+  });
+
+  function bankRow(word: string, patch: Partial<VocabularyItem> = {}): VocabularyItem {
+    return {
+      id: `id-${word.toLowerCase()}`,
+      word,
+      source: "manual",
+      notes: "",
+      latest_score: 50,
+      practice_count: 1,
+      last_practiced_at: null,
+      status: "active",
+      consecutive_successes: 0,
+      graduated_at: null,
+      interval_days: 1,
+      due_at: "2999-01-01T00:00:00Z",
+      created_at: "2026-09-01T00:00:00Z",
+      updated_at: "2026-09-01T00:00:00Z",
+      ...patch
+    };
+  }
+
+  function bank(count: number, prefix = "word"): VocabularyItem[] {
+    return Array.from({ length: count }, (_, i) => bankRow(`${prefix}${String(i).padStart(2, "0")}`));
+  }
+
+  // Plays the current run to its end with these first readings, one per item.
+  async function playAll(h: Harness, readings: readonly number[]) {
+    for (const accuracy of readings) {
+      await attempt(h, scored(accuracy));
+      act(() => h.run().finish());
+    }
+    expect(h.run().state?.endReason).not.toBeNull();
+  }
+
+  function texts(h: Harness) {
+    return h.run().state?.items.map((item) => item.prompt.text) ?? [];
+  }
+
+  it("words_fetch_or_shortage_preserves_old_run", async () => {
+    const h = await setup("route");
+    await finishRoute(h);
+    const finished = h.run().state;
+    const receipt = h.run().receipt;
+    const urls = h.run().attemptAudioUrls;
+    const unchanged = () => {
+      expect(h.run().state).toBe(finished);
+      expect(h.run().receipt).toBe(receipt);
+      expect(h.run().attemptAudioUrls).toBe(urls);
+      expect(h.run().starting).toBe(false);
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+      expect(h.session.enterRun).toHaveBeenCalledTimes(1);
+    };
+
+    // No word bank, no deck: unlike starter runs there is nothing to fall back on.
+    vi.mocked(listWords).mockRejectedValueOnce(new Error("Could not reach the server."));
+    await act(async () => {
+      await expect(h.run().startWords(6)).rejects.toThrow("Could not reach the server.");
+    });
+    unchanged();
+
+    vi.mocked(listWords).mockResolvedValueOnce(bank(5));
+    await act(async () => {
+      await expect(h.run().startWords(6)).rejects.toThrow("Add more active single words to start a 6-word run.");
+    });
+    unchanged();
+
+    vi.mocked(listWords).mockResolvedValueOnce(bank(8));
+    await act(async () => {
+      await expect(h.run().startWords(12)).rejects.toThrow("Need 12 active words · 8 available");
+    });
+    unchanged();
+    expect(fetchPhonemeStats).toHaveBeenCalledTimes(1);
+
+    // Choosing six with eight words available works, and never asks for phoneme stats.
+    vi.mocked(listWords).mockResolvedValueOnce(bank(8));
+    await act(async () => {
+      await h.run().startWords(6);
+    });
+    expect(h.run().config).toEqual({ source: "words", mode: "route", length: 6, target: null, maxExtra: 2 });
+    expect(h.run().state?.items.every((item) => item.prompt.stage === "words" && item.prompt.targetPhoneme === null)).toBe(true);
+    expect(h.run().maxScores).toBe(8);
+    expect(fetchPhonemeStats).toHaveBeenCalledTimes(1);
+  });
+
+  it("challenge_revisit_creates_route6_without_mutating_receipt", async () => {
+    const h = await setup("challenge");
+    const firstWord = current(h).prompt.text;
+    // 70 passes Target 60 but is below 85, so it seeds.
+    await playAll(h, [70, 95, 95, 95, 95, 95]);
+    expect(h.run().state?.challengeOutcome).toBe("cleared");
+    const finished = h.run().state;
+    const receipt = h.run().receipt;
+    expect(receipt?.outcome).toBe("first-record");
+    expect(h.run().revisitWordSeeds).toEqual([expect.objectContaining({ word: firstWord, firstAccuracy: 70, itemIndex: 0 })]);
+    expect(h.run().revisitWords).toMatchObject({ seedCount: 1, canStart: true, reason: null });
+
+    const words = deferred<VocabularyItem[]>();
+    vi.mocked(listWords).mockReturnValueOnce(words.promise);
+    let pending!: Promise<void>;
+    act(() => {
+      pending = h.run().runWithRevisitWords();
+    });
+    // Until the new deck is accepted, the finished Challenge and its receipt are untouched.
+    expect(h.run().starting).toBe(true);
+    expect(h.run().state).toBe(finished);
+    expect(h.run().receipt).toBe(receipt);
+    await act(async () => {
+      words.resolve(bank(10));
+      await pending;
+    });
+    expect(h.run().config).toEqual({ source: "words", mode: "route", length: 6, target: null, maxExtra: 2 });
+    expect(h.run().state?.hearts).toBeNull();
+    expect(h.run().state?.items[0].prompt).toMatchObject({ text: firstWord, source: "run-review" });
+    expect(h.run().state?.items.slice(1).every((item) => item.prompt.source === "word-bank")).toBe(true);
+    expect(h.run().receipt).toBeNull();
+    expect(h.run().nextSoundPhoneme).toBeNull();
+  });
+
+  it("words_play_again_refreshes_bank_and_next_sound_is_noop", async () => {
+    const h = await setup("route");
+    vi.mocked(listWords).mockResolvedValueOnce(bank(6, "first"));
+    await act(async () => {
+      await h.run().startWords(6);
+    });
+    expect(texts(h)).toEqual(bank(6, "first").map((row) => row.word));
+    await playAll(h, [60, 95, 95, 95, 95, 95]);
+    expect(h.run().nextSoundPhoneme).toBeNull();
+    vi.mocked(listWords).mockClear();
+    h.session.prepareRunAudio.mockClear();
+    await act(async () => {
+      await h.run().nextSound();
+    });
+    expect(h.session.prepareRunAudio).not.toHaveBeenCalled();
+    expect(listWords).not.toHaveBeenCalled();
+
+    // Play again keeps source and length and reads the bank again, without the old run's seeds.
+    vi.mocked(listWords).mockResolvedValueOnce(bank(6, "second"));
+    await act(async () => {
+      await h.run().playAgain();
+    });
+    expect(listWords).toHaveBeenCalledTimes(1);
+    expect(h.run().config).toEqual({ source: "words", mode: "route", length: 6, target: null, maxExtra: 2 });
+    expect(texts(h)).toEqual(bank(6, "second").map((row) => row.word));
+    expect(h.run().state?.items.every((item) => item.prompt.source === "word-bank")).toBe(true);
+  });
+
+  it("words_play_again_can_repeat_srs_due_low_words_without_seeds", async () => {
+    const h = await setup("route");
+    vi.mocked(listWords).mockResolvedValueOnce(bank(7, "w"));
+    await act(async () => {
+      await h.run().startWords(6);
+    });
+    const low = texts(h)[2];
+    await playAll(h, [95, 95, 40, 95, 95, 95]);
+    // The backend's SRS reset the low word to due now; the fresh bank brings it back first, as a
+    // bank word, not as a seed.
+    const refreshed = bank(7, "w").map((row) => (row.word === low ? { ...row, latest_score: 40, due_at: "2026-01-01T00:00:00Z" } : row));
+    vi.mocked(listWords).mockResolvedValueOnce(refreshed);
+    await act(async () => {
+      await h.run().playAgain();
+    });
+    expect(h.run().state?.items[0].prompt).toMatchObject({ text: low, source: "word-bank" });
+  });
+
+  it("summary_cached_shortage_does_not_disable_revisit", async () => {
+    const h = await setup("route");
+    await playAll(h, [70, 95, 95, 95, 95, 95]);
+    // The cached bank is empty, so the entry cannot offer a words run, but the Summary action stays on.
+    expect(h.run().wordsEntry).toEqual({ eligibleCount: 0, canStart6: false, canStart12: false });
+    expect(h.run().revisitWords).toEqual({ seedCount: 1, eligibleCount: 0, canStart: true, reason: null });
+    h.session.vocabulary = bank(12);
+    h.hook.rerender();
+    expect(h.run().wordsEntry).toEqual({ eligibleCount: 12, canStart6: true, canStart12: true });
+    // A live run has no Summary action yet.
+    const live = await setup("route");
+    await attempt(live, scored(50));
+    expect(live.run().revisitWords.canStart).toBe(false);
+  });
+
+  it("summary_no_local_seeds_disables_revisit", async () => {
+    const h = await setup("route");
+    h.session.vocabulary = bank(12);
+    h.hook.rerender();
+    await playAll(h, [85, 95, 95, 95, 95, 95]);
+    expect(h.run().revisitWordSeeds).toEqual([]);
+    expect(h.run().revisitWords).toEqual({ seedCount: 0, eligibleCount: 12, canStart: false, reason: "no-seeds" });
+    h.session.prepareRunAudio.mockClear();
+    await act(async () => {
+      await h.run().runWithRevisitWords();
+    });
+    expect(h.session.prepareRunAudio).not.toHaveBeenCalled();
+    expect(h.session.enterRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("rated_words_never_read_write_or_finalize_pb", async () => {
+    // A starter Route with a word to revisit, finished and recorded as a best.
+    const h = await setup("route");
+    await playAll(h, [80, 95, 95, 95, 95, 95]);
+    expect(h.run().receipt?.outcome).toBe("first-record");
+    // Populate the legacy null-focus key and the starter key a words run must never fall into.
+    const records = JSON.parse(window.localStorage.getItem(RUN_BEST_KEY) as string);
+    records["route||1"] = { runId: "legacy-null", points: 700, rating: "B", updatedAt: 1, expiresAt: null };
+    window.localStorage.setItem(RUN_BEST_KEY, JSON.stringify(records));
+    const stored = window.localStorage.getItem(RUN_BEST_KEY);
+
+    const getItem = vi.spyOn(Storage.prototype, "getItem");
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    vi.mocked(finalizeRunBest).mockClear();
+    vi.mocked(readBest).mockClear();
+    const touched = () =>
+      [...getItem.mock.calls, ...setItem.mock.calls].filter(([key]) => key === RUN_BEST_KEY).length;
+
+    // Starter → words replacement, then a rated, full-combo words run.
+    vi.mocked(listWords).mockResolvedValueOnce(bank(10));
+    await act(async () => {
+      await h.run().runWithRevisitWords();
+    });
+    expect(h.run().config?.source).toBe("words");
+    await playAll(h, [95, 95, 95, 95, 95, 95]);
+    expect(h.run().score).toMatchObject({ rated: true, rating: "S", fullCombo: true });
+    expect(h.run().receipt).toBeNull();
+
+    // And its Review and Play again surfaces.
+    act(() => h.run().openReview());
+    h.hook.rerender();
+    vi.mocked(listWords).mockResolvedValueOnce(bank(10));
+    await act(async () => {
+      await h.run().playAgain();
+    });
+    await playAll(h, [95, 95, 95, 95, 95, 95]);
+    expect(h.run().receipt).toBeNull();
+
+    expect(finalizeRunBest).not.toHaveBeenCalled();
+    expect(readBest).not.toHaveBeenCalled();
+    expect(touched()).toBe(0);
+    expect(window.localStorage.getItem(RUN_BEST_KEY)).toBe(stored);
+    getItem.mockRestore();
+    setItem.mockRestore();
+  });
+
+  it("words_stale_start_blob_and_retry_guards_hold", async () => {
+    // A words start abandoned by Done never takes over.
+    const h = await setup("route");
+    await finishRoute(h);
+    let words = deferred<VocabularyItem[]>();
+    vi.mocked(listWords).mockReturnValueOnce(words.promise);
+    let pending!: Promise<void>;
+    act(() => {
+      pending = h.run().startWords(6);
+    });
+    act(() => h.run().exit());
+    await act(async () => {
+      words.resolve(bank(8));
+      await pending;
+    });
+    expect(h.run().state).toBeNull();
+    expect(h.run().starting).toBe(false);
+    expect(h.session.enterRun).toHaveBeenCalledTimes(1);
+
+    // A newer start wins over an older words start, and the older failure is silent.
+    words = deferred<VocabularyItem[]>();
+    vi.mocked(listWords).mockReturnValueOnce(words.promise);
+    act(() => {
+      pending = h.run().startWords(6);
+    });
+    await act(async () => {
+      await h.run().start(ROUTE);
+    });
+    expect(h.run().config?.source).toBe("starter");
+    await act(async () => {
+      words.reject(new Error("offline"));
+      await expect(pending).resolves.toBeUndefined();
+    });
+    expect(h.run().config?.source).toBe("starter");
+    expect(h.session.setError).not.toHaveBeenCalled();
+
+    // A take still recording when a words Play again is accepted is dropped, never scored.
+    vi.mocked(scoreRecording).mockClear();
+    vi.mocked(listWords).mockResolvedValueOnce(bank(8));
+    await act(async () => {
+      await h.run().startWords(6);
+    });
+    await act(async () => {
+      await h.run().record();
+    });
+    expect(h.run().state?.phase).toBe("recording");
+    vi.mocked(listWords).mockResolvedValueOnce(bank(8));
+    await act(async () => {
+      await h.run().playAgain();
+    });
+    await flush();
+    expect(h.session.cancelRunCapture).toHaveBeenCalledWith("replaced");
+    expect(scoreRecording).not.toHaveBeenCalled();
+    expect(h.run().state?.items.every((item) => item.attempts.length === 0)).toBe(true);
+
+    // A failed revisit keeps the finished run and its seeds; the retry asks for the same words.
+    await playAll(h, [60, 95, 95, 95, 95, 95]);
+    const finished = h.run().state;
+    const seeds = h.run().revisitWordSeeds;
+    vi.mocked(listWords).mockRejectedValueOnce(new Error("offline"));
+    await act(async () => {
+      await expect(h.run().runWithRevisitWords()).rejects.toThrow("offline");
+    });
+    expect(h.run().state).toBe(finished);
+    expect(h.run().revisitWordSeeds).toBe(seeds);
+    vi.mocked(listWords).mockResolvedValueOnce(bank(8));
+    await act(async () => {
+      await h.run().runWithRevisitWords();
+    });
+    expect(h.run().state?.items[0].prompt).toMatchObject({ text: seeds[0].word, source: "run-review" });
   });
 });

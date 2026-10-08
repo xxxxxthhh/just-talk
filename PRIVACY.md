@@ -54,6 +54,12 @@ The public trial never enables LLM features.
 
   **Delete my data** also clears these four keys from this browser, after the
   server confirms the deletion.
+- A **My words** run adds no browser storage. Its length choice and the words
+  picked to revisit are held only in memory for that run, and it keeps no
+  best score. Scoring a single word still updates that word's practice
+  history in your word bank on the server, exactly as ordinary word practice
+  does; a word that is not yet in the bank may be added. When the public
+  trial's word bank is full, scores still count but new words are not saved.
 - Usage counters are kept for about 70 days to enforce daily and monthly
   limits. When you delete your data, your counters are detached from your
   visitor ID. They still count toward site-wide totals.
