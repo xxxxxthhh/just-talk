@@ -414,11 +414,15 @@ export function usePracticeRun(session: RunSession) {
   }
 
   // Route's optional listen before the first reading: only on request, only while Ready and idle.
-  // It never blocks Record, and recording stops it.
+  // It never blocks Record, and recording stops it. A repeat stops the current playback first, so it
+  // starts a fresh, request-guarded one: an earlier play() that settles late can then neither report
+  // an error nor stop whatever plays next. A click while the reference is still loading does nothing.
   function hearFirst() {
     const current = stateRef.current;
     if (!current || current.config.mode !== "route" || current.phase !== "ready" || current.paused) return;
     if (current.endReason !== null || current.activeAttemptId !== null || captureRef.current) return;
+    if (current.items[current.index].referenceLoad === "pending") return;
+    session.stopCurrentSpeech();
     playReference();
   }
 

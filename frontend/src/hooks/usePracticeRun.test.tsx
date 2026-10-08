@@ -1483,11 +1483,14 @@ describe("usePracticeRun", () => {
     const stored = JSON.parse(window.localStorage.getItem(RUN_BEST_KEY) as string);
     expect(Object.keys(stored)).toEqual([`challenge|${focus}|1|85`]);
 
-    // Another tab stores a better Target 85 run, time passes beyond public expiry, Review opens,
-    // and a failed Play again comes back: the receipt is the one decided at the end of this run.
+    // Another tab stores a better Target 85 run (a personal record that never expires), eight days
+    // pass, Review opens, and a failed Play again comes back: the receipt is the one decided at the
+    // end of this run.
     const key = `challenge|${focus}|1|85`;
-    window.localStorage.setItem(RUN_BEST_KEY, JSON.stringify({ [key]: { runId: "other", points: 990, rating: "S", updatedAt: Date.now(), expiresAt: null } }));
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 8 * 24 * 60 * 60 * 1000);
+    const day = 24 * 60 * 60 * 1000;
+    const start = Date.now();
+    window.localStorage.setItem(RUN_BEST_KEY, JSON.stringify({ [key]: { runId: "other", points: 990, rating: "S", updatedAt: start, expiresAt: null } }));
+    vi.spyOn(Date, "now").mockReturnValue(start + 8 * day);
     h.hook.rerender();
     act(() => h.run().openReview());
     vi.mocked(buildRunDeck).mockImplementationOnce(() => {
@@ -1499,6 +1502,18 @@ describe("usePracticeRun", () => {
     h.hook.rerender();
     expect(h.run().receipt).toBe(receipt);
     expect(readBest({ config: target85, focus, rulesVersion: RUN_RULES_VERSION })?.runId).toBe("other");
+
+    // A public record that has really expired: readBest no longer returns it, and the receipt still
+    // neither changes nor writes anything.
+    const expired = JSON.stringify({ [key]: { runId: "public", points: 990, rating: "S", updatedAt: start, expiresAt: start + 7 * day } });
+    window.localStorage.setItem(RUN_BEST_KEY, expired);
+    expect(readBest({ config: target85, focus, rulesVersion: RUN_RULES_VERSION })).toBeNull();
+    h.hook.rerender();
+    act(() => h.run().openReview());
+    h.hook.rerender();
+    expect(h.run().receipt).toBe(receipt);
+    expect(h.run().receipt).toMatchObject({ outcome: "first-record", previousPoints: null });
+    expect(window.localStorage.getItem(RUN_BEST_KEY)).toBe(expired);
   });
 
   it("terminal_transition_refreshes_vocabulary_once", async () => {

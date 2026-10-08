@@ -2,10 +2,12 @@ import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getRunPreferences, setRunPreference } from "./game/preferences";
+import { configForChoice } from "./game/runConfig";
 import { prepareRunAudio, releaseRunAudio } from "./game/runAudio";
 import { holdMicrophone, playCue } from "./game/sfx";
 import { classifyCapture } from "./game/vad";
 import type { CaptureSummary, RunCaptureOptions, ScoreResult, WordResult } from "./types";
+import { usePracticeRun } from "./hooks/usePracticeRun";
 import { usePracticeSession } from "./usePracticeSession";
 
 const health = {
@@ -1080,5 +1082,86 @@ describe("usePracticeSession run capture analysis", () => {
       await expect(current).rejects.toThrow("NotAllowedError");
     });
     expect(playCue("good", "after-current-denial")).toBe(true);
+  });
+});
+
+// The run controller over the real session and speech hooks: only fetch, MediaRecorder and Audio are
+// fakes. Astra's A4 seam cases, kept as written.
+async function renderCombined() {
+  let session!: ReturnType<typeof usePracticeSession>;
+  let run!: ReturnType<typeof usePracticeRun>;
+  function Combined() {
+    session = usePracticeSession();
+    run = usePracticeRun(session);
+    return null;
+  }
+  const view = render(<Combined />);
+  await waitFor(() => expect(session.health).not.toBeNull());
+  await act(async () => { await run.start(configForChoice({ selection: "route", routeLength: 6 })); });
+  return { session: () => session, run: () => run, ...view };
+}
+
+describe("A4 real controller and speech seams", () => {
+  beforeEach(() => {
+    overrides = {}; deferPermission = false; asyncStop = false; recorders = []; permission = null;
+    installFetch(); installRecorder();
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it.each(["record", "next-preview"] as const)("replayed_reference_late_play_rejection_cannot_mutate_%s", async (destination) => {
+    let rejectReplay!: (e: Error) => void;
+    const replay = new Promise<void>((_resolve, reject) => { rejectReplay = reject; });
+    const play = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("Audio", vi.fn(function AudioMock() {
+      return { play, pause: vi.fn(), currentTime: 0, duration: 1 };
+    }));
+    const h = await renderCombined();
+    await act(async () => { h.run().hearFirst(); });
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(h.run().state?.items[0].referenceLoad).toBe("ready");
+    // The already loaded Audio takes the reuse branch on this second Hear it first.
+    play.mockReturnValueOnce(replay);
+    await act(async () => { h.run().hearFirst(); });
+    expect(play).toHaveBeenCalledTimes(2);
+    if (destination === "record") {
+      await act(async () => { await h.run().record(); });
+      expect(h.run().state?.phase).toBe("recording");
+    } else {
+      act(() => h.run().skip());
+      await act(async () => { h.run().hearFirst(); });
+      expect(h.run().state?.index).toBe(1);
+      expect(h.session().speechStatus).toBe("playing");
+    }
+    expect(h.session().error).toBeFalsy();
+    await act(async () => {
+      rejectReplay(new Error("AbortError: obsolete replay was interrupted"));
+      await Promise.resolve();
+    });
+    expect.soft(h.session().error).toBeFalsy();
+    if (destination === "next-preview") expect(h.session().speechStatus).toBe("playing");
+  });
+
+  it.each([true, false])("pending_old_reference_settlement_after_skip_leaves_new_preview_alone_%s", async (ok) => {
+    const play = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("Audio", vi.fn(function AudioMock() { return { play, pause: vi.fn(), currentTime: 0 }; }));
+    const h = await renderCombined();
+    const old = deferred<FetchResponse>();
+    overrides["/api/speak"] = () => old.promise;
+    act(() => h.run().hearFirst());
+    expect(h.session().speechStatus).toBe("loading");
+    act(() => h.run().skip());
+    delete overrides["/api/speak"];
+    await act(async () => { h.run().hearFirst(); });
+    expect(play).toHaveBeenCalledTimes(1);
+    const newText = h.run().state!.items[1].prompt.text;
+    await act(async () => {
+      old.resolve(ok ? respond({ audio_base64: "YXVkaW8=", content_type: "audio/mpeg" }) : respond({ detail: "old failure" }, 503));
+      await Promise.resolve();
+    });
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(h.session().speechStatus).toBe("playing");
+    expect(h.session().speakingText).toBe(newText);
+    expect(h.session().error).toBeFalsy();
+    expect(h.run().state?.items[1].referenceLoad).toBe("ready");
   });
 });
