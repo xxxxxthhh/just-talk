@@ -1195,4 +1195,23 @@ describe("PracticeRun", () => {
   });
 
   const tileOf = (label: string) => screen.getByText(label, { selector: ".run-tile-label" }).closest(".run-tile");
+  it("summary_done_tap_area_is_at_least_44px", () => {
+    // jsdom has no layout, so this pins the CSS contract; the browser probe is in the B6 evidence.
+    const css = readFileSync(resolve(process.cwd(), "src/game/game.css"), "utf8");
+    // The value of a property in any rule for exactly this selector.
+    const px = (selector: string, property: string) => {
+      for (const block of css.split(`\n${selector} {`).slice(1)) {
+        const value = block.slice(0, block.indexOf("}")).match(new RegExp(`\\b${property}: (-?\\d+)px`));
+        if (value) return Number(value[1]);
+      }
+      throw new Error(`no ${property} for ${selector}`);
+    };
+    const extension = -px("button.run-toggle::before,\n.run-secondary::before", "inset");
+    // The Route Summary's Done, and every other text button (Challenge / My words Done included).
+    expect(px(".run-summary-foot .run-secondary", "min-height") + 2 * extension).toBeGreaterThanOrEqual(44);
+    expect(px(".run-summary-foot .run-secondary", "min-width")).toBeGreaterThanOrEqual(44);
+    expect(px(".run-secondary", "min-height") + 2 * extension).toBeGreaterThanOrEqual(44);
+    renderRun(runV3Fixtures.route12Complete.run, { reducedMotion: true, nextSoundPhoneme: "ð" });
+    expect(screen.getByRole("button", { name: "Done" })).toHaveClass("run-secondary");
+  });
 });
