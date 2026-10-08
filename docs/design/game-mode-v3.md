@@ -213,7 +213,7 @@ Warm-ups still prioritize eligible previous-run weak words, then due words, then
 
 The A1 draft pairs some context targets with focus words at pack level. Six-item sampling does **not** require `context-3` and its matching focus word to be selected together (nor any other context/focus pair). Independently sample each stage; do not introduce a pairing constraint that changes the approved selection rule.
 
-Same runId plus the same inputs yields the same frozen deck. A new seed may repeat a previous subset; do not promise novelty on every replay or randomize order to manufacture it. Use stable unique slot IDs through `warmup-4`, `focus-4`, and `context-4` where applicable. Deck creation validates exact length and per-stage counts before Start is accepted.
+The seed is FNV-1a over `${runId}|${phoneme}|${stage}`, fed into mulberry32; selection is a partial Fisher–Yates draw re-sorted into canonical pack order. Golden tests pin this, so changing the hash or generator changes which items past run IDs drew. Same runId plus the same inputs yields the same frozen deck. A new seed may repeat a previous subset; do not promise novelty on every replay or randomize order to manufacture it. Use stable unique slot IDs through `warmup-4`, `focus-4`, and `context-4` where applicable. Deck creation validates exact length and per-stage counts before Start is accepted.
 
 New starter texts join the public shared TTS cache allowlist. Cache hits can avoid synthesis; cold or insufficient cached entries may still require it. Hear it first is not advertised as universally free. Existing public score-attempt, duration, and TTS limits remain unchanged.
 
