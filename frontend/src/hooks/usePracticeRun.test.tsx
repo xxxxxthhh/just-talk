@@ -784,4 +784,32 @@ describe("usePracticeRun", () => {
     expect(h.session.startRunCapture).toHaveBeenCalledTimes(2);
     expect(scoreRecording).toHaveBeenCalledTimes(1);
   });
+
+  it("stale_start_failure_never_reports_into_a_newer_run", async () => {
+    const h = await setup("route");
+    const old = deferred<boolean>();
+    h.session.startRunCapture.mockImplementationOnce(() => old.promise);
+    let recording!: Promise<void>;
+    act(() => {
+      recording = h.run().record();
+    });
+    act(() => h.run().exit());
+    await act(async () => {
+      await h.run().start("challenge");
+    });
+    await act(async () => {
+      old.reject(new Error("Old permission denied"));
+      await recording;
+    });
+    expect(h.session.setError).not.toHaveBeenCalled();
+    expect(h.run().state?.mode).toBe("challenge");
+
+    // The take still being captured reports its own failure.
+    h.session.startRunCapture.mockRejectedValueOnce(new Error("Microphone blocked"));
+    await act(async () => {
+      await h.run().record();
+    });
+    expect(h.session.setError).toHaveBeenCalledWith("Microphone blocked");
+    expect(h.run().state).toMatchObject({ phase: "ready", activeAttemptId: null, budgetUsed: 0 });
+  });
 });

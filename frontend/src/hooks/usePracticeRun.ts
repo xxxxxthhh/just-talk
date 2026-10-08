@@ -207,7 +207,11 @@ export function usePracticeRun(session: RunSession) {
       const options = { key, kind, autoStop: getRunPreferences().autoStop };
       started = await session.startRunCapture(options, (blob, summary) => handleBlob(key, kind, blob, summary));
     } catch (err) {
-      session.setError(err instanceof Error ? err.message : "Could not start the microphone.");
+      // Only the take still being captured in this run may report its failure.
+      const active = stateRef.current;
+      if (active?.runId === key.runId && active.activeAttemptId === key.attemptId) {
+        session.setError(err instanceof Error ? err.message : "Could not start the microphone.");
+      }
     }
     if (!started) {
       if (captureRef.current === key) captureRef.current = null;

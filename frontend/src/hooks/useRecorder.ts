@@ -136,13 +136,20 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
 
     acquisitionRef.current += 1;
     const acquisition = acquisitionRef.current;
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    });
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+    } catch (error) {
+      // A denial for an acquisition that has moved on belongs to nobody.
+      if (acquisition !== acquisitionRef.current) return false;
+      throw error;
+    }
     // Cancelled, replaced, or unmounted while permission was pending: the caller gets false and
     // the newer capture keeps the recorder.
     if (acquisition !== acquisitionRef.current) {

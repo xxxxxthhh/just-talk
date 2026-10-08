@@ -81,8 +81,9 @@ function runOptions(autoStop = false): RunCaptureOptions {
 }
 
 // The latest pending permission prompt; permissions holds every one in request order.
-let permission: { resolve: () => void } | null;
-let permissions: { resolve: () => void }[] = [];
+type Permission = { resolve: () => void; reject: (error: Error) => void };
+let permission: Permission | null;
+let permissions: Permission[] = [];
 let deferPermission = false;
 // Real browsers fire onstop after stop() returns; asyncStop leaves it to fireStop.
 let asyncStop = false;
@@ -99,12 +100,12 @@ function installRecorder() {
   failStart = false;
   const getUserMedia = vi.fn(
     () =>
-      new Promise((resolve) => {
+      new Promise((resolve, reject) => {
         const track = { stop: vi.fn() };
         tracks.push(track);
         const stream = { getTracks: () => [track] };
         if (deferPermission) {
-          permission = { resolve: () => resolve(stream) };
+          permission = { resolve: () => resolve(stream), reject };
           permissions.push(permission);
         } else {
           resolve(stream);
@@ -994,5 +995,42 @@ describe("usePracticeSession run capture analysis", () => {
     expect(playCue("good", "newer-hold")).toBe(false);
     releaseNewer();
     expect(playCue("good", "after-newer-hold")).toBe(true);
+  });
+
+  it("late_permission_denial_after_cancel_settles_false_and_current_denial_reports", async () => {
+    const session = await openRun();
+    deferPermission = true;
+    const cancelledTake = vi.fn();
+    let cancelled!: Promise<boolean>;
+    act(() => {
+      cancelled = session.current.startRunCapture(runOptions(true), cancelledTake);
+    });
+    act(() => session.current.exitRun());
+    deferPermission = false;
+    await act(async () => {
+      await session.current.startRecording();
+    });
+    await act(async () => {
+      permissions[0].reject(new Error("NotAllowedError"));
+      expect(await cancelled).toBe(false);
+    });
+    expect(cancelledTake).not.toHaveBeenCalled();
+    expect(session.current.recorderState).toBe("recording");
+    act(() => session.current.stopRecording());
+    expect(session.current.status).toBe("Recording ready");
+
+    // A denial for the capture still waiting rejects, and its cue hold is released.
+    act(() => session.current.enterRun());
+    act(() => session.current.prepareRunAudio());
+    deferPermission = true;
+    let current!: Promise<boolean>;
+    act(() => {
+      current = session.current.startRunCapture(runOptions(true), vi.fn());
+    });
+    await act(async () => {
+      permissions[1].reject(new Error("NotAllowedError"));
+      await expect(current).rejects.toThrow("NotAllowedError");
+    });
+    expect(playCue("good", "after-current-denial")).toBe(true);
   });
 });

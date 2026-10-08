@@ -335,4 +335,46 @@ describe("useRecorder", () => {
     expect(instances[0].state).toBe("inactive");
     expect(older).not.toHaveBeenCalled();
   });
+
+  it("stale_permission_denial_resolves_false_and_current_denial_throws", async () => {
+    stubUrl();
+    const { MediaRecorderMock } = makeDeferredStopRecorderMock();
+    vi.stubGlobal("MediaRecorder", MediaRecorderMock);
+    const pending: { resolve: (stream: unknown) => void; reject: (error: Error) => void }[] = [];
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn(() => new Promise((resolve, reject) => pending.push({ resolve, reject }))) }
+    });
+    let controls!: ReturnType<typeof useRecorder>;
+    function Harness() {
+      controls = useRecorder({ maxMs: 30_000, onUnsupported: vi.fn(), onRecordingReady: vi.fn() });
+      return null;
+    }
+    render(<Harness />);
+
+    // Replaced, then cancelled: both late denials belong to nobody.
+    let replaced!: Promise<boolean>;
+    let cancelled!: Promise<boolean>;
+    act(() => {
+      replaced = controls.startRecording(vi.fn());
+      cancelled = controls.startRecording(vi.fn());
+    });
+    act(() => controls.discardRecording("exit"));
+    await act(async () => {
+      pending[0].reject(new Error("NotAllowedError"));
+      pending[1].reject(new Error("NotAllowedError"));
+      expect(await replaced).toBe(false);
+      expect(await cancelled).toBe(false);
+    });
+
+    // The current request's denial still reaches its caller.
+    let current!: Promise<boolean>;
+    act(() => {
+      current = controls.startRecording(vi.fn());
+    });
+    await act(async () => {
+      pending[2].reject(new Error("NotAllowedError"));
+      await expect(current).rejects.toThrow("NotAllowedError");
+    });
+  });
 });
