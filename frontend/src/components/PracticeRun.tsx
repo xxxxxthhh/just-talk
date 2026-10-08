@@ -408,13 +408,13 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean }) {
       <div className="run-middle">
         <div className="run-prompt-block">
           <span className="run-stage-label">{stage}</span>
-          {heading ?? (
-            <p
-              className={`run-prompt-v2 ${item.prompt.kind === "sentence" ? "is-sentence" : "is-word"}${reviewing ? " is-quiet" : ""}`}
-            >
-              {item.prompt.text}
-            </p>
-          )}
+          {heading}
+          {/* The material to read stays on screen in every state, rescue included. */}
+          <p
+            className={`run-prompt-v2 ${item.prompt.kind === "sentence" ? "is-sentence" : "is-word"}${reviewing ? " is-quiet" : ""}`}
+          >
+            {item.prompt.text}
+          </p>
         </div>
         <RunRing {...ring} />
         <div className="run-status">{status}</div>

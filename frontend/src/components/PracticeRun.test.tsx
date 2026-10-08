@@ -298,6 +298,30 @@ describe("PracticeRun", () => {
     expect(screen.getByRole("img", { name: "1 of 2 hearts left" })).toBeInTheDocument();
   });
 
+  it("rescue keeps the current word or sentence on screen before and after the reference loads", () => {
+    const prompt = (container: HTMLElement) => container.querySelector(".run-middle .run-prompt-v2");
+    const word = renderRun(runV2Fixtures.rescue.run);
+    expect(prompt(word.container)).toHaveTextContent("those");
+    word.rerender(<PracticeRun {...practiceRunProps(runV2Fixtures.rescueLoaded.run)} />);
+    expect(prompt(word.container)).toHaveTextContent("those");
+    expect(screen.getByRole("heading", { name: "One more listen" })).toBeInTheDocument();
+    word.unmount();
+
+    let sentence = start("challenge");
+    for (let i = 0; i < 4; i += 1) sentence = advance(score(sentence, 90));
+    sentence = score(sentence, 40);
+    expect(sentence.phase).toBe("rescue");
+    const view = renderRun(sentence);
+    expect(prompt(view.container)).toHaveTextContent("I think we can walk home now.");
+    const loaded = step(
+      step(sentence, { type: "REFERENCE_CLICKED", runId: sentence.runId, itemId: "context-1" }),
+      { type: "REFERENCE_LOADED", runId: sentence.runId, itemId: "context-1", ok: true }
+    );
+    view.rerender(<PracticeRun {...practiceRunProps(loaded)} />);
+    expect(prompt(view.container)).toHaveTextContent("I think we can walk home now.");
+    expect(screen.getByRole("button", { name: "Record again" })).toBeEnabled();
+  });
+
   it("heart_overlay_never_intercepts_summary_buttons", () => {
     const callbacks = handlers();
     const { container } = renderRun(runV2Fixtures.summaryUnrated.run, callbacks);
