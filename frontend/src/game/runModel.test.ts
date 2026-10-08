@@ -1,20 +1,40 @@
 import { describe, expect, it } from "vitest";
 
+import { configForChoice, wordsConfig } from "./runConfig";
 import { canAdvance, canRecord, canSubmit, judge, nextCapture, runReducer } from "./runModel";
-import type { AttemptKey, RunAction, RunMode, RunPrompt, RunState, ScoreResponse, ScoreResult, WordResult } from "../types";
+import type {
+  AttemptKey,
+  RunAction,
+  RunConfig,
+  RunMode,
+  RunPrompt,
+  RunState,
+  ScoreResponse,
+  ScoreResult,
+  WordResult
+} from "../types";
 
 const RUN = "run-1";
 
-function prompts(): RunPrompt[] {
-  return Array.from({ length: 6 }, (_, i) => ({
-    itemId: `item-${i}`,
-    stage: i < 2 ? "warmup" : i < 4 ? "focus" : "context",
-    kind: i < 4 ? "word" : "sentence",
-    text: i < 4 ? `word${i}` : `a short sentence number ${i}`,
-    targetPhoneme: "θ",
-    targetWord: `word${i}`,
-    source: "starter"
-  }));
+const ROUTE_6 = configForChoice({ selection: "route", routeLength: 6 });
+const ROUTE_12 = configForChoice({ selection: "route", routeLength: 12 });
+const TARGET_60 = configForChoice({ selection: "target60", routeLength: 6 });
+const TARGET_85 = configForChoice({ selection: "target85", routeLength: 6 });
+
+function prompts(length = 6): RunPrompt[] {
+  const perStage = length / 3;
+  return Array.from({ length }, (_, i) => {
+    const sentence = i >= 2 * perStage;
+    return {
+      itemId: `item-${i}`,
+      stage: i < perStage ? "warmup" : sentence ? "context" : "focus",
+      kind: sentence ? "sentence" : "word",
+      text: sentence ? `a short sentence number ${i}` : `word${i}`,
+      targetPhoneme: "θ",
+      targetWord: `word${i}`,
+      source: "starter"
+    };
+  });
 }
 
 function word(text: string, accuracy: number | null, errorType = "None"): WordResult {
@@ -47,8 +67,9 @@ function reduce(state: RunState | null, ...actions: RunAction[]): RunState {
   return next;
 }
 
-function start(mode: RunMode): RunState {
-  return reduce(null, { type: "START", runId: RUN, mode, prompts: prompts() });
+function start(choice: RunMode | RunConfig): RunState {
+  const config = choice === "route" ? ROUTE_6 : choice === "challenge" ? TARGET_60 : choice;
+  return reduce(null, { type: "START", runId: RUN, config, prompts: prompts(config.length) });
 }
 
 let counter = 0;
@@ -539,5 +560,241 @@ describe("run model", () => {
     const paused = reduce(sent, { type: "PAUSE", runId: RUN });
     const ended = reduce(paused, { type: "SCORE_RECEIVED", key, response: scored(40) });
     expect(ended).toMatchObject({ endReason: "hearts-exhausted", phase: "summary", paused: false });
+  });
+});
+
+describe("run configurations", () => {
+  // Uses every extra of the current item's rescue: a low first reading, then unjudged rescues
+  // until the pool is empty. Returns the state after the last extra.
+  function lowThenUnjudged(state: RunState, first: number, unjudged: number): RunState {
+    let next = loadReference(play(state, scored(first)));
+    for (let i = 0; i < unjudged; i += 1) next = play(next, noMatch);
+    return next;
+  }
+
+  it("config_matrix_is_exact_and_start_freezes_it", () => {
+    const config = { ...TARGET_85 };
+    const state = reduce(null, { type: "START", runId: RUN, config, prompts: prompts() });
+    expect(state.config).toEqual(TARGET_85);
+    expect(Object.isFrozen(state.config)).toBe(true);
+    expect(state.mode).toBe("challenge");
+    expect(state.hearts).toBe(2);
+    expect(state.items.every((item) => item.cannotConfirmReason === null)).toBe(true);
+    // The caller's object cannot change the accepted run.
+    (config as { maxExtra: number }).maxExtra = 2;
+    expect(state.config.maxExtra).toBe(4);
+
+    const route = start(ROUTE_12);
+    expect(route).toMatchObject({ mode: "route", hearts: null, extraUsed: 0 });
+    expect(route.items).toHaveLength(12);
+    expect(route.config).toEqual(ROUTE_12);
+  });
+
+  it("defensive_reducer_rejects_invalid_start", () => {
+    const deck = prompts();
+    const invalid: [unknown, readonly RunPrompt[]][] = [
+      [{ source: "starter", mode: "challenge", length: 12, target: 60, maxExtra: 4 }, prompts(12)],
+      [{ ...TARGET_85, maxExtra: 2 }, deck],
+      ["challenge", deck],
+      [ROUTE_12, deck],
+      [ROUTE_6, prompts(12)],
+      [wordsConfig(6), deck],
+      [ROUTE_6, deck.map((p, i) => (i === 1 ? { ...p, itemId: "item-0" } : p))],
+      [ROUTE_6, deck.map((p, i) => (i === 1 ? { ...p, text: "WORD0" } : p))],
+      [ROUTE_6, deck.map((p, i) => (i === 2 ? { ...p, stage: "context" as const } : p))],
+      [ROUTE_6, deck.map((p, i) => (i === 5 ? { ...p, targetPhoneme: "v" } : p))]
+    ];
+    const existing = play(start("challenge"), scored(90));
+    for (const [config, candidate] of invalid) {
+      const action = { type: "START", runId: "run-2", config, prompts: candidate } as RunAction;
+      expect(runReducer(null, action)).toBeNull();
+      expect(runReducer(existing, action)).toBe(existing);
+    }
+  });
+
+  it("target60_59_6_vs_60_and_target85_84_9_vs_85", () => {
+    for (const [config, below, at] of [
+      [TARGET_60, 59.6, 60],
+      [TARGET_85, 84.9, 85]
+    ] as const) {
+      const low = play(start(config), scored(below));
+      expect(low.items[0]).toMatchObject({ resolution: "open", verdict: "relisten" });
+      expect(low.phase).toBe("rescue");
+      expect(nextCapture(low)).toEqual({ purpose: "rescue", slot: "extra" });
+      const pass = play(start(config), scored(at));
+      expect(pass.items[0]).toMatchObject({ resolution: "resolved", verdict: "passed" });
+      expect(pass.phase).toBe("feedback");
+    }
+    // Target 60 is unchanged from v2: an 80 passes there, while Target 85 asks for a rescue.
+    expect(play(start(TARGET_60), scored(80)).items[0].verdict).toBe("passed");
+    expect(play(start(TARGET_85), scored(80)).items[0].verdict).toBe("relisten");
+    // Route never judges against a target.
+    expect(play(start(ROUTE_12), scored(20)).items[0].verdict).toBe("practiced");
+  });
+
+  it("target85_80_then_82_loses_one_heart", () => {
+    let state = play(start(TARGET_85), scored(80));
+    const firstLow = state.items[0].firstLowAttemptId;
+    state = rescue(state, scored(82));
+    expect(state.items[0]).toMatchObject({ resolution: "resolved", verdict: "heart-lost", firstLowAttemptId: firstLow });
+    expect(state.items[0].attempts[0].result?.scores.accuracy).toBe(80);
+    expect(state.hearts).toBe(1);
+    expect(state.extraUsed).toBe(1);
+    expect(state.phase).toBe("feedback");
+    // The item is settled: no third reading can farm a heart or a score.
+    expect(canRecord(state)).toBe(false);
+    expectBudgetInvariant(state);
+  });
+
+  it("target85_80_then_88_saves_first_reading", () => {
+    let state = play(start(TARGET_85), scored(80));
+    const firstLow = state.items[0].attempts[0].key.attemptId;
+    // An unjudged rescue keeps the first-low evidence and waits for a valid one.
+    state = play(loadReference(state), noMatch);
+    expect(state.phase).toBe("rescue");
+    expect(state.items[0].firstLowAttemptId).toBe(firstLow);
+    state = play(state, scored(88));
+    expect(state.items[0]).toMatchObject({ resolution: "resolved", verdict: "saved", firstLowAttemptId: firstLow });
+    expect(state.items[0].attempts[0].result?.scores.accuracy).toBe(80);
+    expect(state.hearts).toBe(2);
+    expect(state.extraUsed).toBe(2);
+    expectBudgetInvariant(state);
+  });
+
+  it("route12_and_target85_share_four_extras", () => {
+    // Target 85: rescues and unjudged re-records draw on one pool of four.
+    let challenge = play(lowThenUnjudged(start(TARGET_85), 80, 1), scored(88));
+    expect(challenge.items[0].verdict).toBe("saved");
+    expect(challenge.extraUsed).toBe(2);
+    challenge = play(advance(challenge), noMatch);
+    expect(nextCapture(challenge)).toEqual({ purpose: "rerecord", slot: "extra" });
+    challenge = play(challenge, scored(70));
+    expect(challenge.extraUsed).toBe(3);
+    expect(nextCapture(challenge)).toEqual({ purpose: "rescue", slot: "extra" });
+    challenge = rescue(challenge, scored(95));
+    expect(challenge.items[1].verdict).toBe("saved");
+    expect(challenge.extraUsed).toBe(4);
+    // Every remaining item still has its own main slot.
+    challenge = advance(challenge);
+    expect(nextCapture(challenge)).toEqual({ purpose: "initial", slot: "main" });
+    expect(challenge.budgetUsed).toBe(2 + 4);
+    expectBudgetInvariant(challenge);
+
+    // Route 12: four unjudged re-records, then none; the item can still be left.
+    let route = start(ROUTE_12);
+    for (let i = 0; i < 4; i += 1) {
+      route = play(route, noMatch);
+      expect(route.extraUsed).toBe(i);
+      expect(nextCapture(route)).toEqual({ purpose: "rerecord", slot: "extra" });
+    }
+    route = play(route, noMatch);
+    expect(route.extraUsed).toBe(4);
+    expect(nextCapture(route)).toBeNull();
+    expect(canRecord(route)).toBe(false);
+    expect(route.items[0].verdict).toBe("no-match");
+    expect(canAdvance(route)).toBe(true);
+    route = advance(route);
+    expect(nextCapture(route)).toEqual({ purpose: "initial", slot: "main" });
+
+    // Target 60 and Route 6 keep two.
+    let target60 = advance(lowThenUnjudged(start(TARGET_60), 40, 2));
+    expect(target60.extraUsed).toBe(2);
+    target60 = play(target60, scored(40));
+    expect(target60.items[1].verdict).toBe("cannot-confirm");
+  });
+
+  it("fifth_needed_extra_cannot_confirm_without_heart_loss", () => {
+    let state = advance(lowThenUnjudged(start(TARGET_85), 80, 4));
+    expect(state.items[0]).toMatchObject({ verdict: "cannot-confirm", cannotConfirmReason: "rescue-budget" });
+    expect(state.extraUsed).toBe(4);
+    expect(state.hearts).toBe(2);
+
+    // A later first low with the pool empty is not confirmed and costs nothing.
+    state = play(state, scored(84.9));
+    expect(state.items[1]).toMatchObject({
+      resolution: "unjudged",
+      verdict: "cannot-confirm",
+      cannotConfirmReason: "rescue-budget"
+    });
+    expect(state.items[1].firstLowAttemptId).not.toBeNull();
+    expect(state.hearts).toBe(2);
+    expect(state.challengeIncomplete).toBe(true);
+    expect(state.phase).toBe("feedback");
+    expect(canRecord(state)).toBe(false);
+    expect(canAdvance(state)).toBe(true);
+    expectBudgetInvariant(state);
+  });
+
+  it("unjudged_first_reading_with_empty_pool_has_no_low_evidence", () => {
+    let state = advance(lowThenUnjudged(start(TARGET_85), 80, 3));
+    state = rescue(state, scored(90));
+    expect(state.extraUsed).toBe(4);
+    state = play(advance(state), noMatch);
+    expect(state.items[1]).toMatchObject({
+      resolution: "unjudged",
+      verdict: "cannot-confirm",
+      cannotConfirmReason: "unjudged-budget",
+      firstLowAttemptId: null
+    });
+    expect(state.hearts).toBe(2);
+    expect(state.challengeIncomplete).toBe(true);
+  });
+
+  it("failed_reference_records_reference_unavailable", () => {
+    const failed = loadReference(play(start(TARGET_85), scored(80)), false);
+    expect(failed.items[0]).toMatchObject({ verdict: "cannot-confirm", cannotConfirmReason: "reference-unavailable" });
+    expect(failed.extraUsed).toBe(0);
+    expect(failed.hearts).toBe(2);
+
+    const declined = reduce(play(start(TARGET_85), scored(80)), { type: "CANNOT_CONFIRM", runId: RUN, itemId: "item-0" });
+    expect(declined.items[0]).toMatchObject({ verdict: "cannot-confirm", cannotConfirmReason: "reference-unavailable" });
+  });
+
+  it("refund_once_at_extra_slot_four", () => {
+    let state = lowThenUnjudged(start(TARGET_85), 80, 3);
+    expect(state.extraUsed).toBe(3);
+    const [sent, key] = send(state);
+    expect(sent.extraUsed).toBe(4);
+    expect(canSubmit(sent, key)).toBe(false);
+    const rejected: RunAction = { type: "SCORE_FAILED", key, failure: { kind: "rejected", message: "Too long" } };
+    state = reduce(sent, rejected);
+    expect(state.extraUsed).toBe(3);
+    expect(state.phase).toBe("rescue");
+    expect(reduce(state, rejected)).toBe(state);
+    expectBudgetInvariant(state);
+    // The refunded slot is usable again, once.
+    state = play(state, scored(88));
+    expect(state.items[0].verdict).toBe("saved");
+    expect(state.extraUsed).toBe(4);
+    expectBudgetInvariant(state);
+  });
+
+  it("unknown_does_not_refund_or_retry", () => {
+    const state = lowThenUnjudged(start(TARGET_85), 80, 3);
+    const [sent, key] = send(state);
+    const unknown = reduce(sent, { type: "SCORE_FAILED", key, failure: { kind: "unknown", message: "Network" } });
+    expect(unknown.extraUsed).toBe(4);
+    expect(unknown.items[0]).toMatchObject({ resolution: "pending", verdict: "pending" });
+    expect(unknown.challengeIncomplete).toBe(true);
+    expect(canRecord(unknown)).toBe(false);
+    expect(nextCapture(unknown)).toBeNull();
+    // A late answer for the same take is not accepted.
+    expect(reduce(unknown, { type: "SCORE_RECEIVED", key, response: scored(90) })).toBe(unknown);
+    expectBudgetInvariant(unknown);
+  });
+
+  it("local_reject_preserves_main_and_rescue_budget", () => {
+    let [state, key] = capture(start(TARGET_85));
+    state = reduce(state, { type: "LOCAL_REJECT", key, reason: "too-short" });
+    expect(state).toMatchObject({ budgetUsed: 0, mainItemIdsUsed: [], extraUsed: 0, phase: "ready" });
+
+    state = lowThenUnjudged(state, 80, 3);
+    const firstLow = state.items[0].firstLowAttemptId;
+    [state, key] = capture(state);
+    state = reduce(state, { type: "LOCAL_REJECT", key, reason: "no-speech" });
+    expect(state).toMatchObject({ extraUsed: 3, phase: "rescue" });
+    expect(state.items[0].firstLowAttemptId).toBe(firstLow);
+    expect(nextCapture(state)).toEqual({ purpose: "rescue", slot: "extra" });
+    expectBudgetInvariant(state);
   });
 });

@@ -282,11 +282,14 @@ export type RunItem = {
   firstLowAttemptId: string | null;
   referenceLoad: "idle" | "pending" | "ready" | "failed";
   lastRejection: { attemptId: string; message: string; localReason?: LocalRejectReason } | null;
+  // Why a cannot-confirm verdict was given, so its copy never implies a low reading that didn't happen.
+  cannotConfirmReason: "rescue-budget" | "unjudged-budget" | "reference-unavailable" | null;
 };
 
 export type RunState = {
   runId: string;
-  mode: RunMode;
+  readonly config: RunConfig; // Frozen at START; every rule reads it.
+  readonly mode: RunMode; // Compatibility copy of config.mode, assigned only at START.
   phase: RunPhase;
   paused: boolean;
   items: readonly RunItem[];
@@ -295,14 +298,14 @@ export type RunState = {
   hearts: 0 | 1 | 2 | null;
   budgetUsed: number; // Reserved on send; refunded for rejected, not total HTTP requests.
   mainItemIdsUsed: readonly string[];
-  extraUsed: 0 | 1 | 2;
+  extraUsed: 0 | 1 | 2 | 3 | 4; // Never above config.maxExtra.
   challengeIncomplete: boolean;
   endReason: "completed" | "hearts-exhausted" | "quit" | "quota" | null;
   challengeOutcome: "cleared" | "failed" | "incomplete" | null;
 };
 
 export type RunAction =
-  | { type: "START"; runId: string; mode: RunMode; prompts: readonly RunPrompt[] }
+  | RunStartAction
   | { type: "BEGIN_CAPTURE"; key: AttemptKey; purpose: AttemptPurpose; slot: "main" | "extra" }
   | { type: "BLOB_READY"; key: AttemptKey; blob: Blob }
   | { type: "CANCEL_CAPTURE"; key: AttemptKey }
@@ -378,7 +381,7 @@ export type RunConfig = StarterRunConfig | WordsRunConfig;
 export type RunChoice = Readonly<{
   selection: RunSelection; routeLength: RunLength;
 }>;
-// Replaces START in RunAction together with the reducer (A2); no separate mode/target overrides.
+// The only START: no separate mode/target overrides.
 export type RunStartAction = Readonly<{
   type: "START"; runId: string; config: RunConfig;
   prompts: readonly Readonly<RunPrompt>[];

@@ -12,9 +12,14 @@ import type {
   Verdict
 } from "../types";
 import { weakWordsFromResult } from "../scoreUtils";
+import { isRunConfig, isValidRunDeck } from "./runConfig";
 
+// The tier and low-evidence line; Challenge judgments use the run's frozen target instead.
 export const PASS_ACCURACY = 60;
+// Kept for existing UI imports only; the rules read config.maxExtra.
 export const MAX_EXTRA_ATTEMPTS = 2;
+const EXTRA_COUNTS = [0, 1, 2, 3, 4] as const;
+type ExtraCount = RunState["extraUsed"];
 // Sentence words at or under this accuracy are collected; 71–85 stay review hints.
 export const SENTENCE_COLLECT_MAX = 70;
 const LOCAL_REJECT_MESSAGES: Record<LocalRejectReason, string> = {
@@ -48,7 +53,7 @@ export function nextCapture(state: RunState): { purpose: AttemptPurpose; slot: "
   const item = currentItem(state);
   if (!item) return null;
   if (!state.mainItemIdsUsed.includes(item.prompt.itemId)) return { purpose: "initial", slot: "main" };
-  if (state.extraUsed >= MAX_EXTRA_ATTEMPTS) return null;
+  if (state.extraUsed >= state.config.maxExtra) return null;
   return { purpose: inRescue(item) ? "rescue" : "rerecord", slot: "extra" };
 }
 
@@ -85,7 +90,12 @@ export function canSubmit(state: RunState, key: AttemptKey): boolean {
   if (!attempt || attempt.status !== "capturing" || !attempt.recording) return false;
   return attempt.slot === "main"
     ? !state.mainItemIdsUsed.includes(key.itemId)
-    : state.extraUsed < MAX_EXTRA_ATTEMPTS;
+    : state.extraUsed < state.config.maxExtra;
+}
+
+// Moves the extra count by one within 0..4; the send and refund guards keep it within maxExtra.
+function stepExtra(used: ExtraCount, delta: 1 | -1): ExtraCount {
+  return EXTRA_COUNTS[used + delta] ?? used;
 }
 
 function settledPhase(item: RunItem): RunPhase {
@@ -137,10 +147,10 @@ function leaveItem(state: RunState): RunState {
   return { ...next, index: next.index + 1, phase: "ready" };
 }
 
-function cannotConfirm(state: RunState): RunState {
+function cannotConfirm(state: RunState, reason: NonNullable<RunItem["cannotConfirmReason"]>): RunState {
   const item = currentItem(state);
   if (!item) return state;
-  const unconfirmed: RunItem = { ...item, resolution: "unjudged", verdict: "cannot-confirm" };
+  const unconfirmed: RunItem = { ...item, resolution: "unjudged", verdict: "cannot-confirm", cannotConfirmReason: reason };
   return markIncomplete({ ...replaceItem(state, state.index, unconfirmed), phase: "feedback" });
 }
 
@@ -166,24 +176,27 @@ function scoreReceived(state: RunState, attempt: Attempt, response: ScoreRespons
   if (judgment.kind !== "valid") {
     if (rescuing) {
       next = { ...replaceItem(next, next.index, scored), phase: "rescue" };
-      return nextCapture(next) ? next : cannotConfirm(next);
+      return nextCapture(next) ? next : cannotConfirm(next, "rescue-budget");
     }
     scored = { ...scored, resolution: "unjudged", verdict: judgment.kind };
     next = { ...replaceItem(next, next.index, scored), phase: "feedback" };
-    return next.mode === "route" || nextCapture(next) ? next : cannotConfirm(next);
+    // No valid reading exists, so an empty pool says nothing about a low score.
+    return next.mode === "route" || nextCapture(next) ? next : cannotConfirm(next, "unjudged-budget");
   }
 
-  if (next.mode === "route") {
+  const { target } = next.config;
+  if (target === null) {
     scored = { ...scored, resolution: "resolved", verdict: "practiced" };
     return { ...replaceItem(next, next.index, scored), phase: "feedback" };
   }
 
-  const low = judgment.accuracy < PASS_ACCURACY;
+  // The raw first valid accuracy against the frozen target, never rounded.
+  const low = judgment.accuracy < target;
   if (!rescuing && low) {
     // Also re-opens an item whose earlier reading was not judged: this is its first valid reading.
     scored = { ...scored, resolution: "open", verdict: "relisten", firstLowAttemptId: attempt.key.attemptId };
     next = { ...replaceItem(next, next.index, scored), phase: "rescue" };
-    return nextCapture(next) ? next : cannotConfirm(next);
+    return nextCapture(next) ? next : cannotConfirm(next, "rescue-budget");
   }
 
   const verdict: Verdict = !rescuing ? "passed" : low ? "heart-lost" : "saved";
@@ -197,9 +210,13 @@ function scoreReceived(state: RunState, attempt: Attempt, response: ScoreRespons
 
 export function runReducer(state: RunState | null, action: RunAction): RunState | null {
   if (action.type === "START") {
+    // Start validates before replacing a run; this backstop leaves the current state untouched.
+    if (!isRunConfig(action.config) || !isValidRunDeck(action.config, action.prompts)) return state;
+    const config = Object.freeze({ ...action.config });
     return {
       runId: action.runId,
-      mode: action.mode,
+      config,
+      mode: config.mode,
       phase: "ready",
       paused: false,
       items: action.prompts.map((prompt) => ({
@@ -209,11 +226,12 @@ export function runReducer(state: RunState | null, action: RunAction): RunState 
         verdict: null,
         firstLowAttemptId: null,
         referenceLoad: "idle",
-        lastRejection: null
+        lastRejection: null,
+        cannotConfirmReason: null
       })),
       index: 0,
       activeAttemptId: null,
-      hearts: action.mode === "challenge" ? 2 : null,
+      hearts: config.mode === "challenge" ? 2 : null,
       budgetUsed: 0,
       mainItemIdsUsed: [],
       extraUsed: 0,
@@ -288,7 +306,7 @@ export function runReducer(state: RunState | null, action: RunAction): RunState 
         phase: "scoring",
         budgetUsed: state.budgetUsed + 1,
         mainItemIdsUsed: attempt.slot === "main" ? [...state.mainItemIdsUsed, item.prompt.itemId] : state.mainItemIdsUsed,
-        extraUsed: attempt.slot === "extra" ? ((state.extraUsed + 1) as 1 | 2) : state.extraUsed
+        extraUsed: attempt.slot === "extra" ? stepExtra(state.extraUsed, 1) : state.extraUsed
       };
     }
     case "SCORE_RECEIVED": {
@@ -315,7 +333,7 @@ export function runReducer(state: RunState | null, action: RunAction): RunState 
         budgetUsed: state.budgetUsed - 1,
         mainItemIdsUsed:
           attempt.slot === "main" ? state.mainItemIdsUsed.filter((id) => id !== item.prompt.itemId) : state.mainItemIdsUsed,
-        extraUsed: attempt.slot === "extra" ? ((state.extraUsed - 1) as 0 | 1) : state.extraUsed
+        extraUsed: attempt.slot === "extra" ? stepExtra(state.extraUsed, -1) : state.extraUsed
       };
       const remaining = withoutAttempt(item, attempt.key.attemptId);
       if (kind === "quota") {
@@ -354,11 +372,12 @@ export function runReducer(state: RunState | null, action: RunAction): RunState 
       if (!target || target.referenceLoad !== "pending") return state;
       const next = replaceItem(state, index, { ...target, referenceLoad: action.ok ? "ready" : "failed" });
       const blocksRescue = !action.ok && index === state.index && state.phase === "rescue" && state.endReason === null;
-      return blocksRescue ? cannotConfirm(next) : next;
+      return blocksRescue ? cannotConfirm(next, "reference-unavailable") : next;
     }
     case "CANNOT_CONFIRM": {
       if (!item || item.prompt.itemId !== action.itemId || !idle(state) || state.phase !== "rescue") return state;
-      return cannotConfirm(state);
+      // Declining the rescue happens at the reference step: the reading it needs is unavailable.
+      return cannotConfirm(state, "reference-unavailable");
     }
     case "SKIP": {
       if (!item || item.prompt.itemId !== action.itemId || !idle(state) || item.resolution !== "open") return state;

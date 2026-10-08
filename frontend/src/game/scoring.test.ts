@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { configForChoice } from "./runConfig";
 import { nextCapture, runReducer } from "./runModel";
 import {
   runWeakWords,
@@ -52,7 +53,8 @@ function reduce(state: RunState | null, ...actions: RunAction[]): RunState {
 }
 
 function start(mode: RunMode): RunState {
-  return reduce(null, { type: "START", runId: RUN, mode, prompts: prompts() });
+  const config = configForChoice({ selection: mode === "route" ? "route" : "target60", routeLength: 6 });
+  return reduce(null, { type: "START", runId: RUN, config, prompts: prompts() });
 }
 
 function itemId(state: RunState): string {

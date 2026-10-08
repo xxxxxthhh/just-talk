@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecording } from "../api";
 import { bestBucketForRun, finalizeRunBest } from "../game/personalBest";
 import { getRunPreferences, setRunPreference, useRunPreferences } from "../game/preferences";
+import { isRunConfig, isValidRunDeck } from "../game/runConfig";
 import { buildRunDeck } from "../game/runDeck";
 import { canRecord, nextCapture, runReducer, SENTENCE_COLLECT_MAX } from "../game/runModel";
 import {
@@ -23,7 +24,7 @@ import type {
   PhonemeStat,
   RunAction,
   RunBestReceipt,
-  RunMode,
+  RunConfig,
   RunPrompt,
   RunState,
   ScoreFailure,
@@ -94,6 +95,8 @@ function isScoreResponse(value: unknown): value is ScoreResponse {
   if (result.recognition_status === "no_match") return session === null || session === undefined;
   return isObject(session) && typeof session.id === "string" && session.id !== "";
 }
+
+const START_UNAVAILABLE = "This run isn't available right now.";
 
 function referenceCacheKey(prompt: RunPrompt): string {
   const text = prompt.text.trim().toLowerCase();
@@ -182,8 +185,11 @@ export function usePracticeRun(session: RunSession) {
     if (captureRef.current) session.cancelRunCapture(reason);
   }
 
-  // Unlocks run audio inside the Start or Play again gesture, before any await.
-  async function start(mode: RunMode, previousWeakWords: readonly string[] = []) {
+  // Unlocks run audio inside the Start or Play again gesture, before any await. An invalid
+  // configuration or deck rejects before the current run, its replays, or its receipt change.
+  async function start(config: RunConfig, previousWeakWords: readonly string[] = []) {
+    if (!isRunConfig(config)) throw new Error(START_UNAVAILABLE);
+    const frozen = Object.freeze({ ...config });
     session.prepareRunAudio();
     startTokenRef.current += 1;
     const token = startTokenRef.current;
@@ -195,11 +201,12 @@ export function usePracticeRun(session: RunSession) {
       ]);
       if (startTokenRef.current !== token) return;
       const prompts = buildRunDeck({ phonemeStats, vocabulary, previousWeakWords });
+      if (!isValidRunDeck(frozen, prompts)) throw new Error(START_UNAVAILABLE);
       // Replacing a run keeps the session's run audio that this gesture just unlocked.
       if (stateRef.current) teardown(true);
       session.enterRun();
       resetRunLifetime();
-      dispatch({ type: "START", runId: newId("run"), mode, prompts });
+      dispatch({ type: "START", runId: newId("run"), config: frozen, prompts });
     } finally {
       // A newer start owns the flag; exit has already cleared it.
       if (startTokenRef.current === token) setStarting(false);
@@ -392,7 +399,7 @@ export function usePracticeRun(session: RunSession) {
 
   async function playAgain() {
     const current = stateRef.current;
-    if (current) await start(current.mode, runWeakWords(current));
+    if (current) await start(current.config, runWeakWords(current));
   }
 
   const score = useMemo(() => (state ? selectRunScore(state) : null), [state]);

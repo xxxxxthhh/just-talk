@@ -10,6 +10,7 @@ import {
   RUN_BEST_KEY,
   type RunBestBucket
 } from "./personalBest";
+import { configForChoice } from "./runConfig";
 import { runReducer } from "./runModel";
 import { RUN_RULES_VERSION } from "./scoring";
 import type { RunMode, RunPrompt, RunRating, RunScoreView, RunState } from "../types";
@@ -33,7 +34,8 @@ function run(mode: RunMode, focus: string): RunState {
     targetWord: null,
     source: "starter"
   }));
-  return runReducer(null, { type: "START", runId: "run", mode, prompts }) as RunState;
+  const config = configForChoice({ selection: mode === "route" ? "route" : "target60", routeLength: 6 });
+  return runReducer(null, { type: "START", runId: "run", config, prompts }) as RunState;
 }
 
 beforeEach(() => window.localStorage.clear());

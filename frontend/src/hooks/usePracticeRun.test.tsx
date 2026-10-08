@@ -4,11 +4,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecording } from "../api";
 import { readBest, RUN_BEST_KEY } from "../game/personalBest";
+import { configForChoice } from "../game/runConfig";
 import { buildRunDeck } from "../game/runDeck";
 import { setRunPreference } from "../game/preferences";
 import { RUN_RULES_VERSION } from "../game/scoring";
 import { cancelCues, playCue, resetCueEvents } from "../game/sfx";
-import type { CaptureStopReason, CaptureSummary, RunCaptureOptions, RunMode, ScoreResponse, WordResult } from "../types";
+import type {
+  CaptureStopReason,
+  CaptureSummary,
+  RunCaptureOptions,
+  RunConfig,
+  RunMode,
+  ScoreResponse,
+  WordResult
+} from "../types";
 import { usePracticeRun, type RunSession } from "./usePracticeRun";
 
 vi.mock("../game/runDeck", async (importOriginal) => {
@@ -107,11 +116,15 @@ async function flush() {
   });
 }
 
-async function setup(mode: RunMode) {
+const ROUTE = configForChoice({ selection: "route", routeLength: 6 });
+const CHALLENGE = configForChoice({ selection: "target60", routeLength: 6 });
+
+async function setup(choice: RunMode | RunConfig) {
+  const config = choice === "route" ? ROUTE : choice === "challenge" ? CHALLENGE : choice;
   const fake = fakeSession();
   const hook = renderHook(() => usePracticeRun(fake.session));
   await act(async () => {
-    await hook.result.current.start(mode);
+    await hook.result.current.start(config);
   });
   return { ...fake, hook, run: () => hook.result.current };
 }
@@ -432,7 +445,7 @@ describe("usePracticeRun", () => {
     vi.mocked(fetchPhonemeStats).mockReturnValueOnce(stats.promise);
     let starting!: Promise<void>;
     act(() => {
-      starting = hook.result.current.start("route");
+      starting = hook.result.current.start(ROUTE);
     });
     act(() => hook.result.current.exit());
     await act(async () => {
@@ -468,7 +481,7 @@ describe("usePracticeRun", () => {
 
     // A later start still works.
     await act(async () => {
-      await h.run().start("challenge");
+      await h.run().start(CHALLENGE);
     });
     expect(h.run().state?.mode).toBe("challenge");
   });
@@ -709,7 +722,7 @@ describe("usePracticeRun", () => {
     vi.mocked(fetchPhonemeStats).mockReturnValueOnce(stats.promise);
     let starting!: Promise<void>;
     act(() => {
-      starting = hook.result.current.start("route");
+      starting = hook.result.current.start(ROUTE);
     });
     expect(fake.session.prepareRunAudio).toHaveBeenCalledTimes(1);
     act(() => hook.result.current.exit());
@@ -802,7 +815,7 @@ describe("usePracticeRun", () => {
     });
     act(() => h.run().exit());
     await act(async () => {
-      await h.run().start("challenge");
+      await h.run().start(CHALLENGE);
     });
     await act(async () => {
       old.reject(new Error("Old permission denied"));
@@ -870,7 +883,7 @@ describe("usePracticeRun", () => {
     vi.mocked(fetchPhonemeStats).mockReturnValueOnce(first.promise);
     let starting!: Promise<void>;
     act(() => {
-      starting = run().start("route");
+      starting = run().start(ROUTE);
     });
     expect(run().starting).toBe(true);
     expect(run().state).toBeNull();
@@ -891,7 +904,7 @@ describe("usePracticeRun", () => {
       olderStart = run().playAgain();
     });
     act(() => {
-      newerStart = run().start("challenge");
+      newerStart = run().start(CHALLENGE);
     });
     await act(async () => {
       older.resolve([]);
@@ -910,7 +923,7 @@ describe("usePracticeRun", () => {
     const abandoned = deferred<never[]>();
     vi.mocked(fetchPhonemeStats).mockReturnValueOnce(abandoned.promise);
     act(() => {
-      starting = run().start("route");
+      starting = run().start(ROUTE);
     });
     act(() => run().exit());
     expect(run().starting).toBe(false);
@@ -927,7 +940,7 @@ describe("usePracticeRun", () => {
       throw new Error("No deck");
     });
     await act(async () => {
-      await expect(run().start("route")).rejects.toThrow("No deck");
+      await expect(run().start(ROUTE)).rejects.toThrow("No deck");
     });
     expect(run().starting).toBe(false);
     expect(run().state).toBeNull();
@@ -968,7 +981,7 @@ describe("usePracticeRun", () => {
     const fake = fakeSession();
     const hook = renderHook(() => usePracticeRun(fake.session));
     await act(async () => {
-      await hook.result.current.start("route");
+      await hook.result.current.start(ROUTE);
     });
     expect(hook.result.current.starting).toBe(false);
     expect(hook.result.current.state?.mode).toBe("route");
@@ -986,7 +999,7 @@ describe("usePracticeRun", () => {
     vi.mocked(fetchPhonemeStats).mockReturnValueOnce(stats.promise);
     let oldStart!: Promise<void>;
     act(() => {
-      oldStart = oldOwner.result.current.start("route");
+      oldStart = oldOwner.result.current.start(ROUTE);
     });
     oldOwner.unmount();
     const newer = await setup("challenge");
@@ -1043,7 +1056,7 @@ describe("usePracticeRun", () => {
     const fake = fakeSession();
     const strict = renderHook(() => usePracticeRun(fake.session), { wrapper: StrictMode });
     await act(async () => {
-      await strict.result.current.start("route");
+      await strict.result.current.start(ROUTE);
     });
     expect(strict.result.current.state?.mode).toBe("route");
     vi.mocked(scoreRecording).mockResolvedValueOnce(scored(95));
@@ -1055,5 +1068,78 @@ describe("usePracticeRun", () => {
     expect(scoreRecording).toHaveBeenCalledTimes(1);
     expect(strict.result.current.state?.items[0].verdict).toBe("practiced");
     expect(playCue).toHaveBeenCalledWith("perfect", expect.any(String));
+  });
+
+  it("start_freezes_its_config_and_play_again_keeps_it", async () => {
+    const target85 = { ...configForChoice({ selection: "target85", routeLength: 12 }) };
+    const h = await setup(target85);
+    expect(h.run().state?.config).toEqual({ source: "starter", mode: "challenge", length: 6, target: 85, maxExtra: 4 });
+    expect(h.run().state?.mode).toBe("challenge");
+    (target85 as { maxExtra: number }).maxExtra = 2;
+    expect(h.run().state?.config.maxExtra).toBe(4);
+
+    // An 80 is below this run's target, so it asks for a rescue.
+    await attempt(h, scored(80));
+    expect(current(h).verdict).toBe("relisten");
+    act(() => h.run().quit());
+    const before = h.run().state?.runId;
+    await act(async () => {
+      await h.run().playAgain();
+    });
+    expect(h.run().state?.runId).not.toBe(before);
+    expect(h.run().state?.config).toEqual({ source: "starter", mode: "challenge", length: 6, target: 85, maxExtra: 4 });
+  });
+
+  it("invalid_start_throws_before_teardown_and_preserves_results", async () => {
+    const h = await setup("route");
+    for (let i = 0; i < 6; i += 1) {
+      await attempt(h, scored(90));
+      act(() => h.run().finish());
+    }
+    const finished = h.run().state;
+    const receipt = h.run().receipt;
+    const urls = h.run().attemptAudioUrls;
+    expect(finished?.phase).toBe("summary");
+    expect(receipt?.outcome).toBe("first-record");
+    expect(Object.keys(urls)).toHaveLength(6);
+    vi.mocked(resetCueEvents).mockClear();
+    vi.mocked(fetchPhonemeStats).mockClear();
+    h.session.prepareRunAudio.mockClear();
+
+    const unchanged = () => {
+      expect(h.run().state).toBe(finished);
+      expect(h.run().receipt).toBe(receipt);
+      expect(h.run().attemptAudioUrls).toBe(urls);
+      expect(h.run().starting).toBe(false);
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+      expect(h.session.enterRun).toHaveBeenCalledTimes(1);
+      expect(h.session.cancelRunCapture).not.toHaveBeenCalled();
+      expect(resetCueEvents).not.toHaveBeenCalled();
+    };
+
+    // An invalid configuration is refused before audio, data, or the current run is touched.
+    const challenge12 = { source: "starter", mode: "challenge", length: 12, target: 60, maxExtra: 4 } as unknown as RunConfig;
+    await act(async () => {
+      await expect(h.run().start(challenge12)).rejects.toThrow();
+    });
+    expect(h.session.prepareRunAudio).not.toHaveBeenCalled();
+    expect(fetchPhonemeStats).not.toHaveBeenCalled();
+    unchanged();
+
+    // A valid Route 12 against the current six-item pack builds a deck it cannot accept: it throws
+    // after loading and still leaves the finished run, its receipt, and its replays intact.
+    await act(async () => {
+      await expect(h.run().start(configForChoice({ selection: "route", routeLength: 12 }))).rejects.toThrow();
+    });
+    expect(buildRunDeck).toHaveBeenCalled();
+    unchanged();
+
+    // Retrying a valid six-item start then replaces the run normally.
+    await act(async () => {
+      await h.run().start(CHALLENGE);
+    });
+    expect(h.run().state?.mode).toBe("challenge");
+    expect(h.run().receipt).toBeNull();
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(6);
   });
 });
