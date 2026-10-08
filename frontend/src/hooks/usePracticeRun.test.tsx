@@ -20,6 +20,19 @@ import type {
 } from "../types";
 import { usePracticeRun, type RunSession } from "./usePracticeRun";
 
+// A test may shrink the starter pack to two items per stage, as v2 shipped it.
+const pack = vi.hoisted(() => ({ small: false }));
+vi.mock("../game/starterPack", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../game/starterPack")>();
+  const small = actual.STARTER_PACK.filter((item) => Number(item.id.at(-1)) <= 2);
+  return {
+    ...actual,
+    get STARTER_PACK() {
+      return pack.small ? small : actual.STARTER_PACK;
+    }
+  };
+});
+
 vi.mock("../game/runDeck", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../game/runDeck")>();
   return { ...actual, buildRunDeck: vi.fn(actual.buildRunDeck) };
@@ -164,6 +177,7 @@ describe("usePracticeRun", () => {
   });
 
   afterEach(() => {
+    pack.small = false;
     vi.resetAllMocks();
     vi.unstubAllGlobals();
   });
@@ -1127,11 +1141,13 @@ describe("usePracticeRun", () => {
     expect(fetchPhonemeStats).not.toHaveBeenCalled();
     unchanged();
 
-    // A valid Route 12 against the current six-item pack builds a deck it cannot accept: it throws
-    // after loading and still leaves the finished run, its receipt, and its replays intact.
+    // A valid Route 12 against a two-per-stage pack builds no deck it can accept: it throws after
+    // loading and still leaves the finished run, its receipt, and its replays intact.
+    pack.small = true;
     await act(async () => {
       await expect(h.run().start(configForChoice({ selection: "route", routeLength: 12 }))).rejects.toThrow();
     });
+    pack.small = false;
     expect(buildRunDeck).toHaveBeenCalled();
     unchanged();
 
@@ -1188,15 +1204,24 @@ describe("usePracticeRun", () => {
     const finished = h.run().state;
     const receipt = h.run().receipt;
     const urls = h.run().attemptAudioUrls;
+    pack.small = true;
     await act(async () => {
       await expect(h.run().start(configForChoice({ selection: "route", routeLength: 12 }))).rejects.toThrow("cannot fill");
     });
+    pack.small = false;
     expect(h.run().state).toBe(finished);
     expect(h.run().receipt).toBe(receipt);
     expect(h.run().attemptAudioUrls).toBe(urls);
     expect(h.run().starting).toBe(false);
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
     expect(h.session.enterRun).toHaveBeenCalledTimes(1);
+
+    // The approved sixty-item pack fills it.
+    await act(async () => {
+      await h.run().start(configForChoice({ selection: "route", routeLength: 12 }));
+    });
+    expect(h.run().state?.items).toHaveLength(12);
+    expect(h.run().maxScores).toBe(16);
   });
 
   it("next_sound_cycles_with_same_config", async () => {

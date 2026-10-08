@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PhonemeStat, RunFocusPhoneme, RunPrompt, VocabularyItem } from "../types";
-import { configForChoice } from "./runConfig";
+import { configForChoice, isValidRunDeck } from "./runConfig";
 import { buildRunDeck, chooseFocusPhoneme } from "./runDeck";
 import { STARTER_PACK, type StarterItem } from "./starterPack";
 
@@ -100,10 +100,10 @@ function wordsIn(text: string): string[] {
 }
 
 describe("starter pack", () => {
-  it("starter_pack_has_thirty_items_and_valid_six_item_groups", () => {
-    expect(STARTER_PACK).toHaveLength(30);
-    expect(new Set(STARTER_PACK.map((item) => item.id)).size).toBe(30);
-    expect(new Set(STARTER_PACK.map((item) => item.text)).size).toBe(30);
+  it("starter_pack_has_sixty_items_and_valid_twelve_item_groups", () => {
+    expect(STARTER_PACK).toHaveLength(60);
+    expect(new Set(STARTER_PACK.map((item) => item.id)).size).toBe(60);
+    expect(new Set(STARTER_PACK.map((item) => item.text)).size).toBe(60);
 
     const groups = new Map<string, typeof STARTER_PACK>();
     for (const item of STARTER_PACK) {
@@ -114,28 +114,28 @@ describe("starter pack", () => {
     for (const items of groups.values()) {
       expect(new Set(items.map((item) => item.phoneme)).size).toBe(1);
       expect(items.map((item) => item.stage)).toEqual([
-        "warmup",
-        "warmup",
-        "focus",
-        "focus",
-        "context",
-        "context",
+        ...Array(4).fill("warmup"),
+        ...Array(4).fill("focus"),
+        ...Array(4).fill("context"),
       ]);
       const wordItems = items.filter((item) => item.stage !== "context");
       for (const item of wordItems) {
         expect(item.targetWord).toBe(item.text);
         expect(wordsIn(item.text)).toHaveLength(1);
       }
-      const [reuse, fresh] = items.filter((item) => item.stage === "context");
-      for (const sentence of [reuse, fresh]) {
-        const words = wordsIn(sentence.text);
-        expect(words.length).toBeGreaterThanOrEqual(5);
-        expect(words.length).toBeLessThanOrEqual(9);
-        expect(words).toContain(sentence.targetWord);
-      }
+      // Every sentence holds its target. At pack level, contexts 1 and 3 reuse a focus word and
+      // contexts 2 and 4 bring a fresh one; six-item sampling does not keep the pairs together.
       const focusWords = items.filter((item) => item.stage === "focus").map((item) => item.text);
-      expect(focusWords).toContain(reuse.targetWord);
-      expect(wordItems.map((item) => item.text)).not.toContain(fresh.targetWord);
+      items
+        .filter((item) => item.stage === "context")
+        .forEach((sentence, index) => {
+          const words = wordsIn(sentence.text);
+          expect(words.length, sentence.id).toBeGreaterThanOrEqual(5);
+          expect(words.length, sentence.id).toBeLessThanOrEqual(9);
+          expect(words, sentence.id).toContain(sentence.targetWord);
+          if (index % 2 === 0) expect(focusWords, sentence.id).toContain(sentence.targetWord);
+          else expect(wordItems.map((item) => item.text), sentence.id).not.toContain(sentence.targetWord);
+        });
     }
   });
 });
@@ -165,19 +165,24 @@ describe("buildRunDeck", () => {
 
     const deck = buildRunDeck({ runId: "run", config: ROUTE_6, focusPhoneme: "θ", vocabulary });
 
-    expect(deck.map((prompt) => [prompt.stage, prompt.kind, prompt.text, prompt.source])).toEqual([
+    expect(deck.slice(0, 2).map((prompt) => [prompt.stage, prompt.kind, prompt.text, prompt.source])).toEqual([
       ["warmup", "word", "earliest", "due-word"],
       ["warmup", "word", "later", "due-word"],
-      ["focus", "word", "think", "starter"],
-      ["focus", "word", "thank", "starter"],
-      ["context", "sentence", "I think we can walk home now.", "starter"],
-      ["context", "sentence", "The narrow path leads to our house.", "starter"],
     ]);
+    // "Think" (a focus word) and "path" (a context target) never become personal warm-ups.
+    const theta = STARTER_PACK.filter((item) => item.phoneme === "θ");
+    expect(deck.slice(2).map((prompt) => [prompt.stage, prompt.kind, prompt.source])).toEqual([
+      ["focus", "word", "starter"],
+      ["focus", "word", "starter"],
+      ["context", "sentence", "starter"],
+      ["context", "sentence", "starter"],
+    ]);
+    for (const prompt of deck.slice(2)) {
+      expect(theta.some((item) => item.text === prompt.text && item.stage === prompt.stage)).toBe(true);
+    }
     expect(new Set(deck.map((prompt) => prompt.itemId)).size).toBe(6);
     expect(deck.slice(2).every((prompt) => prompt.targetPhoneme === "θ")).toBe(true);
     expect(deck[0].targetPhoneme).toBeNull();
-    expect(deck[4].targetWord).toBe("think");
-    expect(deck[5].targetWord).toBe("path");
 
     expect(Object.isFrozen(deck)).toBe(true);
     expect(deck.every((prompt) => Object.isFrozen(prompt))).toBe(true);
@@ -197,7 +202,7 @@ describe("buildRunDeck", () => {
     expect(deck[0]).toMatchObject({ text: "bright", source: "due-word" });
     // The remaining slot is a seeded starter warm-up.
     expect(deck[1].source).toBe("starter");
-    expect(["thin", "thick"]).toContain(deck[1].text);
+    expect(["thin", "thick", "thumb", "thing"]).toContain(deck[1].text);
     for (const prompt of deck.filter((candidate) => candidate.kind === "word")) {
       expect(prompt.text.trim().split(/\s+/)).toHaveLength(1);
     }
@@ -238,13 +243,11 @@ describe("buildRunDeck", () => {
       ["Water", "previous-run"],
       ["bright", "due-word"],
     ]);
-    expect(replay[2].text).toBe("late");
+    expect(replay[2].targetPhoneme).toBe("l");
 
     const empty = buildRunDeck({ runId: "run", config: ROUTE_6, focusPhoneme: "l", vocabulary: [], previousWeakWords: ["late"] });
-    expect(empty.slice(0, 2).map((prompt) => [prompt.text, prompt.source])).toEqual([
-      ["light", "starter"],
-      ["leaf", "starter"],
-    ]);
+    const lWarmups = STARTER_PACK.filter((item) => item.phoneme === "l" && item.stage === "warmup").map((item) => item.text);
+    expect(empty.slice(0, 2).every((prompt) => prompt.source === "starter" && lWarmups.includes(prompt.text))).toBe(true);
     expect(empty[0].targetPhoneme).toBe("l");
   });
 });
@@ -306,9 +309,10 @@ describe("seeded decks", () => {
     expect(texts(personal, "focus")).toEqual(texts(build("twelve-personal", "θ", ROUTE_12), "focus"));
     expect(texts(personal, "context")).toEqual(texts(build("twelve-personal", "θ", ROUTE_12), "context"));
 
-    // The shipped thirty-item pack cannot fill twelve: the builder refuses rather than repeat or shrink.
-    pack.override = null;
-    expect(() => build("twelve-real", "θ", ROUTE_12)).toThrow("cannot fill");
+    // A pack with two items per stage cannot fill twelve: the builder refuses rather than repeat or shrink.
+    pack.override = syntheticPack().filter((item) => Number(item.id.at(-1)) <= 2);
+    expect(build("six-small", "θ")).toHaveLength(6);
+    expect(() => build("twelve-small", "θ", ROUTE_12)).toThrow("cannot fill");
   });
 
   it("all_context_targets_excluded_from_personal_warmups", () => {
@@ -347,5 +351,45 @@ describe("seeded decks", () => {
     expect(deck.slice(4).every((prompt) => prompt.targetPhoneme === "l")).toBe(true);
     expect(new Set(deck.map((prompt) => prompt.text.toLowerCase())).size).toBe(12);
     expect(Object.isFrozen(deck)).toBe(true);
+  });
+});
+
+describe("approved runtime pack", () => {
+  it("all_config_decks_build_from_approved_runtime_pack", () => {
+    const configs = [
+      ROUTE_6,
+      ROUTE_12,
+      configForChoice({ selection: "target60", routeLength: 6 }),
+      configForChoice({ selection: "target85", routeLength: 6 })
+    ];
+    const personal = [vocab("water", "2026-09-01T00:00:00Z")];
+    for (const [group, phoneme] of GROUPS) {
+      const items = STARTER_PACK.filter((item) => item.group === group);
+      for (const config of configs) {
+        for (const [label, vocabulary, weak] of [
+          ["empty", [], []],
+          ["personal", personal, ["bright"]]
+        ] as const) {
+          const where = `${phoneme} ${config.mode} ${config.length} ${config.target} ${label}`;
+          const deck = buildRunDeck({
+            runId: `${where}`,
+            config,
+            focusPhoneme: phoneme,
+            vocabulary: [...vocabulary],
+            previousWeakWords: [...weak]
+          });
+          expect(isValidRunDeck(config, deck), where).toBe(true);
+          const perStage = config.length / 3;
+          const starters = deck.filter((prompt) => prompt.source === "starter");
+          for (const prompt of starters) {
+            expect(items.some((item) => item.text === prompt.text && item.stage === prompt.stage), where).toBe(true);
+          }
+          if (label === "empty") expect(starters, where).toHaveLength(config.length);
+          else expect(texts(deck, "warmup").slice(0, 2), where).toEqual(["bright", "water"]);
+          expect(texts(deck, "focus"), where).toHaveLength(perStage);
+          expect(texts(deck, "context"), where).toHaveLength(perStage);
+        }
+      }
+    }
   });
 });

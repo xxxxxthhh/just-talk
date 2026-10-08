@@ -58,7 +58,8 @@ class GameStarterCacheTests(unittest.TestCase):
 
         items = json.loads(STARTER_PACK_JSON.read_text(encoding="utf-8"))
         frontend_texts = [item["text"] for item in items]
-        self.assertEqual(len(frontend_texts), 30)
+        self.assertEqual(len(frontend_texts), 60)
+        self.assertEqual(len(GAME_STARTER_TEXTS), 60)
         self.assertEqual(set(frontend_texts), GAME_STARTER_TEXTS)
         self.assertTrue(GAME_STARTER_TEXTS <= BUILTIN_TEXTS)
 
@@ -67,13 +68,20 @@ class GameStarterCacheTests(unittest.TestCase):
             app = self._public_app(temp_dir, synthesizer)
             first = self._visitor(app)
             second = self._visitor(app)
+            # Original and newly approved words and sentences alike.
+            texts = (
+                "think",
+                "I think we can walk home now.",
+                "three",
+                "Both cups of tea are still hot.",
+            )
             for client in (first, second):
-                for text in ("think", "I think we can walk home now."):
+                for text in texts:
                     response = client.post("/api/speak", json={"text": text})
                     self.assertEqual(response.status_code, 200)
                     self.assertEqual(response.json()["word_boundaries"][0]["duration_ms"], 320)
 
-        self.assertEqual(synthesizer.calls, ["think", "I think we can walk home now."])
+        self.assertEqual(synthesizer.calls, list(texts))
 
     def test_custom_text_remains_in_visitor_cache(self):
         synthesizer = FakeSynthesizer()

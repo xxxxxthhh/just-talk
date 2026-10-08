@@ -16,6 +16,22 @@
     "targetWord": "thick"
   },
   {
+    "id": "theta-warmup-3",
+    "group": "theta",
+    "stage": "warmup",
+    "text": "thumb",
+    "phoneme": "θ",
+    "targetWord": "thumb"
+  },
+  {
+    "id": "theta-warmup-4",
+    "group": "theta",
+    "stage": "warmup",
+    "text": "thing",
+    "phoneme": "θ",
+    "targetWord": "thing"
+  },
+  {
     "id": "theta-focus-1",
     "group": "theta",
     "stage": "focus",
@@ -30,6 +46,22 @@
     "text": "thank",
     "phoneme": "θ",
     "targetWord": "thank"
+  },
+  {
+    "id": "theta-focus-3",
+    "group": "theta",
+    "stage": "focus",
+    "text": "three",
+    "phoneme": "θ",
+    "targetWord": "three"
+  },
+  {
+    "id": "theta-focus-4",
+    "group": "theta",
+    "stage": "focus",
+    "text": "teeth",
+    "phoneme": "θ",
+    "targetWord": "teeth"
   },
   {
     "id": "theta-context-1",
@@ -48,6 +80,22 @@
     "targetWord": "path"
   },
   {
+    "id": "theta-context-3",
+    "group": "theta",
+    "stage": "context",
+    "text": "We bought three tickets for the show.",
+    "phoneme": "θ",
+    "targetWord": "three"
+  },
+  {
+    "id": "theta-context-4",
+    "group": "theta",
+    "stage": "context",
+    "text": "Both cups of tea are still hot.",
+    "phoneme": "θ",
+    "targetWord": "both"
+  },
+  {
     "id": "eth-warmup-1",
     "group": "eth",
     "stage": "warmup",
@@ -62,6 +110,22 @@
     "text": "that",
     "phoneme": "ð",
     "targetWord": "that"
+  },
+  {
+    "id": "eth-warmup-3",
+    "group": "eth",
+    "stage": "warmup",
+    "text": "they",
+    "phoneme": "ð",
+    "targetWord": "they"
+  },
+  {
+    "id": "eth-warmup-4",
+    "group": "eth",
+    "stage": "warmup",
+    "text": "then",
+    "phoneme": "ð",
+    "targetWord": "then"
   },
   {
     "id": "eth-focus-1",
@@ -80,6 +144,22 @@
     "targetWord": "those"
   },
   {
+    "id": "eth-focus-3",
+    "group": "eth",
+    "stage": "focus",
+    "text": "weather",
+    "phoneme": "ð",
+    "targetWord": "weather"
+  },
+  {
+    "id": "eth-focus-4",
+    "group": "eth",
+    "stage": "focus",
+    "text": "breathe",
+    "phoneme": "ð",
+    "targetWord": "breathe"
+  },
+  {
     "id": "eth-context-1",
     "group": "eth",
     "stage": "context",
@@ -94,6 +174,22 @@
     "text": "My brother walks home after the rain.",
     "phoneme": "ð",
     "targetWord": "brother"
+  },
+  {
+    "id": "eth-context-3",
+    "group": "eth",
+    "stage": "context",
+    "text": "The weather turned cold after lunch.",
+    "phoneme": "ð",
+    "targetWord": "weather"
+  },
+  {
+    "id": "eth-context-4",
+    "group": "eth",
+    "stage": "context",
+    "text": "We cooked dinner together last night.",
+    "phoneme": "ð",
+    "targetWord": "together"
   },
   {
     "id": "r-warmup-1",
@@ -112,6 +208,22 @@
     "targetWord": "red"
   },
   {
+    "id": "r-warmup-3",
+    "group": "r",
+    "stage": "warmup",
+    "text": "rice",
+    "phoneme": "ɹ",
+    "targetWord": "rice"
+  },
+  {
+    "id": "r-warmup-4",
+    "group": "r",
+    "stage": "warmup",
+    "text": "rock",
+    "phoneme": "ɹ",
+    "targetWord": "rock"
+  },
+  {
     "id": "r-focus-1",
     "group": "r",
     "stage": "focus",
@@ -126,6 +238,22 @@
     "text": "road",
     "phoneme": "ɹ",
     "targetWord": "road"
+  },
+  {
+    "id": "r-focus-3",
+    "group": "r",
+    "stage": "focus",
+    "text": "right",
+    "phoneme": "ɹ",
+    "targetWord": "right"
+  },
+  {
+    "id": "r-focus-4",
+    "group": "r",
+    "stage": "focus",
+    "text": "green",
+    "phoneme": "ɹ",
+    "targetWord": "green"
   },
   {
     "id": "r-context-1",
@@ -144,6 +272,22 @@
     "targetWord": "river"
   },
   {
+    "id": "r-context-3",
+    "group": "r",
+    "stage": "context",
+    "text": "Turn right at the next corner.",
+    "phoneme": "ɹ",
+    "targetWord": "right"
+  },
+  {
+    "id": "r-context-4",
+    "group": "r",
+    "stage": "context",
+    "text": "She wrote her friend a card.",
+    "phoneme": "ɹ",
+    "targetWord": "wrote"
+  },
+  {
     "id": "l-warmup-1",
     "group": "l",
     "stage": "warmup",
@@ -158,6 +302,22 @@
     "text": "leaf",
     "phoneme": "l",
     "targetWord": "leaf"
+  },
+  {
+    "id": "l-warmup-3",
+    "group": "l",
+    "stage": "warmup",
+    "text": "lamp",
+    "phoneme": "l",
+    "targetWord": "lamp"
+  },
+  {
+    "id": "l-warmup-4",
+    "group": "l",
+    "stage": "warmup",
+    "text": "lip",
+    "phoneme": "l",
+    "targetWord": "lip"
   },
   {
     "id": "l-focus-1",
@@ -176,6 +336,22 @@
     "targetWord": "long"
   },
   {
+    "id": "l-focus-3",
+    "group": "l",
+    "stage": "focus",
+    "text": "listen",
+    "phoneme": "l",
+    "targetWord": "listen"
+  },
+  {
+    "id": "l-focus-4",
+    "group": "l",
+    "stage": "focus",
+    "text": "yellow",
+    "phoneme": "l",
+    "targetWord": "yellow"
+  },
+  {
     "id": "l-context-1",
     "group": "l",
     "stage": "context",
@@ -190,6 +366,22 @@
     "text": "The lake looks calm in the morning.",
     "phoneme": "l",
     "targetWord": "lake"
+  },
+  {
+    "id": "l-context-3",
+    "group": "l",
+    "stage": "context",
+    "text": "Please listen to the whole song.",
+    "phoneme": "l",
+    "targetWord": "listen"
+  },
+  {
+    "id": "l-context-4",
+    "group": "l",
+    "stage": "context",
+    "text": "I left my bag on the bus.",
+    "phoneme": "l",
+    "targetWord": "left"
   },
   {
     "id": "v-warmup-1",
@@ -208,6 +400,22 @@
     "targetWord": "van"
   },
   {
+    "id": "v-warmup-3",
+    "group": "v",
+    "stage": "warmup",
+    "text": "vest",
+    "phoneme": "v",
+    "targetWord": "vest"
+  },
+  {
+    "id": "v-warmup-4",
+    "group": "v",
+    "stage": "warmup",
+    "text": "vote",
+    "phoneme": "v",
+    "targetWord": "vote"
+  },
+  {
     "id": "v-focus-1",
     "group": "v",
     "stage": "focus",
@@ -224,6 +432,22 @@
     "targetWord": "visit"
   },
   {
+    "id": "v-focus-3",
+    "group": "v",
+    "stage": "focus",
+    "text": "very",
+    "phoneme": "v",
+    "targetWord": "very"
+  },
+  {
+    "id": "v-focus-4",
+    "group": "v",
+    "stage": "focus",
+    "text": "seven",
+    "phoneme": "v",
+    "targetWord": "seven"
+  },
+  {
     "id": "v-context-1",
     "group": "v",
     "stage": "context",
@@ -238,5 +462,21 @@
     "text": "We save fresh bread for the morning.",
     "phoneme": "v",
     "targetWord": "save"
+  },
+  {
+    "id": "v-context-3",
+    "group": "v",
+    "stage": "context",
+    "text": "We wake up at seven each day.",
+    "phoneme": "v",
+    "targetWord": "seven"
+  },
+  {
+    "id": "v-context-4",
+    "group": "v",
+    "stage": "context",
+    "text": "They live in a small village.",
+    "phoneme": "v",
+    "targetWord": "village"
   }
 ]
