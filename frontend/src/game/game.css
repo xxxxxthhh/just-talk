@@ -467,6 +467,13 @@
   font-family: var(--font-body);
 }
 
+/* Grid children may shrink below their content, so a long next-prompt ellipsizes instead of
+   widening the thumb zone past the screen. */
+.run.run-play > *,
+.run.run-review > * {
+  min-width: 0;
+}
+
 .run-bar {
   height: 48px;
   display: flex;
@@ -564,6 +571,7 @@
   align-items: center;
   gap: 12px;
   padding-top: 6px;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
