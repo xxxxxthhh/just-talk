@@ -529,14 +529,19 @@
   gap: 8px;
 }
 
+/* Up to two lines, so a narrow screen or large text still shows the whole configuration
+   (Challenge · Target 85 · /θ/) between the bar's buttons. */
 .run-bar-title {
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
   color: var(--g-text-soft);
   font-size: 13px;
   font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
+  text-align: center;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .run-bar-end {
@@ -911,6 +916,20 @@
   font-size: 12px;
 }
 
+/* The compact toggles and text buttons keep their look but take taps across at least 44 px. */
+button.run-toggle,
+.run-secondary {
+  position: relative;
+}
+
+/* Measured from the padding box, so -7px also covers the toggles' 1px border. */
+button.run-toggle::before,
+.run-secondary::before {
+  content: "";
+  position: absolute;
+  inset: -7px 0;
+}
+
 .run-toggle.is-static {
   border-color: transparent;
 }
@@ -1247,6 +1266,7 @@
 
 .run-summary-foot .run-secondary {
   flex: none;
+  min-width: 44px;
   min-height: 36px;
   padding: 0 4px;
   color: var(--g-text-soft);
