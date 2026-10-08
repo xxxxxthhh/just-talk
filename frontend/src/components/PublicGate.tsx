@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, checkHealth, createVisitor, deleteMyData, fetchQuota } from "../api";
+import { clearRunStorage } from "../game/preferences";
 import { USAGE_CHANGED_EVENT, VISITOR_REQUIRED_EVENT } from "../publicMode";
 import type { Health, QuotaStatus, QuotaWindow } from "../types";
 import "./PublicGate.css";
@@ -238,6 +239,7 @@ function PublicBar({ health }: { health: Health | null }) {
     setError("");
     try {
       await deleteMyData();
+      clearRunStorage();
       window.location.reload();
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Could not delete data.");

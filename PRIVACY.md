@@ -40,6 +40,12 @@ The public trial never enables LLM features.
   the cookie immediately.
 - Visitor data is deleted automatically after 7 days without use. Cleanup
   runs about every 10 minutes.
+- Game mode keeps three settings in your browser's local storage and never
+  sends them to the server: `jt.runBest.v1` (your best run score per mode and
+  sound), `jt.sfx` (sound effects on or off) and `jt.autoStop` (auto-stop on
+  or off). On the public trial a best score expires 7 days after it was
+  last set. **Delete my data** also clears these three keys from this
+  browser.
 - Usage counters are kept for about 70 days to enforce daily and monthly
   limits. When you delete your data, your counters are detached from your
   visitor ID. They still count toward site-wide totals.
