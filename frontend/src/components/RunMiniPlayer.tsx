@@ -77,6 +77,18 @@ export function useYouPlayer(
     stopCoachRef.current();
   }, [paused, stop]);
 
+  // A finished run is never paused, so hiding the page silences the review here; coming back
+  // leaves both voices stopped until the learner asks again.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState !== "hidden") return;
+      stop();
+      stopCoachRef.current();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [stop]);
+
   const youPlaying = state.status === "playing";
   useEffect(() => {
     if (coach.status === "playing" && youPlaying) stopCoach();

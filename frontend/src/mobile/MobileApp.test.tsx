@@ -521,6 +521,63 @@ describe("MobileApp game run", () => {
     expect(scored).toEqual([]);
   });
 
+  test("quit_with_a_recording_then_review_plays_it", async () => {
+    const user = userEvent.setup();
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    installRunApi();
+    render(<MobileApp />);
+    await startRun(user);
+    await recordAndStop(user);
+    expect(await screen.findByText("Strong.", { selector: ".run-status-main" })).toBeInTheDocument();
+
+    // Quit always starts from Pause; the finished run is no longer paused.
+    await quitRun(user);
+    await user.click(await screen.findByRole("button", { name: "See review" }));
+    const you = await screen.findByRole("button", { name: /Play your take of thin/ });
+    expect(you).toBeEnabled();
+    await user.click(you);
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(document.querySelector(".run-review audio")?.getAttribute("src")).toMatch(/^blob:take-/);
+  });
+
+  test("completed_review_survives_hidden_and_visible_without_replaying", async () => {
+    const user = userEvent.setup();
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    installRunApi();
+    render(<MobileApp />);
+    await startRun(user);
+    await recordAndStop(user);
+    for (let i = 1; i < STARTER_TEXTS.length; i += 1) {
+      await waitFor(() => expect(screen.getByRole("button", { name: "Record next" })).toBeEnabled());
+      await recordAndStop(user, "Record next");
+      await screen.findByText(STARTER_TEXTS[i], { selector: ".run-prompt-v2" });
+    }
+    await waitFor(() => expect(screen.getByRole("button", { name: "Finish" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Finish" }));
+    await user.click(await screen.findByRole("button", { name: "See review" }));
+    await user.click((await screen.findAllByRole("button", { name: /Play your take of/ }))[0]);
+    expect(play).toHaveBeenCalledTimes(1);
+
+    const setVisibility = (state: "hidden" | "visible") => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: state });
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+    };
+    setVisibility("hidden");
+    expect(document.querySelector(".run-review audio")).not.toHaveAttribute("src");
+    setVisibility("visible");
+    // Back on the page: everything is playable again and nothing restarted by itself.
+    const buttons = screen.getAllByRole("button", { name: /Play your take of/ });
+    for (const button of buttons) expect(button).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /Stop your take of/ })).not.toBeInTheDocument();
+    expect(play).toHaveBeenCalledTimes(1);
+    await user.click(buttons[0]);
+    expect(play).toHaveBeenCalledTimes(2);
+  });
+
   test("cancel_quit_keeps_paused_run_and_results", async () => {
     const user = userEvent.setup();
     const scored = installRunApi();

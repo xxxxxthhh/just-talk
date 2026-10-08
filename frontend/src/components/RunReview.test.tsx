@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act as flush, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { nextCapture, runReducer } from "../game/runModel";
@@ -214,47 +214,49 @@ describe("RunReview", () => {
     expect(revoke).not.toHaveBeenCalled();
   });
 
-  it("pausing a mounted review stops and blocks playback, and resume never replays", async () => {
+  it("hiding the page stops review playback, and returning never replays", async () => {
     const room = score(start("route"), response(90, [word("room", 90)]));
     const ended = act(room.state, "QUIT");
-    const urls = { [room.key.attemptId]: "blob:room" };
     const stopReference = vi.fn();
     // The controller hands over a new stop function on every render.
-    const props = () => ({ attemptAudioUrls: urls, onStopReference: () => stopReference() });
+    const props = () => ({ attemptAudioUrls: { [room.key.attemptId]: "blob:room" }, onStopReference: () => stopReference() });
     const view = renderReview(ended, props());
     const audio = view.container.querySelector("audio");
+    const setVisibility = (state: "hidden" | "visible") => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: state });
+      flush(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+    };
 
-    fireEvent.click(screen.getByRole("button", { name: "Play your take of room" }));
-    expect(audio).toHaveAttribute("src", "blob:room");
-    const paused = step(ended, { type: "PAUSE", runId: ended.runId });
-    const pauses = pause.mock.calls.length;
-    view.rerender(<RunReview {...view.props} {...props()} run={paused} />);
-    expect(pause.mock.calls.length).toBeGreaterThan(pauses);
-    expect(audio).not.toHaveAttribute("src");
-    expect(stopReference).toHaveBeenCalled();
-    const you = screen.getByRole("button", { name: "Play your take of room" });
-    expect(you).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Play coach reference of room" })).toBeDisabled();
-    fireEvent.click(you);
-    expect(play).toHaveBeenCalledTimes(1);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Play your take of room" }));
+      expect(audio).toHaveAttribute("src", "blob:room");
+      const pauses = pause.mock.calls.length;
+      const stops = stopReference.mock.calls.length;
+      setVisibility("hidden");
+      expect(pause.mock.calls.length).toBeGreaterThan(pauses);
+      expect(stopReference.mock.calls.length).toBeGreaterThan(stops);
+      expect(audio).not.toHaveAttribute("src");
+      setVisibility("visible");
+      view.rerender(<RunReview {...view.props} {...props()} />);
+      expect(screen.getByRole("button", { name: "Play your take of room" })).toBeEnabled();
+      expect(play).toHaveBeenCalledTimes(1);
 
-    // A play() still pending when the run pauses can't bring the take back.
-    const resumed = step(paused, { type: "RESUME", runId: paused.runId });
-    view.rerender(<RunReview {...view.props} {...props()} run={resumed} />);
-    let settle: () => void = () => {};
-    play.mockImplementationOnce(() => new Promise<void>((resolve) => (settle = resolve)));
-    fireEvent.click(screen.getByRole("button", { name: "Play your take of room" }));
-    view.rerender(<RunReview {...view.props} {...props()} run={paused} />);
-    settle();
-    await Promise.resolve();
-    expect(screen.getByRole("button", { name: "Play your take of room" })).toBeDisabled();
-    expect(audio).not.toHaveAttribute("src");
-
-    // Resuming leaves both voices silent until asked.
-    view.rerender(<RunReview {...view.props} {...props()} run={resumed} />);
-    expect(screen.getByRole("button", { name: "Play your take of room" })).toBeEnabled();
-    expect(play).toHaveBeenCalledTimes(2);
-    expect(audio).not.toHaveAttribute("src");
+      // A play() still pending when the page hides can't bring the take back.
+      let settle: () => void = () => {};
+      play.mockImplementationOnce(() => new Promise<void>((resolve) => (settle = resolve)));
+      fireEvent.click(screen.getByRole("button", { name: "Play your take of room" }));
+      setVisibility("hidden");
+      settle();
+      await Promise.resolve();
+      setVisibility("visible");
+      expect(screen.getByRole("button", { name: "Play your take of room" })).toBeEnabled();
+      expect(audio).not.toHaveAttribute("src");
+      expect(play).toHaveBeenCalledTimes(2);
+    } finally {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    }
   });
 
   it("unreached_collapses_and_missing_audio_has_no_player", () => {
