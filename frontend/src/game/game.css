@@ -715,8 +715,12 @@
   font-weight: 700;
 }
 
-.run-readings[data-tier] {
+.run-reading-value[data-tier] {
   color: var(--g-tier-hi);
+}
+
+.run-readings-arrow {
+  color: var(--g-text-muted);
 }
 
 /* Route Ready: an optional listen before the first reading. It never blocks Record. */

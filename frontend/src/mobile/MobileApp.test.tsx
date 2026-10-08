@@ -450,7 +450,7 @@ describe("MobileApp game run", () => {
 
     await startRun(user);
     await recordAndStop(user);
-    expect(await screen.findByText("77. Good.")).toBeInTheDocument();
+    expect(await screen.findByText(/^77\. Good\. \d+ points\.$/)).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Score" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /View score/ })).not.toBeInTheDocument();
 

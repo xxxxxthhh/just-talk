@@ -688,9 +688,15 @@ function FeedbackLine({
     case "heart-lost":
       return (
         <>
-          {/* Both readings keep their own tier color: two Goods below 85 stay amber. */}
-          <p className="run-readings" data-tier={tierForAccuracy(shown) ?? undefined}>
-            {firstLow !== null ? formatRunScore(firstLow) : "--"} → {shown !== null ? formatRunScore(shown) : "--"}
+          {/* Each reading keeps its own tier color (an 80 stays Good beside a 50); the arrow is neutral. */}
+          <p className="run-readings">
+            <span className="run-reading-value" data-tier={tierForAccuracy(firstLow) ?? undefined}>
+              {firstLow !== null ? formatRunScore(firstLow) : "--"}
+            </span>
+            <span className="run-readings-arrow"> → </span>
+            <span className="run-reading-value" data-tier={tierForAccuracy(shown) ?? undefined}>
+              {shown !== null ? formatRunScore(shown) : "--"}
+            </span>
           </p>
           <p className="run-status-main">Both readings below {target} · one heart used</p>
           <p className="run-status-sub">Both takes are saved for the review.</p>
@@ -991,6 +997,14 @@ function focusLabel(run: RunState): string {
   return focus ? `/${focus}/` : run.mode === "challenge" ? "Challenge" : "Route";
 }
 
+// The first valid reading's final points and chain bonus, as the feedback shows them (+66, ×3 +3).
+function pointsText(score: RunScoreView, index: number): string {
+  const item = score.items[index];
+  if (!item || item.firstAccuracy === null) return "";
+  const chain = item.chain >= 2 ? ` Chain ${item.chain}, plus ${Math.round(item.chainPoints)} points.` : "";
+  return `${Math.round(item.basePoints)} points.${chain} `;
+}
+
 function announcement(
   run: RunState,
   score: RunScoreView,
@@ -1020,7 +1034,7 @@ function announcement(
       const accuracy = low ? validAccuracy(low) : null;
       const tier = tierForAccuracy(accuracy);
       const reading = accuracy !== null && tier ? `${formatRunScore(accuracy)}. ${TIER_LABELS[tier]}. ` : "";
-      return `${reading}Below this run's target ${run.config.target}. Listen, then read again. No heart lost yet.`;
+      return `${reading}${pointsText(score, run.index)}Below this run's target ${run.config.target}. Listen, then read again. No heart lost yet.`;
     }
     case "feedback": {
       if (!fresh) return "";
@@ -1028,11 +1042,13 @@ function announcement(
       const tier = tierForAccuracy(latest?.accuracy ?? null);
       const value = latest ? `${formatRunScore(latest.accuracy)}. ` : "";
       const tierText = tier ? `${TIER_LABELS[tier]}. ` : "";
+      // A rescue result never re-announces points: those belong to the first reading, already told.
       if (item.verdict === "heart-lost") return `${value}${tierText}Both readings below ${run.config.target}. One heart used.`;
       if (item.verdict === "saved") return `${value}${tierText}Heart kept.`;
       if ((item.verdict === "passed" || item.verdict === "practiced") && tier) {
-        const chain = score.items[run.index]?.chain ?? 0;
-        return `${value}${TIER_LABELS[tier]}.${chain >= 2 ? ` Chain ${chain}.` : ""}`;
+        const first = firstValid(item);
+        const isFirst = first !== null && latest !== null && first.attempt.key.attemptId === latest.attempt.key.attemptId;
+        return `${value}${TIER_LABELS[tier]}. ${isFirst ? pointsText(score, run.index) : ""}`.trimEnd();
       }
       if (item.verdict === "no-match" || item.verdict === "unjudged") {
         return `${NONJUDGMENT_LINES[item.verdict]} ${canRecord(run) ? "You can try again." : "You can move on."}`;

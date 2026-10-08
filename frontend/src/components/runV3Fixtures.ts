@@ -86,6 +86,10 @@ const target85HeartLost = fixture(scored(target85Loaded, 82));
 // 80 → 88: the heart is kept and the first reading still scores 80.
 const target85Saved = fixture(scored(target85Loaded, 88));
 
+// Mixed tiers in one heart loss: 80 → 50 and 50 → 80 are both below 85, each reading keeps its tier.
+const target85GoodThenLow = fixture(scored(loadReference(scored(start(TARGET_85), 80)), 50));
+const target85LowThenGood = fixture(scored(loadReference(scored(start(TARGET_85), 50)), 80));
+
 // The raw first reading decides: 84.9 is below 85 (and shows as 84.9); a rescue at 85 keeps the heart.
 const target85Boundary = fixture(scored(loadReference(scored(start(TARGET_85), 84.9)), 85));
 
@@ -130,6 +134,8 @@ export const runV3Fixtures = {
   target85HeartLost,
   target85Saved,
   target85Boundary,
+  target85GoodThenLow,
+  target85LowThenGood,
   target85Exhausted,
   target85UnjudgedEmpty,
   target85ReferenceFailed,

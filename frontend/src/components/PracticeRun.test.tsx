@@ -192,7 +192,7 @@ describe("PracticeRun", () => {
     expect(ring(container)).toHaveAttribute("data-tier", "perfect");
     expect(screen.getByText("+147")).toBeInTheDocument();
     expect(screen.getByText("×3 in a row +13")).toBeInTheDocument();
-    expect(liveRegion(container)).toBe("98. Perfect. Chain 3.");
+    expect(liveRegion(container)).toBe("98. Perfect. 147 points. Chain 3, plus 13 points.");
     const next = screen.getByRole("button", { name: "Record next" });
     expect(next).toBeEnabled();
     fireEvent.click(next);
@@ -307,8 +307,8 @@ describe("PracticeRun", () => {
     expect(callbacks.onSkip).toHaveBeenCalledTimes(1);
     view.unmount();
 
-    renderRun(runV2Fixtures.heartLost.run);
-    expect(screen.getByText("46 → 52")).toBeInTheDocument();
+    const lost = renderRun(runV2Fixtures.heartLost.run);
+    expect(lost.container.querySelector(".run-readings")).toHaveTextContent("46 → 52");
     expect(screen.getByText("Both readings below 60 · one heart used")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "1 of 2 hearts left" })).toBeInTheDocument();
   });
@@ -596,11 +596,11 @@ describe("PracticeRun", () => {
     const callbacks = handlers();
     const verdict = runV2Fixtures.verdictPerfect.run;
     const first = renderRun(verdict, callbacks);
-    expect(liveRegion(first.container)).toBe("98. Perfect. Chain 3.");
+    expect(liveRegion(first.container)).toBe("98. Perfect. 147 points. Chain 3, plus 13 points.");
     expect(callbacks.onFeedbackConsumed).toHaveBeenCalledTimes(1);
     const [consumedId] = callbacks.onFeedbackConsumed.mock.calls[0];
     first.rerender(<PracticeRun {...practiceRunProps({ ...verdict }, callbacks)} />);
-    expect(liveRegion(first.container)).toBe("98. Perfect. Chain 3.");
+    expect(liveRegion(first.container)).toBe("98. Perfect. 147 points. Chain 3, plus 13 points.");
     expect(vibrate).toHaveBeenCalledTimes(1);
     first.unmount();
 
@@ -817,7 +817,10 @@ describe("PracticeRun", () => {
       expect(view.container.querySelector(".run-ring-tier")).toHaveTextContent("Good");
       const readings = view.container.querySelector(".run-readings");
       expect(readings).toHaveTextContent("80 → 82");
-      expect(readings).toHaveAttribute("data-tier", "good");
+      expect(Array.from(readings?.querySelectorAll(".run-reading-value") ?? []).map((value) => value.getAttribute("data-tier"))).toEqual([
+        "good",
+        "good"
+      ]);
       expect(status(view.container).getByText("Both readings below 85 · one heart used")).toBeInTheDocument();
       expect(status(view.container).getByText("Both takes are saved for the review.")).toBeInTheDocument();
       expect(screen.getByRole("img", { name: "1 of 2 hearts left" })).toBeInTheDocument();
@@ -825,6 +828,24 @@ describe("PracticeRun", () => {
       // Challenge keeps its fast path after a heart loss.
       expect(screen.getByRole("button", { name: "Record next" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "Hear it again" })).toBeEnabled();
+    });
+
+    it("mixed_tier_readings_keep_their_own_colour", () => {
+      for (const [fixture, tiers] of [
+        [runV3Fixtures.target85GoodThenLow, ["good", "relisten"]],
+        [runV3Fixtures.target85LowThenGood, ["relisten", "good"]]
+      ] as const) {
+        expect(fixture.run.items[fixture.run.index].verdict).toBe("heart-lost");
+        const view = renderRun(fixture.run, { reducedMotion: true });
+        const readings = view.container.querySelector(".run-readings");
+        const values = Array.from(readings?.querySelectorAll(".run-reading-value") ?? []);
+        expect(values.map((value) => value.getAttribute("data-tier"))).toEqual(tiers);
+        // The arrow carries no tier of its own.
+        expect(readings).not.toHaveAttribute("data-tier");
+        expect(readings?.querySelector(".run-readings-arrow")).not.toHaveAttribute("data-tier");
+        expect(status(view.container).getByText("Both readings below 85 · one heart used")).toBeInTheDocument();
+        view.unmount();
+      }
     });
 
     it("cannot_confirm_distinguishes_rescue_unjudged_and_reference_failure", () => {
@@ -856,18 +877,35 @@ describe("PracticeRun", () => {
 
     it("single_announcement_uses_final_target_tier_and_points", () => {
       for (const [fixture, text] of [
-        [runV3Fixtures.target85Rescue, "80. Good. Below this run's target 85. Listen, then read again. No heart lost yet."],
+        // The first reading's final points and chain bonus, as the feedback shows them.
+        [
+          runV3Fixtures.route12Feedback,
+          "88. Great. 66 points. Chain 3, plus 3 points."
+        ],
+        // A first reading below target still scored: its points are told once, on entering rescue.
+        [
+          runV3Fixtures.target85Rescue,
+          "80. Good. 120 points. Below this run's target 85. Listen, then read again. No heart lost yet."
+        ],
+        // A rescue result keeps the first reading's points and does not claim new ones.
         [runV3Fixtures.target85HeartLost, "82. Good. Both readings below 85. One heart used."],
-        [runV3Fixtures.target85Saved, "88. Great. Heart kept."],
-        [runV3Fixtures.route12Feedback, "88. Great. Chain 3."]
+        [runV3Fixtures.target85Saved, "88. Great. Heart kept."]
       ] as const) {
-        const view = renderRun(fixture.run);
+        const onFeedbackConsumed = vi.fn();
+        const view = renderRun(fixture.run, { onFeedbackConsumed });
         expect(view.container.querySelectorAll("[aria-live]")).toHaveLength(1);
         expect(liveRegion(view.container)).toBe(text);
-        view.rerender(<PracticeRun {...practiceRunProps({ ...fixture.run })} />);
+        // A rerender of the same event neither repeats nor changes it.
+        view.rerender(<PracticeRun {...practiceRunProps({ ...fixture.run }, { onFeedbackConsumed })} />);
         expect(liveRegion(view.container)).toBe(text);
         view.unmount();
+        // A remount after it was shown announces nothing.
+        const [consumed] = onFeedbackConsumed.mock.calls[0];
+        const remount = renderRun(fixture.run, { consumedFeedbackIds: new Set([consumed]) });
+        expect(liveRegion(remount.container)).toBe("");
+        remount.unmount();
       }
+      expect(runV3Fixtures.target85Rescue.score.items[2].basePoints).toBe(120);
 
       // First-reading points come from the planned-twelve selector, shown once on the feedback.
       const feedback = renderRun(runV3Fixtures.route12Feedback.run);

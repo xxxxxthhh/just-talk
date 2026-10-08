@@ -192,4 +192,3 @@ describe("RunHero", () => {
     expect(best()).toHaveTextContent("Target 85876A");
   });
 });
-
