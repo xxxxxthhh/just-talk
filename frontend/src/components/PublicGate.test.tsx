@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { checkHealth, deleteMyData, fetchQuota } from "../api";
 import { RUN_BEST_KEY } from "../game/personalBest";
-import { AUTO_STOP_KEY, SFX_KEY } from "../game/preferences";
+import { AUTO_STOP_KEY, RUN_CONFIG_KEY, SFX_KEY } from "../game/preferences";
 import type { Health, QuotaStatus, QuotaWindow } from "../types";
 import PublicGate from "./PublicGate";
 
@@ -32,7 +32,7 @@ let keysAtReload: string[] | null;
 
 beforeEach(() => {
   window.localStorage.clear();
-  for (const key of [RUN_BEST_KEY, SFX_KEY, AUTO_STOP_KEY, "theme"]) window.localStorage.setItem(key, "x");
+  for (const key of [RUN_BEST_KEY, SFX_KEY, AUTO_STOP_KEY, RUN_CONFIG_KEY, "theme"]) window.localStorage.setItem(key, "x");
   keysAtReload = null;
   const reload = vi.fn(() => {
     keysAtReload = Object.keys(window.localStorage).sort();
@@ -71,6 +71,24 @@ describe("PublicGate", () => {
     await confirmDelete();
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not reach the server.");
     expect(window.location.reload).not.toHaveBeenCalled();
-    expect(Object.keys(window.localStorage).sort()).toEqual([AUTO_STOP_KEY, SFX_KEY, RUN_BEST_KEY, "theme"].sort());
+    expect(Object.keys(window.localStorage).sort()).toEqual(
+      [AUTO_STOP_KEY, SFX_KEY, RUN_BEST_KEY, RUN_CONFIG_KEY, "theme"].sort()
+    );
+  });
+
+  it("delete_success_only_clears_exact_game_keys", async () => {
+    // Look-alike keys are not game keys.
+    for (const key of ["jt.runConfig.v2", "jt.runBest", "jt.other"]) window.localStorage.setItem(key, "x");
+    // A key that cannot be removed does not block the rest or the reload.
+    const remove = Storage.prototype.removeItem;
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key: string) {
+      if (key === RUN_BEST_KEY) throw new Error("SecurityError");
+      remove.call(this, key);
+    });
+    vi.mocked(deleteMyData).mockResolvedValue({ deleted: true });
+    await confirmDelete();
+    await waitFor(() => expect(window.location.reload).toHaveBeenCalledTimes(1));
+    expect(keysAtReload).toEqual([RUN_BEST_KEY, "jt.other", "jt.runBest", "jt.runConfig.v2", "theme"].sort());
+    vi.restoreAllMocks();
   });
 });
