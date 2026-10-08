@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecording } from "../api";
 import { bestBucketForRun, finalizeRunBest } from "../game/personalBest";
@@ -114,6 +114,7 @@ export function usePracticeRun(session: RunSession) {
   // True from an accepted Start or Play again until its deck is in or the start is abandoned, so the
   // run owns navigation while the deck loads.
   const [starting, setStarting] = useState(false);
+  const disposedRef = useRef(false);
   // Decided once when a rated run ends and kept for the run's lifetime, across summary and
   // review remounts, so later storage changes never alter it.
   const [receipt, setReceipt] = useState<RunBestReceipt | null>(null);
@@ -149,6 +150,8 @@ export function usePracticeRun(session: RunSession) {
 
   function dispatch(action: RunAction): RunState | null {
     const previous = stateRef.current;
+    // A disposed owner settles nothing: no state, receipt, cue, or follow-on collection.
+    if (disposedRef.current) return previous;
     const next = runReducer(previous, action);
     if (next === previous) return next;
     stateRef.current = next;
@@ -221,7 +224,7 @@ export function usePracticeRun(session: RunSession) {
       // Only the take still being captured in this run may report its failure.
       const active = stateRef.current;
       if (active?.runId === key.runId && active.activeAttemptId === key.attemptId) {
-        session.setError(err instanceof Error ? err.message : "Could not start the microphone.");
+        if (!disposedRef.current) session.setError(err instanceof Error ? err.message : "Could not start the microphone.");
       }
     }
     if (!started) {
@@ -395,6 +398,30 @@ export function usePracticeRun(session: RunSession) {
   const score = useMemo(() => (state ? selectRunScore(state) : null), [state]);
   const suggestions = useMemo(() => (state ? selectReviewSuggestions(state) : []), [state]);
   const topRevisit = useMemo(() => topRevisitOf(suggestions), [suggestions]);
+
+  // The owner's lifetime ends at unmount: pending starts and late results are dropped, the take is
+  // cancelled, and this run's review URLs are released. Shared audio and cues belong to the
+  // session's own cleanup or to a newer owner, so nothing global is reset. Re-arms on StrictMode
+  // effect replay.
+  const sessionRef = useRef(session);
+  useEffect(() => {
+    sessionRef.current = session;
+  });
+  useEffect(() => {
+    const disposed = disposedRef;
+    const startToken = startTokenRef;
+    const capture = captureRef;
+    const urls = urlsRef.current;
+    const owner = sessionRef;
+    disposed.current = false;
+    return () => {
+      disposed.current = true;
+      startToken.current += 1;
+      if (capture.current) owner.current.cancelRunCapture("exit");
+      for (const url of urls.values()) URL.revokeObjectURL(url);
+      urls.clear();
+    };
+  }, []);
 
   return {
     state,

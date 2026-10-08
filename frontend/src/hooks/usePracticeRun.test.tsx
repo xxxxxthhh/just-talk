@@ -1,4 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { addWordsFromSession, ApiError, fetchPhonemeStats, listWords, scoreRecording } from "../api";
@@ -975,5 +976,84 @@ describe("usePracticeRun", () => {
     expect(hook.result.current.state?.items.every((item) => item.prompt.source === "starter")).toBe(true);
     expect(fake.session.enterRun).toHaveBeenCalledTimes(1);
     expect(fake.session.setError).not.toHaveBeenCalled();
+  });
+
+  it("owner_unmount_drops_pending_start_scores_collection_and_urls", async () => {
+    // Unmounted during a deferred Start, while a newer owner starts: the old deck never lands.
+    const oldFake = fakeSession();
+    const oldOwner = renderHook(() => usePracticeRun(oldFake.session));
+    const stats = deferred<never[]>();
+    vi.mocked(fetchPhonemeStats).mockReturnValueOnce(stats.promise);
+    let oldStart!: Promise<void>;
+    act(() => {
+      oldStart = oldOwner.result.current.start("route");
+    });
+    oldOwner.unmount();
+    const newer = await setup("challenge");
+    vi.mocked(resetCueEvents).mockClear();
+    await act(async () => {
+      stats.resolve([]);
+      await oldStart;
+    });
+    expect(oldFake.session.enterRun).not.toHaveBeenCalled();
+    expect(resetCueEvents).not.toHaveBeenCalled();
+    expect(newer.run().state?.mode).toBe("challenge");
+
+    // Unmounted with a scored take kept for review and a sentence score in flight: the review
+    // URL is released, and the late score plays no cue and collects no words.
+    const h = await setup("route");
+    for (let i = 0; i < 4; i += 1) {
+      await attempt(h, scored(95));
+      act(() => h.run().finish());
+    }
+    const pending = deferred<ScoreResponse>();
+    vi.mocked(scoreRecording).mockReturnValueOnce(pending.promise);
+    await act(async () => {
+      await h.run().record();
+    });
+    act(() => h.run().stop());
+    const urls = Object.values(h.run().attemptAudioUrls);
+    expect(urls).toHaveLength(5);
+    vi.mocked(playCue).mockClear();
+    h.hook.unmount();
+    expect(vi.mocked(URL.revokeObjectURL).mock.calls.map(([url]) => url)).toEqual(expect.arrayContaining(urls));
+    await act(async () => {
+      pending.resolve(scored(95, [word("path", 50)]));
+    });
+    await flush();
+    expect(playCue).not.toHaveBeenCalled();
+    expect(addWordsFromSession).not.toHaveBeenCalled();
+    expect(h.session.setError).not.toHaveBeenCalled();
+  });
+
+  it("owner_unmount_cancels_its_capture_and_strict_mode_replay_stays_usable", async () => {
+    const h = await setup("route");
+    h.session.cancelRunCapture.mockImplementationOnce(() => undefined);
+    await act(async () => {
+      await h.run().record();
+    });
+    h.hook.unmount();
+    expect(h.session.cancelRunCapture).toHaveBeenCalledWith("exit");
+    // The take delivered after unmount is dropped before anything is sent.
+    act(() => h.fire("manual"));
+    expect(scoreRecording).not.toHaveBeenCalled();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+
+    // StrictMode mounts, cleans up and re-runs effects: the controller still works.
+    const fake = fakeSession();
+    const strict = renderHook(() => usePracticeRun(fake.session), { wrapper: StrictMode });
+    await act(async () => {
+      await strict.result.current.start("route");
+    });
+    expect(strict.result.current.state?.mode).toBe("route");
+    vi.mocked(scoreRecording).mockResolvedValueOnce(scored(95));
+    await act(async () => {
+      await strict.result.current.record();
+    });
+    act(() => strict.result.current.stop());
+    await flush();
+    expect(scoreRecording).toHaveBeenCalledTimes(1);
+    expect(strict.result.current.state?.items[0].verdict).toBe("practiced");
+    expect(playCue).toHaveBeenCalledWith("perfect", expect.any(String));
   });
 });
