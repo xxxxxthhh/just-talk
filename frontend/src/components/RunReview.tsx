@@ -16,9 +16,6 @@ import type {
 import { RunMiniPlayer, useYouPlayer, type CoachPlayback, type YouPlayer, type YouTake } from "./RunMiniPlayer";
 import { formatRunScore, TIER_LABELS } from "./RunRing";
 
-// usePracticeRun still imports this from here until it reads game/scoring directly.
-export { runWeakWords } from "../game/scoring";
-
 const MAX_EVIDENCE = 3;
 
 const STAGE_LABELS: Record<RunPrompt["stage"], string> = {
