@@ -12,7 +12,6 @@ export type RunBestRecord = Readonly<{
   runId: string;
   points: number;
   rating: RunRating;
-  previousPoints: number | null;
   updatedAt: number;
   expiresAt: number | null;
 }>;
@@ -38,7 +37,6 @@ function isRecord(value: unknown): value is RunBestRecord {
     Number.isFinite(record.points) &&
     typeof record.rating === "string" &&
     RATINGS.includes(record.rating) &&
-    optionalNumber(record.previousPoints) &&
     typeof record.updatedAt === "number" &&
     Number.isFinite(record.updatedAt) &&
     optionalNumber(record.expiresAt)
@@ -66,31 +64,37 @@ export function readBest(bucket: RunBestBucket, now = Date.now()): RunBestRecord
   return live(readAll()[bestBucketKey(bucket)], now);
 }
 
-// Decides the receipt before writing, and writes only for a rated first record or a strictly
-// higher score. Finalizing the same run again returns its original receipt without rewriting.
-export function finalizeRunBest(
+// Decides a rated run's receipt against the record it replaces. Pure: the run owner calls it once
+// and keeps the receipt for the whole run, so later storage changes never alter it.
+export function decideRunBest(
+  previous: RunBestRecord | null,
+  runId: string,
+  score: RunScoreView
+): RunBestReceipt | null {
+  if (!score.rated || score.rating === null) return null;
+  const outcome = previous === null ? "first-record" : score.points > previous.points ? "new-best" : "none";
+  return { runId, previousPoints: previous?.points ?? null, outcome };
+}
+
+// Writes a winning receipt's score, unless a record at least as high has been stored since.
+export function persistRunBest(
   bucket: RunBestBucket,
   runId: string,
   score: RunScoreView,
+  receipt: RunBestReceipt,
   { publicMode = PUBLIC_MODE, now = Date.now() }: StoreOptions = {}
-): RunBestReceipt | null {
-  if (!score.rated || score.rating === null) return null;
+): void {
+  if (receipt.outcome === "none" || score.rating === null) return;
   const key = bestBucketKey(bucket);
   const records = readAll();
-  const previous = live(records[key], now);
-  if (previous?.runId === runId) {
-    return { runId, previousPoints: previous.previousPoints, outcome: previous.previousPoints === null ? "first-record" : "new-best" };
-  }
-  const outcome = previous === null ? "first-record" : score.points > previous.points ? "new-best" : "none";
-  const receipt: RunBestReceipt = { runId, previousPoints: previous?.points ?? null, outcome };
-  if (outcome === "none") return receipt;
+  const stored = live(records[key], now);
+  if (stored && stored.points >= score.points) return;
 
   const kept = Object.fromEntries(Object.entries(records).filter(([, record]) => live(record, now)));
   kept[key] = {
     runId,
     points: score.points,
     rating: score.rating,
-    previousPoints: receipt.previousPoints,
     updatedAt: now,
     expiresAt: publicMode ? now + PUBLIC_RETENTION_MS : null
   };
@@ -99,5 +103,17 @@ export function finalizeRunBest(
   } catch {
     // A full or blocked store keeps the receipt for this run; nothing else depends on the write.
   }
+}
+
+// Decides and writes once. Not idempotent: calling it again compares against whatever is stored
+// then, so the caller must keep the first receipt for the rest of the run.
+export function finalizeRunBest(
+  bucket: RunBestBucket,
+  runId: string,
+  score: RunScoreView,
+  options: StoreOptions = {}
+): RunBestReceipt | null {
+  const receipt = decideRunBest(readBest(bucket, options.now), runId, score);
+  if (receipt) persistRunBest(bucket, runId, score, receipt, options);
   return receipt;
 }

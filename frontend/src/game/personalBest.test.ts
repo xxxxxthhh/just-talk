@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { bestBucketForRun, bestBucketKey, finalizeRunBest, readBest, RUN_BEST_KEY, type RunBestBucket } from "./personalBest";
+import {
+  bestBucketForRun,
+  bestBucketKey,
+  decideRunBest,
+  finalizeRunBest,
+  persistRunBest,
+  readBest,
+  RUN_BEST_KEY,
+  type RunBestBucket
+} from "./personalBest";
 import { runReducer } from "./runModel";
 import { RUN_RULES_VERSION } from "./scoring";
 import type { RunMode, RunPrompt, RunRating, RunScoreView, RunState } from "../types";
@@ -71,18 +80,40 @@ describe("personal best", () => {
     });
     expect(readBest(BUCKET)).toMatchObject({ runId: "run-4", points: 955, rating: "S" });
 
-    // A remount finalizing the same run again keeps its receipt and does not rewrite.
-    const stored = window.localStorage.getItem(RUN_BEST_KEY);
-    expect(finalizeRunBest(BUCKET, "run-4", view(955, "S"), { publicMode: false, now: T0 + 2 * DAY })).toEqual({
-      runId: "run-4",
-      previousPoints: 861,
-      outcome: "new-best"
-    });
-    expect(window.localStorage.getItem(RUN_BEST_KEY)).toBe(stored);
-
     // Unrated runs never write.
     expect(finalizeRunBest(BUCKET, "run-5", view(990, null, false), later)).toBeNull();
     expect(readBest(BUCKET)?.points).toBe(955);
+  });
+
+  it("stale_receipts_never_clobber_a_newer_or_higher_record", () => {
+    // Deciding is pure: it reads nothing and writes nothing.
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const previous = { runId: "run-0", points: 865, rating: "A" as const, updatedAt: T0, expiresAt: null };
+    const winning = decideRunBest(previous, "run-1", view(955, "S"));
+    expect(winning).toEqual({ runId: "run-1", previousPoints: 865, outcome: "new-best" });
+    expect(decideRunBest(previous, "run-1", view(955, "S"))).toEqual(winning);
+    expect(decideRunBest(previous, "run-2", view(990, null, false))).toBeNull();
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+
+    // An intervening better run (another tab) stays stored when an older winning receipt is persisted.
+    finalizeRunBest(BUCKET, "run-0", view(865), PERSONAL);
+    finalizeRunBest(BUCKET, "run-2", view(978, "S"), PERSONAL);
+    const stored = window.localStorage.getItem(RUN_BEST_KEY);
+    persistRunBest(BUCKET, "run-1", view(955, "S"), winning!, PERSONAL);
+    expect(window.localStorage.getItem(RUN_BEST_KEY)).toBe(stored);
+
+    // A non-winning receipt never writes, whatever is stored by then.
+    window.localStorage.clear();
+    persistRunBest(BUCKET, "run-3", view(700, "B"), { runId: "run-3", previousPoints: 955, outcome: "none" }, PERSONAL);
+    expect(readBest(BUCKET)).toBeNull();
+
+    // Once its own record has expired, a stale receipt still cannot replace the live higher record.
+    // (Never re-deciding an expired run is the run owner's latch, tested in usePracticeRun.)
+    finalizeRunBest(BUCKET, "run-4", view(955, "S"), { publicMode: true, now: T0 });
+    finalizeRunBest(BUCKET, "run-5", view(978, "S"), { publicMode: true, now: T0 + 3 * DAY });
+    persistRunBest(BUCKET, "run-4", view(955, "S"), winning!, { publicMode: true, now: T0 + 8 * DAY });
+    expect(readBest(BUCKET, T0 + 8 * DAY)?.runId).toBe("run-5");
   });
 
   it("public_expiry_does_not_slide_on_read", () => {
