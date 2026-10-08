@@ -16,8 +16,9 @@ Run from the repository root at `2517246` with a clean working tree. Tests use m
 | `npm --prefix frontend test -- --run src/components/RunRing.test.tsx src/components/RunStones.test.tsx src/components/PracticeRun.test.tsx src/components/RunReview.test.tsx src/components/RunMiniPlayer.test.tsx src/components/PublicGate.test.tsx src/mobile/MobileApp.test.tsx` | 7 files, 60 tests: 59 passed, **1 failed** (see below) | 2026-10-08 / `2517246` |
 | `bash scripts/test.sh` | **Exit 1.** Ruff clean; 115 backend tests passed; lint 0 errors (7 warnings in files v2 did not touch); frontend 308 tests, 307 passed, the same 1 failed; the build step did not run because the script stops at the first failure | 2026-10-08 / `2517246` |
 | `npm --prefix frontend run build` (run separately) | Exit 0 (TypeScript and Vite) | 2026-10-08 / `2517246` |
+| `bash scripts/test.sh` (re-run after the B4 fixes) | **Exit 0.** Ruff clean; 115 backend tests passed; lint 0 errors (same 7 warnings); 30 files, 314 frontend tests passed; build succeeded | 2026-10-08 / `837a479` |
 
-**Known failure at `2517246`:** `RunReview.test.tsx` › "pausing a mounted review stops and blocks playback, and resume never replays". Core's `a831e26` made PAUSE a no-op in summary and review, so this test's premise no longer holds. The lead's B4 decision replaces it with a document-hidden test (Track B follow-up). This row must be re-run after that fix.
+**Known failure at `2517246`, resolved at `837a479`:** `RunReview.test.tsx` › "pausing a mounted review stops and blocks playback, and resume never replays". Core's `a831e26` made PAUSE a no-op in summary and review, so this test's premise no longer held. Following the lead's B4 decision, `d54e749` replaced it with a document-hidden test and two full-app tests (Quit → See review → You plays; completed review survives hidden → visible without replaying).
 
 ## Layout evidence
 
@@ -86,4 +87,5 @@ These remain gaps. None is implied by the evidence above.
 - **Safari SVG paint:** the striped (unjudged) and gold-gradient (Perfect) stone fills reference a shared hidden SVG; they render in Chrome only.
 - **Safe-area insets** (notch, home indicator), landscape, and widths other than 390 (320, 428).
 - **The entry card in its full Practice screen context.** It was rendered inside the practice scroll container in isolation, without the material header and recorder below it.
-- **Quit dialog focus containment:** a lead-required B4 fix is still pending at this revision.
+- **Quit dialog with a real keyboard and screen reader:** `837a479` contains Tab/Shift+Tab inside the dialog and marks the rest of the run `inert` (tested in jsdom with simulated keyboard). Real browser `inert` behaviour and VoiceOver reading of the alert dialog are not verified.
+- **Later changes not re-captured:** the screenshots and measurements are from `2517246`. Later commits (`d54e749`, `6f78e48`, `837a479`) add the entry card's "Starting…" label and start-error line and change behaviour only; the captured states' layout CSS is unchanged.
