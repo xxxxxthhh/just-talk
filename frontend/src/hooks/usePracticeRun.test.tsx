@@ -49,7 +49,7 @@ function fakeSession() {
   const session = {
     enterRun: vi.fn(),
     exitRun: vi.fn(),
-    startRunCapture: vi.fn(async (onReady: (blob: Blob) => void) => {
+    startRunCapture: vi.fn(async (_options: unknown, onReady: (blob: Blob) => void) => {
       active = onReady;
       return true;
     }),
@@ -136,7 +136,7 @@ describe("usePracticeRun", () => {
       await Promise.all([h.run().record(), h.run().record()]);
     });
     expect(h.session.startRunCapture).toHaveBeenCalledTimes(1);
-    const onReady = h.session.startRunCapture.mock.calls[0][0];
+    const onReady = h.session.startRunCapture.mock.calls[0][1];
     act(() => {
       h.run().stop();
       h.run().stop();

@@ -146,7 +146,9 @@ export function usePracticeRun(session: RunSession) {
     captureRef.current = key;
     let started = false;
     try {
-      started = await session.startRunCapture((blob) => handleBlob(key, blob));
+      // Auto-stop stays off until the run classifies local rejects before sending.
+      const kind = current.items[current.index].prompt.kind;
+      started = await session.startRunCapture({ key, kind, autoStop: false }, (blob) => handleBlob(key, blob));
     } catch (err) {
       session.setError(err instanceof Error ? err.message : "Could not start the microphone.");
     }

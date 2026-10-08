@@ -18,9 +18,20 @@ import {
   getDueWordsForReview,
   type WordBankTab
 } from "./components/WordBankPanel";
+import {
+  createLevelMeter,
+  createTelemetryStore,
+  IDLE_TELEMETRY,
+  prepareRunAudio,
+  releaseRunAudio,
+  runAudioContext,
+  type LevelMeter
+} from "./game/runAudio";
+import { holdMicrophone, resetCueEvents } from "./game/sfx";
+import { createVad, type Vad } from "./game/vad";
 import { useActivityStats } from "./hooks/useActivityStats";
 import { usePhonemeInsights } from "./hooks/usePhonemeInsights";
-import { useRecorder } from "./hooks/useRecorder";
+import { useRecorder, type CaptureStop } from "./hooks/useRecorder";
 import { useRecordingPlayback } from "./hooks/useRecordingPlayback";
 import { useServerState } from "./hooks/useServerState";
 import { useSpeech, type SpeechOptions } from "./hooks/useSpeech";
@@ -28,9 +39,12 @@ import { useTheme } from "./hooks/useTheme";
 import { validateMaterialPackImportPayload } from "./materialImport";
 import { normalizedWord, weakWordsFromResult } from "./scoreUtils";
 import type {
+  CaptureStopReason,
+  CaptureSummary,
   MaterialItem,
   PassageIssue,
   PracticeSession,
+  RunCaptureOptions,
   ScoreResult,
   SpeechWordBoundary,
   VocabularyItem,
@@ -43,7 +57,22 @@ const DEFAULT_PASSAGE =
 const WORD_REPLAY_LEAD_IN_SECONDS = 0.15;
 const NO_MATCH_MESSAGE = "No speech detected — check your microphone and try again.";
 
+const RUN_SAMPLE_MS = 25;
+
 type PracticeMode = "short" | "long";
+
+// One run take's analysis, from microphone acquisition to handoff.
+type RunCapture = {
+  id: string;
+  kind: RunCaptureOptions["kind"];
+  vad: Vad;
+  meter: LevelMeter | null;
+  timer: number | null;
+  startedAt: number | null;
+  cancelReason: CaptureStopReason | null;
+  stopped: boolean;
+  releaseMicrophone: () => void;
+};
 type AppView = "practice" | "insights";
 type SidebarPanel = "materials" | "history" | "word-bank";
 
@@ -98,7 +127,9 @@ export function usePracticeSession() {
   // A game run owns the shared recorder from enterRun until exitRun, including
   // its pause, summary, and review screens.
   const [runActive, setRunActive] = useState(false);
-  const runCaptureCancelledRef = useRef(false);
+  const runCaptureRef = useRef<RunCapture | null>(null);
+  // Changes every audio frame; only subscribers re-render.
+  const [runCaptureTelemetry] = useState(createTelemetryStore);
 
   const {
     health,
@@ -143,6 +174,7 @@ export function usePracticeSession() {
     recordingStream,
     startRecording: startRecorderCapture,
     stopRecording,
+    stopRecordingWith,
     discardRecording,
     resetRecording
   } = useRecorder({
@@ -555,32 +587,142 @@ export function usePracticeSession() {
   }
 
   function exitRun() {
-    cancelRunCapture();
+    cancelRunCapture("exit");
     resetPractice();
     setRunActive(false);
+    resetCueEvents();
+    releaseRunAudio();
+    runCaptureTelemetry.set(IDLE_TELEMETRY);
+  }
+
+  function publishRunTelemetry(capture: RunCapture) {
+    if (capture.startedAt === null) return;
+    const snapshot = capture.vad.snapshot();
+    runCaptureTelemetry.set({
+      captureId: capture.id,
+      level: snapshot.level,
+      silenceProgress: snapshot.silenceProgress,
+      autoStopState: capture.stopped ? "stopping" : snapshot.autoStopState,
+      elapsedMs: performance.now() - capture.startedAt
+    });
+  }
+
+  // Ends analysis at the accepted stop: no more frames, decisions, or open audio nodes.
+  function finishRunAnalysis(capture: RunCapture) {
+    if (capture.stopped) return;
+    capture.stopped = true;
+    if (capture.timer !== null) window.clearInterval(capture.timer);
+    capture.timer = null;
+    try {
+      capture.meter?.dispose();
+    } catch {
+      // The context may already be closed.
+    }
+    publishRunTelemetry(capture);
+  }
+
+  function sampleRunCapture(capture: RunCapture) {
+    if (capture.stopped || capture.startedAt === null) return;
+    if (capture.meter) {
+      const reason = capture.vad.push({
+        dbfs: capture.meter.read(),
+        tMs: performance.now() - capture.startedAt,
+        contextRunning: runAudioContext()?.state === "running",
+        hidden: document.visibilityState === "hidden"
+      });
+      // The recorder's latch makes this one stop among manual, hard-cap and cancel.
+      if (reason && runCaptureRef.current === capture) {
+        stopRecordingWith(reason);
+        return;
+      }
+    }
+    publishRunTelemetry(capture);
+  }
+
+  function runCaptureSummary(capture: RunCapture, stop: CaptureStop): CaptureSummary {
+    const snapshot = capture.vad.snapshot();
+    return Object.freeze({
+      captureId: capture.id,
+      stopReason: stop.reason,
+      durationMs: stop.durationMs,
+      detectionValid: capture.meter !== null && snapshot.detectionValid,
+      speechSeen: snapshot.speechSeen,
+      voicedMs: snapshot.voicedMs
+    });
   }
 
   // Starts one run capture on the shared recorder. The run passes a callback
   // closed over its attempt ID; true means that callback will receive this
-  // capture's blob exactly once, even after cancellation, so the run must not
-  // start another capture until it has.
-  async function startRunCapture(onReady: (blob: Blob) => void): Promise<boolean> {
-    runCaptureCancelledRef.current = false;
+  // capture's blob and frozen summary exactly once, even after cancellation,
+  // so the run must not start another capture until it has. Cues stay silent
+  // from here until that handoff.
+  async function startRunCapture(
+    options: RunCaptureOptions,
+    onReady: (blob: Blob, summary: CaptureSummary) => void
+  ): Promise<boolean> {
+    const previous = runCaptureRef.current;
+    if (previous && !previous.stopped) cancelRunCapture("replaced");
     stopCurrentSpeech();
     stopRecordingPlayback();
-    const started = await startRecorderCapture(onReady);
-    if (started && runCaptureCancelledRef.current) {
+    const capture: RunCapture = {
+      id: options.key.attemptId,
+      kind: options.kind,
+      vad: createVad(options.kind, { autoStop: options.autoStop }),
+      meter: null,
+      timer: null,
+      startedAt: null,
+      cancelReason: null,
+      stopped: false,
+      releaseMicrophone: holdMicrophone()
+    };
+    runCaptureRef.current = capture;
+    let started = false;
+    try {
+      started = await startRecorderCapture(
+        (blob, _discarded, stop) => {
+          finishRunAnalysis(capture);
+          capture.releaseMicrophone();
+          if (runCaptureTelemetry.get().captureId === capture.id) runCaptureTelemetry.set(IDLE_TELEMETRY);
+          onReady(blob, runCaptureSummary(capture, stop));
+        },
+        {
+          onStream: (stream) => {
+            capture.meter = createLevelMeter(stream);
+          },
+          onStart: (startedAt) => {
+            capture.startedAt = startedAt;
+            // Without analysis the take is manual only, never fabricated silence.
+            if (!capture.meter) capture.vad = createVad(capture.kind, { autoStop: false });
+            publishRunTelemetry(capture);
+            capture.timer = window.setInterval(() => sampleRunCapture(capture), RUN_SAMPLE_MS);
+          },
+          onStop: () => finishRunAnalysis(capture)
+        }
+      );
+    } finally {
+      if (!started) {
+        finishRunAnalysis(capture);
+        capture.releaseMicrophone();
+      }
+    }
+    if (started && capture.cancelReason) {
       // Permission resolved after cancellation: stop without keeping the take.
-      discardRecording();
+      discardRecording(capture.cancelReason);
     }
     return started;
   }
 
+  function stopRunCapture(reason: CaptureStopReason = "manual") {
+    const capture = runCaptureRef.current;
+    if (capture && !capture.stopped) stopRecordingWith(reason);
+  }
+
   // The take's late onstop still reaches the run's callback, but never the
   // shared preview that normal Score and Enter read.
-  function cancelRunCapture() {
-    runCaptureCancelledRef.current = true;
-    discardRecording();
+  function cancelRunCapture(reason: CaptureStopReason = "cancel") {
+    const capture = runCaptureRef.current;
+    if (capture) capture.cancelReason ??= reason;
+    discardRecording(reason);
   }
 
   function practiceVocabularyWord(item: VocabularyItem, options?: { fromReview?: boolean }) {
@@ -1001,8 +1143,11 @@ export function usePracticeSession() {
     runActive,
     enterRun,
     exitRun,
+    prepareRunAudio,
     startRunCapture,
+    stopRunCapture,
     cancelRunCapture,
+    runCaptureTelemetry,
 
     // --- desktop shell navigation（移动端会另建导航，可忽略）---
     appView,

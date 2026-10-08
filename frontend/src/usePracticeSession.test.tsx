@@ -1,7 +1,11 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ScoreResult, WordResult } from "./types";
+import { getRunPreferences, setRunPreference } from "./game/preferences";
+import { releaseRunAudio } from "./game/runAudio";
+import { playCue } from "./game/sfx";
+import { classifyCapture } from "./game/vad";
+import type { CaptureSummary, RunCaptureOptions, ScoreResult, WordResult } from "./types";
 import { usePracticeSession } from "./usePracticeSession";
 
 const health = {
@@ -69,6 +73,12 @@ function spokenTexts() {
 }
 
 type RecorderInstance = { state: string; ondataavailable: ((e: { data: Blob }) => void) | null; onstop: (() => void) | null };
+
+let captureCounter = 0;
+function runOptions(autoStop = false): RunCaptureOptions {
+  captureCounter += 1;
+  return { key: { runId: "run", itemId: "item", attemptId: `attempt-${captureCounter}` }, kind: "word", autoStop };
+}
 
 let permission: { resolve: () => void } | null;
 let deferPermission = false;
@@ -154,7 +164,7 @@ describe("usePracticeSession run wiring", () => {
     const onReady = vi.fn();
     let started!: Promise<boolean>;
     act(() => {
-      started = session.current.startRunCapture(onReady);
+      started = session.current.startRunCapture(runOptions(), onReady);
     });
     // Cancelled while the permission prompt is still open.
     act(() => session.current.cancelRunCapture());
@@ -178,7 +188,7 @@ describe("usePracticeSession run wiring", () => {
     asyncStop = true;
     const onReady = vi.fn();
     await act(async () => {
-      await session.current.startRunCapture(onReady);
+      await session.current.startRunCapture(runOptions(), onReady);
     });
     act(() => session.current.exitRun());
     expect(session.current.audioBlob).toBeNull();
@@ -197,7 +207,7 @@ describe("usePracticeSession run wiring", () => {
     act(() => session.current.enterRun());
     asyncStop = true;
     await act(async () => {
-      await session.current.startRunCapture(vi.fn());
+      await session.current.startRunCapture(runOptions(), vi.fn());
     });
     act(() => session.current.exitRun());
     act(() => recorders[0].fireStop());
@@ -222,7 +232,7 @@ describe("usePracticeSession run wiring", () => {
     // The run starts its own capture before the normal take's onstop arrives.
     const onReady = vi.fn();
     await act(async () => {
-      await session.current.startRunCapture(onReady);
+      await session.current.startRunCapture(runOptions(), onReady);
     });
     act(() => recorders[0].fireStop());
     expect(session.current.status).toBe("");
@@ -255,7 +265,7 @@ describe("usePracticeSession run wiring", () => {
 
     const onReady = vi.fn();
     await act(async () => {
-      await session.current.startRunCapture(onReady);
+      await session.current.startRunCapture(runOptions(), onReady);
     });
     expect(session.current.recorderState).toBe("recording");
     pressEnter();
@@ -304,7 +314,7 @@ describe("usePracticeSession run wiring", () => {
 
     const onReady = vi.fn();
     await act(async () => {
-      await session.current.startRunCapture(onReady);
+      await session.current.startRunCapture(runOptions(), onReady);
     });
     act(() => session.current.stopRecording());
     expect(onReady).toHaveBeenCalledTimes(1);
@@ -526,5 +536,324 @@ describe("usePracticeSession normal scoring order", () => {
     act(() => session.current.showNextReviewWord());
     expect(session.current.reviewSummaryCount).toBe(1);
     expect(session.current.reviewScoredCount).toBe(1);
+  });
+});
+
+// The microphone level every analyser read reports, in dBFS.
+let micDbfs = -60;
+
+class FakeNode {
+  connect = vi.fn((node: unknown) => node);
+  disconnect = vi.fn();
+}
+
+class FakeAudioContext {
+  static constructed = 0;
+  state: AudioContextState = "running";
+  currentTime = 0;
+  destination = new FakeNode();
+  resume = vi.fn(async () => undefined);
+  suspend = vi.fn();
+  close = vi.fn(async () => undefined);
+  createMediaStreamSource = vi.fn(() => new FakeNode());
+  createAnalyser = vi.fn(() =>
+    Object.assign(new FakeNode(), {
+      fftSize: 0,
+      getFloatTimeDomainData: (samples: Float32Array) => samples.fill(10 ** (micDbfs / 20))
+    })
+  );
+  createGain = vi.fn(() => Object.assign(new FakeNode(), { gain: { setValueAtTime: vi.fn(), linearRampToValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() } }));
+  createOscillator = vi.fn(() => Object.assign(new FakeNode(), { frequency: { value: 0 }, onended: null, start: vi.fn(), stop: vi.fn() }));
+  constructor() {
+    FakeAudioContext.constructed += 1;
+  }
+}
+
+async function advance(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
+// Feeds one level per 25 ms frame.
+async function frames(levels: readonly number[]) {
+  for (const level of levels) {
+    micDbfs = level;
+    await advance(25);
+  }
+}
+
+async function startTake(
+  session: Awaited<ReturnType<typeof renderSession>>,
+  options: RunCaptureOptions,
+  onReady: (blob: Blob, summary: CaptureSummary) => void
+) {
+  let started = false;
+  await act(async () => {
+    started = await session.current.startRunCapture(options, onReady);
+  });
+  return started;
+}
+
+function summaryOf(onReady: ReturnType<typeof vi.fn>, call = 0): CaptureSummary {
+  return onReady.mock.calls[call][1] as CaptureSummary;
+}
+
+describe("usePracticeSession run capture analysis", () => {
+  // Opens the run with fake time; waitFor is not used after this point.
+  async function openRun(audio = true) {
+    installRecorder();
+    const session = await renderSession();
+    act(() => session.current.enterRun());
+    if (audio) act(() => session.current.prepareRunAudio());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date", "performance"] });
+    return session;
+  }
+
+  beforeEach(() => {
+    overrides = {};
+    deferPermission = false;
+    asyncStop = false;
+    recorders = [];
+    permission = null;
+    micDbfs = -60;
+    FakeAudioContext.constructed = 0;
+    window.localStorage.clear();
+    setRunPreference("autoStop", true);
+    installFetch();
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    releaseRunAudio();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("permission_wait_does_not_consume_capture_timeout", async () => {
+    const session = await openRun();
+    deferPermission = true;
+    const onReady = vi.fn();
+    let started!: Promise<boolean>;
+    act(() => {
+      started = session.current.startRunCapture(runOptions(true), onReady);
+    });
+    await advance(10_000);
+    await act(async () => {
+      permission?.resolve();
+      expect(await started).toBe(true);
+    });
+
+    await advance(3_900);
+    expect(onReady).not.toHaveBeenCalled();
+    expect(session.current.recorderState).toBe("recording");
+    await advance(200);
+    expect(onReady).toHaveBeenCalledTimes(1);
+    const summary = summaryOf(onReady);
+    expect(summary).toMatchObject({ stopReason: "no-speech", speechSeen: false, detectionValid: true });
+    expect(summary.durationMs).toBeGreaterThanOrEqual(4_000);
+    expect(summary.durationMs).toBeLessThan(4_100);
+    expect(classifyCapture(summary, "word")).toBe("no-speech");
+  });
+
+  it("racing_stop_sources_deliver_one_frozen_summary", async () => {
+    const session = await openRun();
+    asyncStop = true;
+    const onReady = vi.fn();
+    await startTake(session, runOptions(true), onReady);
+    micDbfs = -30;
+    await advance(600);
+    micDbfs = -60;
+    await advance(700);
+    expect(session.current.runCaptureTelemetry.get().autoStopState).toBe("stopping");
+
+    // Manual Stop and the hard cap arrive after the silence stop was accepted, before onstop.
+    act(() => session.current.stopRecording());
+    act(() => session.current.stopRunCapture("manual"));
+    await advance(30_000);
+    act(() => recorders[0].fireStop());
+
+    expect(onReady).toHaveBeenCalledTimes(1);
+    const summary = summaryOf(onReady);
+    expect(summary).toMatchObject({ stopReason: "silence", speechSeen: true, detectionValid: true, voicedMs: 600 });
+    expect(summary.durationMs).toBe(1_250);
+    expect(Object.isFrozen(summary)).toBe(true);
+    expect(classifyCapture(summary, "word")).toBe("submit");
+    expect(session.current.runCaptureTelemetry.get().captureId).toBeNull();
+  });
+
+  it("cancel_after_stop_before_onstop_discards_delivery", async () => {
+    const session = await openRun();
+    asyncStop = true;
+    const onReady = vi.fn();
+    await startTake(session, runOptions(true), onReady);
+    micDbfs = -30;
+    await advance(600);
+    micDbfs = -60;
+    await advance(700);
+    act(() => session.current.cancelRunCapture("pause"));
+    act(() => recorders[0].fireStop());
+
+    expect(onReady).toHaveBeenCalledTimes(1);
+    expect(summaryOf(onReady).stopReason).toBe("pause");
+    expect(classifyCapture(summaryOf(onReady), "word")).toBe("discard");
+    expect(session.current.audioBlob).toBeNull();
+    expect(session.current.status).toBe("");
+  });
+
+  it("late_permission_and_cancelled_onstop_do_not_publish_preview", async () => {
+    const session = await openRun();
+    deferPermission = true;
+    const late = vi.fn();
+    let started!: Promise<boolean>;
+    act(() => {
+      started = session.current.startRunCapture(runOptions(true), late);
+    });
+    act(() => session.current.cancelRunCapture("quit"));
+    await act(async () => {
+      permission?.resolve();
+      expect(await started).toBe(true);
+    });
+    expect(late).toHaveBeenCalledTimes(1);
+    expect(summaryOf(late).stopReason).toBe("quit");
+    expect(session.current.audioBlob).toBeNull();
+    expect(session.current.recorderState).toBe("idle");
+    // The microphone hold ended with the handoff, so cues may play again.
+    expect(playCue("good", "after-late-permission")).toBe(true);
+
+    deferPermission = false;
+    asyncStop = true;
+    const exited = vi.fn();
+    await startTake(session, runOptions(true), exited);
+    expect(playCue("good", "while-recording")).toBe(false);
+    act(() => session.current.exitRun());
+    act(() => recorders[1].fireStop());
+    expect(summaryOf(exited).stopReason).toBe("exit");
+    expect(session.current.audioBlob).toBeNull();
+    expect(session.current.audioUrl).toBeNull();
+  });
+
+  it("normal_to_run_and_run_to_normal_keep_capture_ownership", async () => {
+    const session = await openRun();
+    act(() => session.current.exitRun());
+    asyncStop = true;
+    await act(async () => {
+      await session.current.startRecording();
+    });
+    act(() => session.current.enterRun());
+    act(() => session.current.prepareRunAudio());
+    const run = vi.fn();
+    await startTake(session, runOptions(true), run);
+    // The normal take's late onstop reaches neither the run nor the preview.
+    act(() => recorders[0].fireStop());
+    expect(run).not.toHaveBeenCalled();
+    expect(session.current.status).toBe("");
+    expect(session.current.recorderState).toBe("recording");
+
+    // The run take outlives the run; its late onstop never reaches the normal flow.
+    act(() => session.current.exitRun());
+    await act(async () => {
+      await session.current.startRecording();
+    });
+    act(() => recorders[1].fireStop());
+    expect(summaryOf(run).stopReason).toBe("exit");
+    expect(session.current.status).toBe("");
+    expect(session.current.recorderState).toBe("recording");
+    act(() => {
+      session.current.stopRecording();
+      recorders[2].fireStop();
+    });
+    expect(session.current.status).toBe("Recording ready");
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto_preference_change_applies_next_take", async () => {
+    const session = await openRun();
+    // The run snapshots the preference when each take starts.
+    const first = vi.fn();
+    await startTake(session, runOptions(getRunPreferences().autoStop), first);
+    setRunPreference("autoStop", false);
+    micDbfs = -30;
+    await advance(600);
+    micDbfs = -60;
+    await advance(700);
+    expect(summaryOf(first).stopReason).toBe("silence");
+
+    const second = vi.fn();
+    await startTake(session, runOptions(getRunPreferences().autoStop), second);
+    setRunPreference("autoStop", true);
+    micDbfs = -30;
+    await advance(600);
+    micDbfs = -60;
+    await advance(5_000);
+    expect(second).not.toHaveBeenCalled();
+    expect(session.current.runCaptureTelemetry.get().autoStopState).toBe("off");
+    act(() => session.current.stopRunCapture());
+    expect(summaryOf(second)).toMatchObject({ stopReason: "manual", speechSeen: false });
+  });
+
+  it("fallback_retains_manual_and_session_hard_cap", async () => {
+    const session = await openRun();
+    const spread = [-60, -42, -60, -60, -60, -60, -42, -60, -60, -60];
+    const manual = vi.fn();
+    await startTake(session, runOptions(true), manual);
+    await frames(spread);
+    expect(session.current.runCaptureTelemetry.get().autoStopState).toBe("fallback");
+    await advance(3_000);
+    expect(manual).not.toHaveBeenCalled();
+    act(() => session.current.stopRunCapture());
+    expect(classifyCapture(summaryOf(manual), "word")).toBe("submit");
+
+    const capped = vi.fn();
+    await startTake(session, runOptions(true), capped);
+    await frames(spread);
+    await advance(20_000);
+    expect(capped).not.toHaveBeenCalled();
+    await advance(10_000);
+    expect(capped).toHaveBeenCalledTimes(1);
+    expect(summaryOf(capped)).toMatchObject({ stopReason: "hard-cap", durationMs: 30_000 });
+    expect(classifyCapture(summaryOf(capped), "word")).toBe("submit");
+  });
+
+  it("audio_unlock_failure_keeps_manual_flow", async () => {
+    vi.stubGlobal(
+      "AudioContext",
+      vi.fn(function Blocked() {
+        throw new Error("NotAllowedError");
+      })
+    );
+    const session = await openRun();
+    const onReady = vi.fn();
+    expect(await startTake(session, runOptions(true), onReady)).toBe(true);
+    expect(session.current.runCaptureTelemetry.get().autoStopState).toBe("off");
+    await advance(8_000);
+    expect(onReady).not.toHaveBeenCalled();
+    expect(session.current.runCaptureTelemetry.get().elapsedMs).toBeGreaterThanOrEqual(7_975);
+    act(() => session.current.stopRunCapture());
+    const summary = summaryOf(onReady);
+    expect(summary).toMatchObject({ stopReason: "manual", detectionValid: false, speechSeen: false });
+    expect(classifyCapture(summary, "word")).toBe("submit");
+  });
+
+  it("ordinary_explicit_score_is_unchanged", async () => {
+    installRecorder();
+    const session = await renderSession();
+    act(() => session.current.setPassage("thin path"));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date", "performance"] });
+    await act(async () => {
+      await session.current.startRecording();
+    });
+    await advance(10_000);
+    expect(session.current.recorderState).toBe("recording");
+    // No run audio: nothing analyses or stops an ordinary take.
+    expect(FakeAudioContext.constructed).toBe(0);
+    act(() => session.current.stopRecording());
+    expect(session.current.status).toBe("Recording ready");
+    expect(fetchCalls("/api/score")).toHaveLength(0);
+    await act(async () => {
+      await session.current.submitRecording();
+    });
+    expect(fetchCalls("/api/score")).toHaveLength(1);
   });
 });
