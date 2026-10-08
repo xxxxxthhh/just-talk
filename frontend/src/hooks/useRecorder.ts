@@ -155,8 +155,10 @@ export function useRecorder({ maxMs, onUnsupported, onRecordingReady }: UseRecor
     setAudioBlob(null);
     setRecorderState("recording");
     setRecordingStream(stream);
+    // The elapsed display and hard cap keep the wall clock; stop durations use the monotonic one.
+    const wallStartedAt = Date.now();
     timerRef.current = window.setInterval(() => {
-      const nextElapsed = performance.now() - capture.startedAt;
+      const nextElapsed = Date.now() - wallStartedAt;
       setElapsedMs(nextElapsed);
       if (nextElapsed >= maxMs) {
         stopRecordingWith("hard-cap");
