@@ -105,6 +105,16 @@ function feedbackIdFor(run: RunState): string | null {
   return null;
 }
 
+// A rejected take is its own event, wherever the reducer returns to: ready, feedback or rescue.
+function rejectionIdFor(run: RunState): string | null {
+  const rejection = run.paused ? null : run.items[run.index]?.lastRejection;
+  return rejection ? `rejection:${rejection.attemptId}` : null;
+}
+
+function rejectionText(rejection: NonNullable<RunItem["lastRejection"]>): string {
+  return rejection.localReason ? rejection.message : `That recording wasn't scored and didn't count: ${rejection.message}`;
+}
+
 // Freshness is decided at first sight of each id and kept for that id, so marking it consumed
 // never cuts its own animation short; a remount sees it already consumed.
 function useFreshFeedback(id: string | null, consumed: ReadonlySet<string>, onConsumed: (id: string) => void): boolean {
@@ -141,6 +151,7 @@ export function PracticeRun(props: PracticeRunProps) {
   const { run, score, telemetry, preferences, reducedMotion, consumedFeedbackIds, onFeedbackConsumed } = props;
   const feedbackId = feedbackIdFor(run);
   const fresh = useFreshFeedback(feedbackId, consumedFeedbackIds, onFeedbackConsumed);
+  const rejectionFresh = useFreshFeedback(rejectionIdFor(run), consumedFeedbackIds, onFeedbackConsumed);
   const slow = useSlowScoring(run);
   const item = run.items[run.index];
 
@@ -213,7 +224,7 @@ export function PracticeRun(props: PracticeRunProps) {
       )}
 
       <p className="visually-hidden" aria-live="polite">
-        {announcement(run, score, telemetry, fresh, slow)}
+        {announcement(run, score, telemetry, fresh, rejectionFresh, slow)}
       </p>
     </section>
   );
@@ -352,7 +363,10 @@ function PlayScreen(props: ScreenProps & { item: RunItem; slow: boolean }) {
     const isFirstReading = first !== null && last !== undefined && first.attempt.key.attemptId === last.key.attemptId;
     const hint = latest?.attempt.result ? evidenceHint(latest.attempt.result) : null;
     ring = ringProps(props, { phase: "verdict", accuracy: shown, tier: tierForAccuracy(shown) });
-    status = (
+    // A take rejected after this feedback (a re-record of an unjudged item) replaces the stale outcome.
+    status = item.lastRejection ? (
+      <Rejection item={item} onUseManualStop={props.onUseManualStop} />
+    ) : (
       <>
         {isFirstReading && itemScore && itemScore.firstAccuracy !== null ? (
           <p className="run-points">
@@ -468,11 +482,7 @@ function Rejection({ item, onUseManualStop }: { item: RunItem; onUseManualStop: 
       </div>
     );
   }
-  return (
-    <p className="run-status-sub">
-      That recording wasn't scored and didn't count: {rejection.message}
-    </p>
-  );
+  return <p className="run-status-sub">{rejectionText(rejection)}</p>;
 }
 
 function FeedbackLine({ item, shown, firstLow }: { item: RunItem; shown: number | null; firstLow: number | null }) {
@@ -645,14 +655,19 @@ function announcement(
   score: RunScoreView,
   telemetry: CaptureTelemetry,
   fresh: boolean,
+  rejectionFresh: boolean,
   slow: boolean
 ): string {
   const item = run.items[run.index];
   if (!item) return "";
   if (run.paused) return "Paused.";
+  // The latest rejected take outranks the feedback it returned to.
+  if (item.lastRejection && run.phase !== "recording" && run.phase !== "scoring") {
+    return rejectionFresh ? rejectionText(item.lastRejection) : "";
+  }
   switch (run.phase) {
     case "ready":
-      return item.lastRejection?.message ?? `${run.index + 1} of ${run.items.length}: ${item.prompt.text}`;
+      return `${run.index + 1} of ${run.items.length}: ${item.prompt.text}`;
     case "recording":
       return telemetry.autoStopState === "fallback" ? "Recording. Noisy, tap Stop." : "Recording.";
     case "scoring":

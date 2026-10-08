@@ -208,9 +208,58 @@ describe("PracticeRun", () => {
     // A server rejection keeps its wording, and the next capture clears it.
     const rejected = runV2Fixtures.serverRejected.run;
     const server = renderRun(rejected, callbacks);
-    expect(screen.getByText("That recording wasn't scored and didn't count: Recording too short.")).toBeInTheDocument();
+    expect(status(server.container).getByText("That recording wasn't scored and didn't count: Recording too short.")).toBeInTheDocument();
+    expect(liveRegion(server.container)).toBe("That recording wasn't scored and didn't count: Recording too short.");
     server.rerender(<PracticeRun {...practiceRunProps(score(rejected, 90), callbacks)} />);
     expect(screen.queryByText(/Recording too short/)).not.toBeInTheDocument();
+  });
+
+  it("local rejection shows and announces in every phase it can return to", () => {
+    function begin(state: RunState) {
+      const capture = nextCapture(state);
+      if (!capture) throw new Error("no capture available");
+      const key = { runId: state.runId, itemId: state.items[state.index].prompt.itemId, attemptId: `local-${++counter}` };
+      return { key, state: step(state, { type: "BEGIN_CAPTURE", key, ...capture }) };
+    }
+    function localReject(state: RunState, reason: "too-short" | "no-speech") {
+      const begun = begin(state);
+      return step(begun.state, { type: "LOCAL_REJECT", key: begun.key, reason });
+    }
+    const copy = { "too-short": "Too short · try once more", "no-speech": "Didn't catch anything" } as const;
+
+    for (const reason of ["too-short", "no-speech"] as const) {
+      for (const [where, before, phase] of [
+        ["ready", runV2Fixtures.ready.run, "ready"],
+        ["unjudged re-record", runV2Fixtures.verdictNoMatch.run, "feedback"],
+        ["rescue", runV2Fixtures.rescueLoaded.run, "rescue"],
+      ] as const) {
+        const callbacks = handlers();
+        const rejected = localReject(before, reason);
+        expect(rejected.phase, where).toBe(phase);
+        expect(rejected.budgetUsed, where).toBe(before.budgetUsed);
+        expect(rejected.extraUsed, where).toBe(before.extraUsed);
+        expect(rejected.hearts, where).toBe(before.hearts);
+
+        const view = renderRun(rejected, callbacks);
+        expect(status(view.container).getByText(copy[reason])).toBeInTheDocument();
+        expect(liveRegion(view.container)).toBe(copy[reason]);
+        // The stale no-match outcome gives way to the newer rejection.
+        expect(screen.queryByText("Didn't catch any speech that time.")).not.toBeInTheDocument();
+        const fallback = screen.queryByRole("button", { name: "Use manual Stop" });
+        if (reason === "no-speech") {
+          expect(fallback, where).toBeEnabled();
+          fireEvent.click(fallback as HTMLElement);
+          expect(callbacks.onUseManualStop).toHaveBeenCalledTimes(1);
+        } else {
+          expect(fallback, where).toBeNull();
+        }
+
+        // The next capture clears it.
+        view.rerender(<PracticeRun {...practiceRunProps(begin(rejected).state, callbacks)} />);
+        expect(screen.queryByText(copy[reason])).not.toBeInTheDocument();
+        view.unmount();
+      }
+    }
   });
 
   it("rescue_has_one_primary_action_and_preserves_reference_gate", () => {
