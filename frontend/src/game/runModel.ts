@@ -16,8 +16,6 @@ import { isRunConfig, isValidRunDeck } from "./runConfig";
 
 // The tier and low-evidence line; Challenge judgments use the run's frozen target instead.
 export const PASS_ACCURACY = 60;
-// Kept for existing UI imports only; the rules read config.maxExtra.
-export const MAX_EXTRA_ATTEMPTS = 2;
 const EXTRA_COUNTS = [0, 1, 2, 3, 4] as const;
 type ExtraCount = RunState["extraUsed"];
 // Sentence words at or under this accuracy are collected; 71–85 stay review hints.
