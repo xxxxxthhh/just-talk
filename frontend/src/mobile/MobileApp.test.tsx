@@ -621,7 +621,9 @@ describe("MobileApp game run", () => {
     await startRun(user, "Challenge");
     failNext = true;
     await recordAndStop(user);
-    expect(await screen.findByText("Still waiting on that score. You can keep going.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Still waiting on that score. You can keep going.", { selector: ".run-status-main" })
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("1. thin: result pending")).toBeInTheDocument();
     await recordAndStop(user, "Record next");
     expect(await screen.findByText("Strong.")).toBeInTheDocument();
