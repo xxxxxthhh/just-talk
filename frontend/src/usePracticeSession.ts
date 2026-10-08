@@ -69,7 +69,6 @@ type RunCapture = {
   meter: LevelMeter | null;
   timer: number | null;
   startedAt: number | null;
-  cancelReason: CaptureStopReason | null;
   stopped: boolean;
   releaseMicrophone: () => void;
 };
@@ -128,6 +127,8 @@ export function usePracticeSession() {
   // its pause, summary, and review screens.
   const [runActive, setRunActive] = useState(false);
   const runCaptureRef = useRef<RunCapture | null>(null);
+  // The run AudioContext this session prepared; it never closes another owner's.
+  const runAudioRef = useRef<AudioContext | null>(null);
   // Changes every audio frame; only subscribers re-render.
   const [runCaptureTelemetry] = useState(createTelemetryStore);
 
@@ -591,9 +592,27 @@ export function usePracticeSession() {
     resetPractice();
     setRunActive(false);
     resetCueEvents();
-    releaseRunAudio();
+    releaseRunAudio(runAudioRef.current);
+    runAudioRef.current = null;
     runCaptureTelemetry.set(IDLE_TELEMETRY);
   }
+
+  function prepareSessionRunAudio() {
+    runAudioRef.current = prepareRunAudio();
+  }
+
+  // Leaving the page or the gate: no analysis timer, meter, cue hold, or run context outlives it.
+  // The recorder's own unmount stops the microphone and releases started captures.
+  const disposeRunRef = useRef(() => {});
+  disposeRunRef.current = () => {
+    const capture = runCaptureRef.current;
+    if (capture) {
+      finishRunAnalysis(capture);
+      if (capture.startedAt === null) capture.releaseMicrophone();
+    }
+    releaseRunAudio(runAudioRef.current);
+  };
+  useEffect(() => () => disposeRunRef.current(), []);
 
   function publishRunTelemetry(capture: RunCapture) {
     if (capture.startedAt === null) return;
@@ -671,7 +690,6 @@ export function usePracticeSession() {
       meter: null,
       timer: null,
       startedAt: null,
-      cancelReason: null,
       stopped: false,
       releaseMicrophone: holdMicrophone()
     };
@@ -681,7 +699,6 @@ export function usePracticeSession() {
       started = await startRecorderCapture(
         (blob, _discarded, stop) => {
           finishRunAnalysis(capture);
-          capture.releaseMicrophone();
           if (runCaptureTelemetry.get().captureId === capture.id) runCaptureTelemetry.set(IDLE_TELEMETRY);
           onReady(blob, runCaptureSummary(capture, stop));
         },
@@ -696,18 +713,18 @@ export function usePracticeSession() {
             publishRunTelemetry(capture);
             capture.timer = window.setInterval(() => sampleRunCapture(capture), RUN_SAMPLE_MS);
           },
-          onStop: () => finishRunAnalysis(capture)
+          onStop: () => finishRunAnalysis(capture),
+          // Cues may play again only once this take's microphone tracks have stopped.
+          onRelease: () => capture.releaseMicrophone()
         }
       );
     } finally {
+      // Not started: denied, failed after the recorder released its stream, or made obsolete while
+      // permission was pending (its late stream is stopped on arrival). The run's lock settles here.
       if (!started) {
         finishRunAnalysis(capture);
         capture.releaseMicrophone();
       }
-    }
-    if (started && capture.cancelReason) {
-      // Permission resolved after cancellation: stop without keeping the take.
-      discardRecording(capture.cancelReason);
     }
     return started;
   }
@@ -721,7 +738,10 @@ export function usePracticeSession() {
   // shared preview that normal Score and Enter read.
   function cancelRunCapture(reason: CaptureStopReason = "cancel") {
     const capture = runCaptureRef.current;
-    if (capture) capture.cancelReason ??= reason;
+    if (capture) {
+      // Still waiting for permission: no stream is open, and the obsolete one will be stopped.
+      if (capture.startedAt === null) capture.releaseMicrophone();
+    }
     discardRecording(reason);
   }
 
@@ -1143,7 +1163,7 @@ export function usePracticeSession() {
     runActive,
     enterRun,
     exitRun,
-    prepareRunAudio,
+    prepareRunAudio: prepareSessionRunAudio,
     startRunCapture,
     stopRunCapture,
     cancelRunCapture,

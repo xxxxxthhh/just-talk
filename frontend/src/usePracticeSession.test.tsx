@@ -2,8 +2,8 @@ import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getRunPreferences, setRunPreference } from "./game/preferences";
-import { releaseRunAudio } from "./game/runAudio";
-import { playCue } from "./game/sfx";
+import { prepareRunAudio, releaseRunAudio } from "./game/runAudio";
+import { holdMicrophone, playCue } from "./game/sfx";
 import { classifyCapture } from "./game/vad";
 import type { CaptureSummary, RunCaptureOptions, ScoreResult, WordResult } from "./types";
 import { usePracticeSession } from "./usePracticeSession";
@@ -80,19 +80,32 @@ function runOptions(autoStop = false): RunCaptureOptions {
   return { key: { runId: "run", itemId: "item", attemptId: `attempt-${captureCounter}` }, kind: "word", autoStop };
 }
 
+// The latest pending permission prompt; permissions holds every one in request order.
 let permission: { resolve: () => void } | null;
+let permissions: { resolve: () => void }[] = [];
 let deferPermission = false;
 // Real browsers fire onstop after stop() returns; asyncStop leaves it to fireStop.
 let asyncStop = false;
+// MediaRecorder.start() throws while set.
+let failStart = false;
 let recorders: (RecorderInstance & { fireStop: () => void })[] = [];
+// One microphone track per getUserMedia call, in request order.
+let tracks: { stop: ReturnType<typeof vi.fn> }[] = [];
 
 function installRecorder() {
+  permissions = [];
+  tracks = [];
+  recorders = [];
+  failStart = false;
   const getUserMedia = vi.fn(
     () =>
       new Promise((resolve) => {
-        const stream = { getTracks: () => [{ stop: vi.fn() }] };
+        const track = { stop: vi.fn() };
+        tracks.push(track);
+        const stream = { getTracks: () => [track] };
         if (deferPermission) {
           permission = { resolve: () => resolve(stream) };
+          permissions.push(permission);
         } else {
           resolve(stream);
         }
@@ -105,6 +118,7 @@ function installRecorder() {
     this.ondataavailable = null;
     this.onstop = null;
     this.start = () => {
+      if (failStart) throw new Error("NotSupportedError");
       this.state = "recording";
     };
     this.fireStop = () => {
@@ -129,9 +143,9 @@ async function renderSession() {
     ref.current = usePracticeSession();
     return null;
   }
-  render(<Harness />);
+  const { unmount } = render(<Harness />);
   await waitFor(() => expect(ref.current.health).not.toBeNull());
-  return ref;
+  return Object.assign(ref, { unmount });
 }
 
 function pressEnter() {
@@ -155,7 +169,7 @@ describe("usePracticeSession run wiring", () => {
     vi.unstubAllGlobals();
   });
 
-  it("cancelled_capture_keeps_old_identity_until_late_onstop", async () => {
+  it("cancelled_capture_settles_once_and_stops_its_late_stream", async () => {
     installRecorder();
     const session = await renderSession();
     act(() => session.current.enterRun());
@@ -166,16 +180,17 @@ describe("usePracticeSession run wiring", () => {
     act(() => {
       started = session.current.startRunCapture(runOptions(), onReady);
     });
-    // Cancelled while the permission prompt is still open.
+    // Cancelled while the permission prompt is still open: the late stream is closed and the
+    // capture never starts, so false is its one settlement and no blob follows.
     act(() => session.current.cancelRunCapture());
     await act(async () => {
       permission?.resolve();
-      expect(await started).toBe(true);
+      expect(await started).toBe(false);
     });
 
-    // The capture was stopped as soon as it opened, and its blob went to its own callback.
-    expect(onReady).toHaveBeenCalledTimes(1);
-    expect(onReady.mock.calls[0][0]).toBeInstanceOf(Blob);
+    expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+    expect(recorders).toHaveLength(0);
+    expect(onReady).not.toHaveBeenCalled();
     expect(session.current.recorderState).toBe("idle");
     expect(session.current.audioBlob).toBeNull();
     expect(session.current.status).toBe("");
@@ -711,16 +726,16 @@ describe("usePracticeSession run capture analysis", () => {
       started = session.current.startRunCapture(runOptions(true), late);
     });
     act(() => session.current.cancelRunCapture("quit"));
+    // No stream was open, so the cue hold ends with the cancellation.
+    expect(playCue("good", "after-cancelled-permission")).toBe(true);
     await act(async () => {
       permission?.resolve();
-      expect(await started).toBe(true);
+      expect(await started).toBe(false);
     });
-    expect(late).toHaveBeenCalledTimes(1);
-    expect(summaryOf(late).stopReason).toBe("quit");
+    expect(late).not.toHaveBeenCalled();
+    expect(tracks[0].stop).toHaveBeenCalledTimes(1);
     expect(session.current.audioBlob).toBeNull();
     expect(session.current.recorderState).toBe("idle");
-    // The microphone hold ended with the handoff, so cues may play again.
-    expect(playCue("good", "after-late-permission")).toBe(true);
 
     deferPermission = false;
     asyncStop = true;
@@ -728,7 +743,7 @@ describe("usePracticeSession run capture analysis", () => {
     await startTake(session, runOptions(true), exited);
     expect(playCue("good", "while-recording")).toBe(false);
     act(() => session.current.exitRun());
-    act(() => recorders[1].fireStop());
+    act(() => recorders[0].fireStop());
     expect(summaryOf(exited).stopReason).toBe("exit");
     expect(session.current.audioBlob).toBeNull();
     expect(session.current.audioUrl).toBeNull();
@@ -855,5 +870,129 @@ describe("usePracticeSession run capture analysis", () => {
       await session.current.submitRecording();
     });
     expect(fetchCalls("/api/score")).toHaveLength(1);
+  });
+
+  it("late_permission_cannot_take_over_a_newer_capture", async () => {
+    // Run → normal: the run's take is cancelled by exit while permission is pending.
+    let session = await openRun();
+    deferPermission = true;
+    const runTake = vi.fn();
+    let runStarted!: Promise<boolean>;
+    act(() => {
+      runStarted = session.current.startRunCapture(runOptions(true), runTake);
+    });
+    act(() => session.current.exitRun());
+    deferPermission = false;
+    await act(async () => {
+      await session.current.startRecording();
+    });
+    expect(session.current.recorderState).toBe("recording");
+    await act(async () => {
+      permissions[0].resolve();
+      expect(await runStarted).toBe(false);
+    });
+    expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+    expect(recorders).toHaveLength(1);
+    expect(runTake).not.toHaveBeenCalled();
+    expect(session.current.recorderState).toBe("recording");
+    expect(vi.getTimerCount()).toBe(1);
+    act(() => session.current.stopRecording());
+    expect(recorders[0].state).toBe("inactive");
+    expect(session.current.status).toBe("Recording ready");
+    expect(tracks[1].stop).toHaveBeenCalledTimes(1);
+    session.unmount();
+    vi.useRealTimers();
+
+    // Normal → run: the ordinary take is abandoned by entering the run while permission is pending.
+    session = await openRun(false);
+    act(() => session.current.exitRun());
+    deferPermission = true;
+    let normalStarted!: Promise<void>;
+    act(() => {
+      normalStarted = session.current.startRecording();
+    });
+    act(() => session.current.enterRun());
+    deferPermission = false;
+    const runReady = vi.fn();
+    await startTake(session, runOptions(), runReady);
+    await act(async () => {
+      permissions[0].resolve();
+      await normalStarted;
+    });
+    expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+    expect(recorders).toHaveLength(1);
+    act(() => session.current.stopRunCapture());
+    expect(recorders[0].state).toBe("inactive");
+    expect(runReady).toHaveBeenCalledTimes(1);
+    expect(session.current.status).not.toBe("Recording ready");
+  });
+
+  it("setup_failure_and_unmount_release_the_microphone", async () => {
+    // The recorder fails to start after permission and analysis: its stream closes, then cues resume.
+    let session = await openRun();
+    failStart = true;
+    let failure: unknown = null;
+    await act(async () => {
+      await session.current.startRunCapture(runOptions(true), vi.fn()).catch((error: unknown) => {
+        failure = error;
+      });
+    });
+    expect(failure).toBeInstanceOf(Error);
+    expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(playCue("good", "after-failed-start")).toBe(true);
+    failStart = false;
+
+    // Unmounting with an active manual take stops the take, its tracks, timers, meter and context.
+    const take = vi.fn();
+    await startTake(session, runOptions(false), take);
+    expect(vi.getTimerCount()).toBe(2);
+    expect(playCue("good", "while-recording")).toBe(false);
+    session.unmount();
+    expect(tracks[1].stop).toHaveBeenCalledTimes(1);
+    expect(recorders[1].state).toBe("inactive");
+    expect(vi.getTimerCount()).toBe(0);
+    expect(take).toHaveBeenCalledTimes(1);
+    expect(summaryOf(take).stopReason).toBe("exit");
+    expect(classifyCapture(summaryOf(take), "word")).toBe("discard");
+    vi.useRealTimers();
+
+    // Unmounting while permission is pending: the late stream is closed and nothing starts.
+    session = await openRun();
+    deferPermission = true;
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = session.current.startRunCapture(runOptions(true), vi.fn());
+    });
+    session.unmount();
+    // Unmount closed this owner's context; with a fresh one, cues are no longer held.
+    prepareRunAudio();
+    expect(playCue("good", "after-pending-unmount")).toBe(true);
+    await act(async () => {
+      permissions[0].resolve();
+      expect(await pending).toBe(false);
+    });
+    expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+    expect(recorders).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("late_onstop_after_unmount_never_releases_another_hold", async () => {
+    const session = await openRun();
+    asyncStop = true;
+    const take = vi.fn();
+    await startTake(session, runOptions(false), take);
+    session.unmount();
+    expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+    // A newer owner opens run audio and holds the microphone before the old take's onstop arrives.
+    prepareRunAudio();
+    const releaseNewer = holdMicrophone();
+    act(() => recorders[0].fireStop());
+    expect(take).toHaveBeenCalledTimes(1);
+    expect(summaryOf(take).stopReason).toBe("exit");
+    expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+    expect(playCue("good", "newer-hold")).toBe(false);
+    releaseNewer();
+    expect(playCue("good", "after-newer-hold")).toBe(true);
   });
 });

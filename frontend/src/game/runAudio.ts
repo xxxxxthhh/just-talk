@@ -27,7 +27,9 @@ export function runAudioContext(): AudioContext | null {
   return context;
 }
 
-export function releaseRunAudio(): void {
+// With an owner, closes the context only if it is still the one that owner prepared.
+export function releaseRunAudio(owner?: AudioContext | null): void {
+  if (owner !== undefined && owner !== context) return;
   const released = context;
   context = null;
   if (released && released.state !== "closed") void released.close().catch(() => undefined);

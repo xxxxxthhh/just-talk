@@ -297,4 +297,42 @@ describe("useRecorder", () => {
     act(() => instances[2].fireStop());
     expect(lost.mock.calls[0].slice(1)).toEqual([false, { reason: "cancel", durationMs: 800 }]);
   });
+
+  it("newer_start_supersedes_a_pending_permission", async () => {
+    stubUrl();
+    const { MediaRecorderMock, instances } = makeDeferredStopRecorderMock();
+    vi.stubGlobal("MediaRecorder", MediaRecorderMock);
+    const pending: ((stream: unknown) => void)[] = [];
+    const tracks = [{ stop: vi.fn() }, { stop: vi.fn() }];
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn(() => new Promise((resolve) => pending.push(resolve))) }
+    });
+    let controls!: ReturnType<typeof useRecorder>;
+    function Harness() {
+      controls = useRecorder({ maxMs: 30_000, onUnsupported: vi.fn(), onRecordingReady: vi.fn() });
+      return null;
+    }
+    render(<Harness />);
+
+    const older = vi.fn();
+    let olderStarted!: Promise<boolean>;
+    let newerStarted!: Promise<boolean>;
+    act(() => {
+      olderStarted = controls.startRecording(older);
+      newerStarted = controls.startRecording(vi.fn());
+    });
+    await act(async () => {
+      pending[1]({ getTracks: () => [tracks[1]] });
+      expect(await newerStarted).toBe(true);
+      pending[0]({ getTracks: () => [tracks[0]] });
+      expect(await olderStarted).toBe(false);
+    });
+    expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+    expect(instances).toHaveLength(1);
+    expect(controls.recorderState).toBe("recording");
+    act(() => controls.stopRecording());
+    expect(instances[0].state).toBe("inactive");
+    expect(older).not.toHaveBeenCalled();
+  });
 });
