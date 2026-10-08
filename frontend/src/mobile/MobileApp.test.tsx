@@ -5,6 +5,14 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { setRunChoice, setRunPreference } from "../game/preferences";
 import MobileApp from "./MobileApp";
 
+// Six-item decks draw two of four items per stage, seeded by a runId that includes the time. These
+// tests follow fixed words, so they use v2's two items per stage, which makes every six-item deck
+// the same.
+vi.mock("../game/starterPack", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../game/starterPack")>();
+  return { ...actual, STARTER_PACK: actual.STARTER_PACK.filter((item) => Number(item.id.at(-1)) <= 2) };
+});
+
 function mockApi(payloads: Record<string, unknown>) {
   vi.stubGlobal(
     "fetch",
