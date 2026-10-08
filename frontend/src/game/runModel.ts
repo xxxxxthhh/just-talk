@@ -120,8 +120,9 @@ function markIncomplete(state: RunState): RunState {
   return state.mode === "challenge" ? { ...state, challengeIncomplete: true } : state;
 }
 
+// Summary and review are never paused: pause only means something while items are active.
 function endRun(state: RunState, endReason: NonNullable<RunState["endReason"]>): RunState {
-  let next: RunState = { ...state, endReason, activeAttemptId: null };
+  let next: RunState = { ...state, endReason, activeAttemptId: null, paused: false };
   // Every run ends on its summary, rated or not; review opens from there.
   if (next.mode === "route") return { ...next, phase: "summary" };
   if (next.items.some((item) => item.resolution !== "resolved")) next = markIncomplete(next);
@@ -370,7 +371,7 @@ export function runReducer(state: RunState | null, action: RunAction): RunState 
       return leaveItem(state);
     }
     case "PAUSE": {
-      if (state.paused) return state;
+      if (state.paused || state.endReason !== null) return state;
       const capturing = item?.attempts.find(
         (attempt) => attempt.key.attemptId === state.activeAttemptId && attempt.status === "capturing"
       );
@@ -380,7 +381,7 @@ export function runReducer(state: RunState | null, action: RunAction): RunState 
         ...replaceItem(state, state.index, remaining),
         paused: true,
         activeAttemptId: null,
-        phase: state.endReason === null ? settledPhase(remaining) : state.phase
+        phase: settledPhase(remaining)
       };
     }
     case "RESUME":

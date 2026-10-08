@@ -515,4 +515,29 @@ describe("run model", () => {
     const paused = reduce(capturing, { type: "PAUSE", runId: RUN });
     expect(reduce(paused, { type: "LOCAL_REJECT", key, reason: "no-speech" })).toBe(paused);
   });
+
+  it("terminal_phases_are_never_paused", () => {
+    // Quit while paused ends on an unpaused summary, keeping its attempts.
+    let state = play(start("challenge"), scored(90));
+    state = reduce(state, { type: "PAUSE", runId: RUN });
+    expect(state.paused).toBe(true);
+    const quit = reduce(state, { type: "QUIT", runId: RUN });
+    expect(quit).toMatchObject({ phase: "summary", endReason: "quit", paused: false });
+    expect(quit.items[0].attempts).toHaveLength(1);
+
+    // Pause in summary and in review changes nothing.
+    expect(reduce(quit, { type: "PAUSE", runId: RUN })).toBe(quit);
+    const review = reduce(quit, { type: "OPEN_REVIEW", runId: RUN });
+    expect(review.phase).toBe("review");
+    expect(reduce(review, { type: "PAUSE", runId: RUN })).toBe(review);
+
+    // A paused run whose in-flight result exhausts the last heart also ends unpaused.
+    let hearts = play(start("challenge"), scored(40));
+    hearts = advance(rescue(hearts, scored(40)));
+    hearts = loadReference(play(hearts, scored(40)));
+    const [sent, key] = send(hearts);
+    const paused = reduce(sent, { type: "PAUSE", runId: RUN });
+    const ended = reduce(paused, { type: "SCORE_RECEIVED", key, response: scored(40) });
+    expect(ended).toMatchObject({ endReason: "hearts-exhausted", phase: "summary", paused: false });
+  });
 });
