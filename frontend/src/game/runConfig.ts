@@ -19,6 +19,7 @@ const CONFIGS: readonly RunConfig[] = [ROUTE_6, ROUTE_12, TARGET_60, TARGET_85, 
 const CONFIG_KEYS = ["source", "mode", "length", "target", "maxExtra"] as const;
 
 const FOCUS_CYCLE: readonly RunFocusPhoneme[] = ["θ", "ð", "ɹ", "l", "v"];
+const WORDS_SOURCES: readonly RunPrompt["source"][] = ["word-bank", "run-review"];
 const STARTER_STAGES = ["warmup", "focus", "context"] as const;
 
 // Challenge is always six items; the remembered Route length only applies to Route.
@@ -67,6 +68,7 @@ export function isValidRunDeck(config: RunConfig, prompts: readonly Readonly<Run
       (prompt) =>
         prompt.stage === "words" &&
         prompt.kind === "word" &&
+        WORDS_SOURCES.includes(prompt.source) &&
         prompt.targetPhoneme === null &&
         prompt.targetWord === prompt.text &&
         /^\S+$/.test(prompt.text)
@@ -78,6 +80,7 @@ export function isValidRunDeck(config: RunConfig, prompts: readonly Readonly<Run
   return prompts.every((prompt, index) => {
     const stage = STARTER_STAGES[Math.floor(index / perStage)];
     if (prompt.stage !== stage || prompt.kind !== (stage === "context" ? "sentence" : "word")) return false;
+    if (WORDS_SOURCES.includes(prompt.source)) return false;
     // A personal warm-up has no target sound; a starter one carries the run's focus.
     if (stage === "warmup") return prompt.targetPhoneme === null || prompt.targetPhoneme === focus;
     return prompt.targetPhoneme === focus;

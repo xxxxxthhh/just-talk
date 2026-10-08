@@ -381,6 +381,12 @@ export type RunConfig = StarterRunConfig | WordsRunConfig;
 export type RunChoice = Readonly<{
   selection: RunSelection; routeLength: RunLength;
 }>;
+// A word to revisit in a My words run, from one item's first valid reading below 85.
+export type RevisitWordSeed = Readonly<{
+  word: string; // Trimmed original case; singleWordKey is only the dedupe key.
+  firstAccuracy: number; itemIndex: number;
+  itemId: string; attemptId: string;
+}>;
 // The only START: no separate mode/target overrides.
 export type RunStartAction = Readonly<{
   type: "START"; runId: string; config: RunConfig;

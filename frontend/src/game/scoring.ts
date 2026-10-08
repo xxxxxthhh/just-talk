@@ -2,6 +2,7 @@ import { normalizedWord } from "../scoreUtils";
 import type {
   Attempt,
   RevisitEvidence,
+  RevisitWordSeed,
   RevisitSuggestion,
   RunItem,
   RunItemScore,
@@ -11,6 +12,7 @@ import type {
   RunTier,
   WordResult
 } from "../types";
+import { singleWordKey } from "./runDeck";
 import { judge, PASS_ACCURACY } from "./runModel";
 
 // Game facts derived from RunState. Nothing here costs a heart: hearts follow the reducer's run target.
@@ -135,6 +137,42 @@ export function selectRunScore(run: RunState): RunScoreView {
 // Planned items with a first valid reading; retries and rescues never count twice.
 export function selectPractisedCount(run: RunState): number {
   return run.items.filter((item) => firstValid(item) !== null).length;
+}
+
+// The word an item can seed: a word prompt's own target (or text), or a sentence's explicit target
+// when it is one word that occurs whole in the sentence. Nothing else is scraped from the result.
+function revisitTarget(prompt: RunItem["prompt"]): string | null {
+  if (prompt.kind === "word") {
+    const word = (prompt.targetWord ?? prompt.text).trim();
+    return singleWordKey(word) ? word : null;
+  }
+  const target = prompt.targetWord?.trim() ?? "";
+  const key = singleWordKey(target);
+  if (!key) return null;
+  return prompt.text.split(/\s+/).some((token) => singleWordKey(token) === key) ? target : null;
+}
+
+// Words for "Run with words to revisit": each item's first valid reading below 85, never a rescue.
+// A low sentence points at its target, which is not proof that word was wrong. One seed per word,
+// keeping its lowest first reading (then the earliest item), ordered lowest first.
+export function selectRevisitWordSeeds(run: RunState): readonly RevisitWordSeed[] {
+  const seeds = new Map<string, RevisitWordSeed>();
+  run.items.forEach((item, itemIndex) => {
+    const first = firstValid(item);
+    const word = revisitTarget(item.prompt);
+    if (!first || first.accuracy >= GREAT_ACCURACY || !word) return;
+    const key = singleWordKey(word);
+    const kept = seeds.get(key);
+    if (kept && kept.firstAccuracy <= first.accuracy) return;
+    seeds.set(key, {
+      word,
+      firstAccuracy: first.accuracy,
+      itemIndex,
+      itemId: item.prompt.itemId,
+      attemptId: first.attempt.key.attemptId
+    });
+  });
+  return [...seeds.values()].sort((left, right) => left.firstAccuracy - right.firstAccuracy || left.itemIndex - right.itemIndex);
 }
 
 type WordReading = { item: RunItem; attempt: Attempt; word: WordResult };

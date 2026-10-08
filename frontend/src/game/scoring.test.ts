@@ -7,6 +7,7 @@ import {
   runWeakWords,
   selectPractisedCount,
   selectReviewSuggestions,
+  selectRevisitWordSeeds,
   selectRunScore,
   selectTopRevisit,
   tierForAccuracy
@@ -354,6 +355,61 @@ describe("run scoring", () => {
     // A rescued item counts once.
     const rescued = play(loadReference(play(start(TARGET_85), scored(80))), scored(88));
     expect(selectPractisedCount(rescued)).toBe(1);
+  });
+
+  it("revisit_first_valid_below85_seed_order_and_target_rules", () => {
+    const seedPrompts: RunPrompt[] = [
+      ["warmup-1", "warmup", "word", "Water", "Water"],
+      ["warmup-2", "warmup", "word", "bright", "bright"],
+      ["focus-1", "focus", "word", "think", "think"],
+      ["focus-2", "focus", "word", "thank", "thank"],
+      ["context-1", "context", "sentence", "I think we can walk home now.", "think"],
+      ["context-2", "context", "sentence", "These little birds wait by the window.", "window"]
+    ].map(([itemId, stage, kind, text, targetWord]) => ({
+      itemId,
+      stage: stage as RunPrompt["stage"],
+      kind: kind as RunPrompt["kind"],
+      text,
+      targetPhoneme: stage === "warmup" ? null : "θ",
+      targetWord,
+      source: "starter"
+    }));
+    let state = reduce(null, { type: "START", runId: RUN, config: configForChoice({ selection: "route", routeLength: 6 }), prompts: seedPrompts });
+    state = advance(play(state, scored(84.9))); // Water: just below 85
+    state = advance(play(state, scored(85))); // bright: 85 is not below 85
+    state = advance(play(state, scored(80))); // think
+    state = advance(play(play(state, noMatch), scored(70))); // thank: the first valid reading is 70
+    state = advance(play(state, scored(60))); // the same target, lower: it replaces think's 80
+    // A low sentence whose words all scored well still points at its target.
+    state = advance(play(state, scored(75, [word("These", 95), word("window", 95)])));
+    expect(state.endReason).toBe("completed");
+
+    expect(selectRevisitWordSeeds(state)).toEqual([
+      { word: "think", firstAccuracy: 60, itemIndex: 4, itemId: "context-1", attemptId: state.items[4].attempts[0].key.attemptId },
+      { word: "thank", firstAccuracy: 70, itemIndex: 3, itemId: "focus-2", attemptId: state.items[3].attempts[1].key.attemptId },
+      { word: "window", firstAccuracy: 75, itemIndex: 5, itemId: "context-2", attemptId: state.items[5].attempts[0].key.attemptId },
+      { word: "Water", firstAccuracy: 84.9, itemIndex: 0, itemId: "warmup-1", attemptId: state.items[0].attempts[0].key.attemptId }
+    ]);
+
+    // Equal accuracy: the earlier item keeps the seed.
+    let tie = reduce(null, { type: "START", runId: RUN, config: configForChoice({ selection: "route", routeLength: 6 }), prompts: seedPrompts });
+    for (const accuracy of [90, 90, 70, 90, 70, 90]) tie = advance(play(tie, scored(accuracy)));
+    expect(selectRevisitWordSeeds(tie).map((item) => [item.word, item.itemIndex])).toEqual([["think", 2]]);
+
+    // No seed without a valid target: missing, multi-word, or not a whole word of the sentence;
+    // nor without a first valid reading.
+    const broken = seedPrompts.map((prompt, index) =>
+      index === 4 ? { ...prompt, targetWord: null } : index === 5 ? { ...prompt, targetWord: "wind" } : index === 1 ? { ...prompt, targetWord: "two words" } : prompt
+    );
+    let none = reduce(null, { type: "START", runId: RUN, config: configForChoice({ selection: "route", routeLength: 6 }), prompts: broken });
+    none = advance(play(none, noMatch));
+    for (let i = 1; i < 6; i += 1) none = advance(play(none, scored(i === 2 || i === 3 ? 95 : 50)));
+    expect(selectRevisitWordSeeds(none)).toEqual([]);
+
+    // Target 85: 80 → 88 still seeds the first reading's 80; the rescue never rewrites it.
+    const rescued = advance(play(loadReference(play(start(TARGET_85), scored(80))), scored(88)));
+    expect(rescued.items[0].verdict).toBe("saved");
+    expect(selectRevisitWordSeeds(rescued)).toEqual([expect.objectContaining({ word: "word0", firstAccuracy: 80, itemIndex: 0 })]);
   });
 
   it("suggestions_are_deduplicated_and_label_score_source", () => {

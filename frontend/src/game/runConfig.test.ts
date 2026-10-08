@@ -147,4 +147,27 @@ describe("run config", () => {
     expect(isValidRunDeck(wordsConfig(6), replaceWord({ targetWord: "other" }))).toBe(false);
     expect(isValidRunDeck(wordsConfig(6), replaceWord({ text: "word1", targetWord: "word1" }))).toBe(false);
   });
+
+  it("words_source_validation_has_no_fake_stages_or_focus", () => {
+    const words = wordsDeck(6);
+    const six = wordsConfig(6);
+    expect(isValidRunDeck(six, words)).toBe(true);
+    expect(isValidRunDeck(six, words.map((p, i) => (i === 0 ? { ...p, source: "run-review" as const } : p)))).toBe(true);
+    // A words deck has no Warm-up/Focus/In-context split, no target sound and no starter prompts.
+    const mixed: Partial<RunPrompt>[] = [
+      { stage: "focus" },
+      { targetPhoneme: "θ" },
+      { source: "starter" },
+      { source: "due-word" },
+      { kind: "sentence", text: "A whole sentence here.", targetWord: "A whole sentence here." }
+    ];
+    for (const patch of mixed) {
+      expect(isValidRunDeck(six, words.map((p, i) => (i === 3 ? { ...p, ...patch } : p))), JSON.stringify(patch)).toBe(false);
+    }
+    // A starter deck never carries words-run prompts.
+    const route6 = configForChoice({ selection: "route", routeLength: 6 });
+    const deck = starterDeck(6);
+    expect(isValidRunDeck(route6, deck.map((p, i) => (i === 0 ? { ...p, source: "word-bank" as const } : p)))).toBe(false);
+    expect(isValidRunDeck(route6, deck.map((p, i) => (i === 0 ? { ...p, stage: "words" as const } : p)))).toBe(false);
+  });
 });
