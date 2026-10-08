@@ -1,7 +1,7 @@
 import { act as flush, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { configForChoice } from "../game/runConfig";
+import { configForChoice, maxCountedScores } from "../game/runConfig";
 import { nextCapture, runReducer } from "../game/runModel";
 import { selectReviewSuggestions, selectRunScore } from "../game/scoring";
 import type { RunMode, RunPrompt, RunState, ScoreResponse, WordCandidate, WordResult } from "../types";
@@ -117,7 +117,11 @@ function renderReview(run: RunState, overrides: Partial<Parameters<typeof RunRev
     onStopReference: vi.fn(),
     onPlayAgain: vi.fn(),
     starting: false,
-    replayFailed: false,
+    pendingRestart: null,
+    restartFailed: null,
+    nextSoundPhoneme: null,
+    onRetryRestart: vi.fn(),
+    maxScores: maxCountedScores(run.config),
     onExit: vi.fn(),
     ...overrides,
   };
@@ -365,3 +369,33 @@ describe("RunReview under Target 85", () => {
     expect(container).toHaveTextContent("Good");
   });
 });
+
+describe("RunReview for v3 runs", () => {
+  it("review_twelve_items_share_one_player_and_correct_takes", () => {
+    const complete = runV3Fixtures.route12Complete.run;
+    const { container } = renderReview(step(complete, { type: "OPEN_REVIEW", runId: complete.runId }));
+    const readings = container.querySelectorAll(".run-reading-list > .run-reading");
+    expect(readings).toHaveLength(12);
+    // Twelve items, one shared You player.
+    expect(container.querySelectorAll("audio")).toHaveLength(1);
+    // Each reading pairs with its own take and first-reading score.
+    expect(readings[9]).toHaveTextContent("The narrow path leads to our house.");
+    expect(readings[9]).toHaveTextContent("64");
+    expect(container.querySelector("footer")).toHaveTextContent("Play again uses up to 16 new scores");
+  });
+
+  it("review_retries_an_inherited_next_sound_failure", () => {
+    const complete = runV3Fixtures.route12Complete.run;
+    const { props } = renderReview(step(complete, { type: "OPEN_REVIEW", runId: complete.runId }), {
+      restartFailed: "next-sound",
+      nextSoundPhoneme: "ð"
+    });
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't start /ð/. Your results are still here.");
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(props.onRetryRestart).toHaveBeenCalledTimes(1);
+    // Review itself offers no Next sound.
+    expect(screen.queryByRole("button", { name: /Next sound/ })).not.toBeInTheDocument();
+  });
+});
+

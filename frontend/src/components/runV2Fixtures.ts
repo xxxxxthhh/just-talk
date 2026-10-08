@@ -1,9 +1,15 @@
 // Typed UI fixtures for Game Mode v2 screens. Run states come from the real reducer and every
 // score, suggestion and revisit from the real selectors.
 import { createTelemetryStore, IDLE_TELEMETRY } from "../game/runAudio";
-import { configForChoice } from "../game/runConfig";
+import { configForChoice, maxCountedScores } from "../game/runConfig";
 import { nextCapture, runReducer } from "../game/runModel";
-import { selectReviewSuggestions, selectRunScore, selectTopRevisit, tierForAccuracy } from "../game/scoring";
+import {
+  selectPractisedCount,
+  selectReviewSuggestions,
+  selectRunScore,
+  selectTopRevisit,
+  tierForAccuracy
+} from "../game/scoring";
 import type {
   AttemptKey,
   CaptureTelemetry,
@@ -359,7 +365,13 @@ export function practiceRunProps(
     onOpenReview: noop,
     onPlayAgain: noop,
     starting: false,
-    replayFailed: false,
+    onNextSound: noop,
+    nextSoundPhoneme: null,
+    pendingRestart: null,
+    restartFailed: null,
+    onRetryRestart: noop,
+    maxScores: maxCountedScores(run.config),
+    practisedCount: selectPractisedCount(run),
     onDone: noop,
     onPlayRevisit: noop,
     scoresLeft: null,

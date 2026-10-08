@@ -15,7 +15,7 @@ import type {
 } from "../types";
 import { RunMiniPlayer, useYouPlayer, type CoachPlayback, type YouPlayer, type YouTake } from "./RunMiniPlayer";
 import { formatRunScore, TIER_LABELS } from "./RunRing";
-import { REPLAY_FAILED } from "./useReplay";
+import { nextSoundFailed, REPLAY_FAILED, type RestartKind } from "./useReplay";
 
 const MAX_EVIDENCE = 3;
 
@@ -254,8 +254,16 @@ type RunReviewProps = {
   onPlayAgain: () => void;
   // The new run's deck is loading.
   starting: boolean;
-  // The last Play again could not build a new run; the finished run is still shown.
-  replayFailed: boolean;
+  // Which restart is in flight, so Play again says Starting… only for its own.
+  pendingRestart: RestartKind | null;
+  // The restart that could not build a new run, from Summary or here; the run is still shown.
+  restartFailed: RestartKind | null;
+  // The sound a failed Next sound was for; Review has no Next sound of its own, only its retry.
+  nextSoundPhoneme: string | null;
+  // Repeats the failed restart with the same destination.
+  onRetryRestart: () => void;
+  // Counted scores a new run of this configuration may use.
+  maxScores: number;
   onGenerateDrill?: (phoneme: string) => void;
   onExit: () => void;
 };
@@ -272,7 +280,11 @@ export function RunReview({
   onStopReference,
   onPlayAgain,
   starting,
-  replayFailed,
+  pendingRestart,
+  restartFailed,
+  nextSoundPhoneme,
+  onRetryRestart,
+  maxScores,
   onGenerateDrill,
   onExit
 }: RunReviewProps) {
@@ -393,7 +405,14 @@ export function RunReview({
       </div>
 
       <footer className="run-review-actions-v2">
-        {replayFailed ? (
+        {restartFailed === "next-sound" && nextSoundPhoneme ? (
+          <p className="run-replay-error" role="alert">
+            {nextSoundFailed(nextSoundPhoneme)}{" "}
+            <button type="button" className="run-link-button" onClick={leave(onRetryRestart)}>
+              Try again
+            </button>
+          </p>
+        ) : restartFailed === "play-again" ? (
           <p className="run-replay-error" role="alert">
             {REPLAY_FAILED}
           </p>
@@ -408,9 +427,10 @@ export function RunReview({
             Done
           </button>
           <button type="button" className="run-primary-v2" disabled={starting} onClick={leave(onPlayAgain)}>
-            {starting ? "Starting…" : "Play again"}
+            {starting && pendingRestart !== "next-sound" ? "Starting…" : "Play again"}
           </button>
         </div>
+        <p className="run-summary-note">Play again uses up to {maxScores} new scores</p>
       </footer>
 
       {/* The one element that plays every recording in the review. */}

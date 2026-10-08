@@ -107,6 +107,9 @@ const target85ReferenceFailed = fixture(
   })
 );
 
+// The owner mockup's Target 85: 100, 98, 80 → 82 (one heart used), 96, 95, 97: cleared, 876 A.
+const target85Cleared = fixture(readings(advance(scored(target85Loaded, 82)), [96, 95, 97]));
+
 // A Target 85 run whose third item passes at 96: Challenge keeps Record next / Hear it again.
 const target85Passed = fixture(scored(readings(start(TARGET_85), [100, 98]), 96));
 
@@ -131,5 +134,6 @@ export const runV3Fixtures = {
   target85UnjudgedEmpty,
   target85ReferenceFailed,
   target85Passed,
+  target85Cleared,
   target60HeartLost
 } satisfies Record<string, RunV3Fixture>;

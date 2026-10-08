@@ -15,7 +15,7 @@ import { ScoredPassage } from "../../components/ScoredPassage";
 import { ScoreGrid } from "../../components/ScoreGrid";
 import { setRunChoice, useRunChoice } from "../../game/preferences";
 import { configForChoice, maxCountedScores } from "../../game/runConfig";
-import { selectRunScore } from "../../game/scoring";
+import { selectPractisedCount, selectRunScore } from "../../game/scoring";
 import { usePracticeRun } from "../../hooks/usePracticeRun";
 import { usePublicScoresLeft } from "../usePublicScoresLeft";
 import { PUBLIC_MODE } from "../../publicMode";
@@ -53,7 +53,15 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
   // The remembered entry choice; it never changes a starting or active run.
   const runChoice = useRunChoice();
   // Owned here, above Summary and Review, so a replay failure survives switching between them.
-  const replay = useReplay(run.playAgain, run.state?.runId ?? null);
+  const replay = useReplay(
+    {
+      "play-again": run.playAgain,
+      // Until A4's nextSound (B5) the Summary offers no Next sound (nextSoundPhoneme is null),
+      // so this is never reached.
+      "next-sound": () => Promise.reject(new Error("Next sound needs the A4 controller."))
+    },
+    run.state?.runId ?? null
+  );
   const leaveRun = () => {
     replay.abandon();
     run.exit();
@@ -212,9 +220,13 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             publicMode={PUBLIC_MODE}
             drillsEnabled={Boolean(session.health?.passage_check_configured)}
             onPlayReference={run.playReference}
-            onPlayAgain={replay.playAgain}
+            onPlayAgain={() => replay.restart("play-again")}
             starting={run.starting}
-            replayFailed={replay.failed}
+            pendingRestart={replay.pendingAction}
+            restartFailed={replay.failedAction}
+            nextSoundPhoneme={null}
+            onRetryRestart={replay.retry}
+            maxScores={maxCountedScores(run.state.config)}
             onGenerateDrill={(phoneme) => {
               leaveRun();
               void session.insights.generateDrill(phoneme);
@@ -250,9 +262,15 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
             onResume={run.resume}
             onQuit={run.quit}
             onOpenReview={run.openReview}
-            onPlayAgain={replay.playAgain}
+            onPlayAgain={() => replay.restart("play-again")}
+            onNextSound={() => replay.restart("next-sound")}
+            nextSoundPhoneme={null}
             starting={run.starting}
-            replayFailed={replay.failed}
+            pendingRestart={replay.pendingAction}
+            restartFailed={replay.failedAction}
+            onRetryRestart={replay.retry}
+            maxScores={maxCountedScores(run.state.config)}
+            practisedCount={selectPractisedCount(run.state)}
             onDone={leaveRun}
             onPlayRevisit={run.playReference}
             scoresLeft={scoresLeft}

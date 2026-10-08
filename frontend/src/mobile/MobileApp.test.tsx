@@ -492,7 +492,7 @@ describe("MobileApp game run", () => {
 
     // The tabs stay hidden through the summary and come back on Done.
     await quitRun(user);
-    expect(await screen.findByRole("heading", { name: "Run ended" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Run ended/ })).toBeInTheDocument();
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.getByRole("tab", { name: "Words" })).toBeInTheDocument();
@@ -543,7 +543,7 @@ describe("MobileApp game run", () => {
     await user.click(within(dialog).getByRole("button", { name: "End run" }));
 
     // Quit keeps the results: the summary and its review are still there.
-    expect(await screen.findByRole("heading", { name: "Run ended" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Run ended/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "See review" }));
     expect(await screen.findByRole("region", { name: "Run review" })).toBeInTheDocument();
     expect(scored).toEqual(["thin"]);
@@ -567,7 +567,7 @@ describe("MobileApp game run", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(scored).toEqual([]);
     await user.click(screen.getByRole("button", { name: "End run" }));
-    expect(await screen.findByRole("heading", { name: "Run ended" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Run ended/ })).toBeInTheDocument();
     expect(scored).toEqual([]);
   });
 
@@ -708,7 +708,7 @@ describe("MobileApp game run", () => {
     await recordAndStop(user);
     expect(await screen.findByText("Strong.", { selector: ".run-status-main" })).toBeInTheDocument();
     await quitRun(user);
-    expect(await screen.findByRole("heading", { name: "Run ended" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Run ended/ })).toBeInTheDocument();
     if (surface === "review") {
       await user.click(screen.getByRole("button", { name: "See review" }));
       expect(await screen.findByRole("region", { name: "Run review" })).toBeInTheDocument();
@@ -782,7 +782,7 @@ describe("MobileApp game run", () => {
       );
       // The old results are still all there.
       if (surface === "summary") {
-        expect(screen.getByRole("heading", { name: "Run ended" })).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: /^Run ended/ })).toBeInTheDocument();
         expect(screen.getByLabelText(/^1\. thin: first reading Great 90/)).toBeInTheDocument();
       } else {
         expect(screen.getByRole("region", { name: "Run review" })).toBeInTheDocument();
@@ -850,7 +850,7 @@ describe("MobileApp game run", () => {
     await startRun(user);
     await recordAndStop(user);
     await quitRun(user);
-    expect(await screen.findByRole("heading", { name: "Run ended" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Run ended/ })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -1047,7 +1047,7 @@ describe("MobileApp game run", () => {
     }
     await waitFor(() => expect(screen.getByRole("button", { name: "Finish" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Finish" }));
-    expect(await screen.findByRole("heading", { name: "Route complete" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Route complete/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "See review" }));
     expect(await screen.findByRole("region", { name: "Run review" })).toBeInTheDocument();
     expect(screen.getByText(/^Route complete · chain \d\/6$/)).toBeInTheDocument();
@@ -1071,7 +1071,7 @@ describe("MobileApp game run", () => {
     await recordAndStop(user, "Record next");
     expect(await screen.findByText("Strong.")).toBeInTheDocument();
     await quitRun(user);
-    expect(await screen.findByRole("heading", { name: "Challenge incomplete" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Challenge incomplete/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "See review" }));
     const pendingItem = (await screen.findByText("thin", { selector: ".run-reading .run-prompt-text" })).closest("li");
     expect(within(pendingItem as HTMLElement).getByText("Score pending", { selector: ".run-review-status" })).toBeInTheDocument();

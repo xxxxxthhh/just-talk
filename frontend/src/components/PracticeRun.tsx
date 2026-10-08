@@ -3,13 +3,14 @@ import { useEffect, useId, useRef, useState, useSyncExternalStore, type Keyboard
 import "../game/game.css";
 import type { RunPreferences } from "../game/preferences";
 import type { TelemetryStore } from "../game/runAudio";
-import { canAdvance, canRecord, MAX_EXTRA_ATTEMPTS, runReducer } from "../game/runModel";
+import { canAdvance, canRecord, runReducer } from "../game/runModel";
 import { firstValid, latestValid, tierForAccuracy, validAccuracy } from "../game/scoring";
 import type {
   AutoStopState,
   RunPrompt,
   RevisitSuggestion,
   RunBestReceipt,
+  RunFocusPhoneme,
   RunItem,
   RunRating,
   RunScoreView,
@@ -19,7 +20,7 @@ import type {
 } from "../types";
 import { formatRunScore, LiveRunRing, TIER_LABELS, useRolledNumber, type RunRingProps } from "./RunRing";
 import { RunStones } from "./RunStones";
-import { REPLAY_FAILED } from "./useReplay";
+import { nextSoundFailed, REPLAY_FAILED, type RestartKind } from "./useReplay";
 
 export const SLOW_SCORE_MS = 5000;
 const SUMMARY_ROLL_DELAY_MS = 350;
@@ -78,10 +79,22 @@ export type PracticeRunProps = {
   onOpenReview: () => void;
   // Starts the new run inside the tap; its pending state and failure come back as props.
   onPlayAgain: () => void;
-  // A new run's deck is loading (from Start or Play again).
+  // Starter Route Summary only: a run on the next sound in the fixed cycle, same length.
+  onNextSound: () => void;
+  // The sound Next sound would start; null hides it (Challenge, My words).
+  nextSoundPhoneme: RunFocusPhoneme | null;
+  // A new run's deck is loading (from Start, Play again or Next sound).
   starting: boolean;
-  // The last Play again could not build a new run; the finished run is still shown.
-  replayFailed: boolean;
+  // Which restart is in flight, so only its own button says Starting….
+  pendingRestart: RestartKind | null;
+  // The restart that could not build a new run; the finished run is still shown.
+  restartFailed: RestartKind | null;
+  // Repeats the failed restart with the same destination.
+  onRetryRestart: () => void;
+  // Counted scores a new run of this configuration may use.
+  maxScores: number;
+  // Planned items with a first valid reading.
+  practisedCount: number;
   onDone: () => void;
   // Plays the Coach reference for the summary's "One thing to revisit" word.
   onPlayRevisit: (prompt: RunPrompt) => void;
@@ -256,7 +269,7 @@ export function PracticeRun(props: PracticeRunProps) {
       )}
 
       <p className="visually-hidden" aria-live="polite">
-        {announcement(run, score, autoStopState, fresh, rejectionFresh, slow)}
+        {announcement(run, score, props.practisedCount, autoStopState, fresh, rejectionFresh, slow)}
       </p>
     </section>
   );
@@ -726,6 +739,7 @@ function RunSummary(props: ScreenProps) {
   const settled = ended || !fresh || reducedMotion;
   const points = useRolledNumber(score.points, props.feedbackId, !settled, 450, SUMMARY_ROLL_DELAY_MS);
   const outOfHearts = run.endReason === "hearts-exhausted";
+  const route = run.config.target === null;
   const act = (handler: () => void) => () => {
     setEnded(true);
     handler();
@@ -743,132 +757,233 @@ function RunSummary(props: ScreenProps) {
           targetWord: revisit.word
         }
       : null;
-  const playAgainCost = run.items.length + MAX_EXTRA_ATTEMPTS;
   const unratedLine = score.unratedReason ? `Not rated · ${score.unratedReason}` : "Not rated";
+  // Cells start across the same 650–1150 ms window whatever N is; each keeps v2's 240 ms fade.
+  const cellStep = score.items.length > 1 ? 500 / (score.items.length - 1) : 0;
+  const cells = (
+    <ol className="run-summary-scores" aria-label="Item scores">
+      {score.items.map((itemScore, index) => (
+        <li
+          key={itemScore.itemId}
+          data-tier={itemScore.tier ?? undefined}
+          style={settled ? undefined : { animationDelay: `${Math.round(650 + index * cellStep)}ms` }}
+        >
+          {itemScore.firstAccuracy !== null ? formatRunScore(itemScore.firstAccuracy) : "–"}
+        </li>
+      ))}
+    </ol>
+  );
+  const badges = score.rated ? (
+    <ul className="run-badges">
+      {receipt?.outcome === "new-best" ? <li className="run-badge is-gold">New best · was {receipt.previousPoints}</li> : null}
+      {receipt?.outcome === "first-record" ? <li className="run-badge is-gold">First record</li> : null}
+      {score.fullCombo ? <li className="run-badge">Full combo</li> : null}
+    </ul>
+  ) : null;
+  const revisitCard = revisit ? (
+    <div className="run-revisit">
+      <span className="run-revisit-text">
+        <span className="run-tile-label">{route ? "Next step · revisit" : "One thing to revisit"}</span>
+        <span className="run-revisit-word">
+          {revisit.phoneme ? `/${revisit.phoneme}/ in “${revisit.word}”` : revisit.word}{" "}
+          <span className="run-revisit-score">
+            {revisit.scoreSource === "phoneme" ? "sound" : "word"} {formatRunScore(revisit.accuracy)}
+          </span>
+        </span>
+      </span>
+      {revisitPrompt ? (
+        <button
+          type="button"
+          className="run-revisit-play"
+          aria-label={`Hear ${revisit.word}`}
+          onClick={() => props.onPlayRevisit(revisitPrompt)}
+        >
+          <span aria-hidden="true">▶</span>
+        </button>
+      ) : null}
+    </div>
+  ) : null;
+  const restartError =
+    props.restartFailed === "next-sound" && props.nextSoundPhoneme ? (
+      <p className="run-replay-error" role="alert">
+        {nextSoundFailed(props.nextSoundPhoneme)}{" "}
+        <button type="button" className="run-link-button" onClick={act(props.onRetryRestart)}>
+          Try again
+        </button>
+      </p>
+    ) : props.restartFailed === "play-again" ? (
+      <p className="run-replay-error" role="alert">
+        {REPLAY_FAILED}
+      </p>
+    ) : null;
+  const playAgain = (
+    <button type="button" className="run-primary-v2" disabled={props.starting} onClick={act(props.onPlayAgain)}>
+      {props.starting && props.pendingRestart !== "next-sound" ? "Starting…" : "Play again"}
+    </button>
+  );
+  const seeReview = (
+    <button type="button" className="run-secondary-v2" onClick={act(props.onOpenReview)}>
+      See review
+    </button>
+  );
+  const usage = props.scoresLeft !== null ? ` · ${props.scoresLeft} left today` : "";
 
   return (
     <>
       <div
-        className={`run-middle run-summary-v2${settled ? " is-settled" : ""}`}
+        className={`run-middle run-summary-v2${route ? " is-route" : ""}${settled ? " is-settled" : ""}`}
         data-rating={score.rated && score.rating ? score.rating : "none"}
       >
         <h2 className="run-summary-kicker">
           {summaryKicker(run)}
-          {run.challengeOutcome === "cleared" && run.hearts ? (
-            <span className="run-summary-hearts" aria-label={`${run.hearts} hearts kept`}>
+          {run.config.target !== null ? ` · Target ${run.config.target}` : focusSuffix(run)}
+          {run.config.target !== null && run.challengeOutcome === "cleared" && run.hearts ? (
+            <span className="run-summary-hearts" aria-label={`${run.hearts} of 2 hearts kept`}>
               {" · "}
               {"♥".repeat(run.hearts)}
+              <span className="run-summary-hearts-spent">{"♥".repeat(2 - run.hearts)}</span>
             </span>
           ) : null}
         </h2>
         {run.endReason === "quota" ? (
           <p className="run-status-sub">Trial usage ran out for today. Your results so far are kept.</p>
         ) : null}
-        <div className="run-summary-ring">
-          <LiveRunRing {...ringProps(props, { phase: "summary", rating: score.rating, settled })} store={props.telemetryStore} />
-          {outOfHearts ? (
-            <span className="run-summary-cracked" aria-hidden="true">
-              ♥
-            </span>
-          ) : null}
-        </div>
-        <p className="run-summary-points">
-          <span className="run-summary-total" aria-hidden="true">
-            {Math.round(points ?? score.points)}
-          </span>
-          <span className="visually-hidden">{score.points}</span>
-          <span className="run-summary-max">/ 1000</span>
-        </p>
-        <p className="run-status-main">{score.rated && score.rating ? RATING_LINES[score.rating] : unratedLine}</p>
-        {score.rated ? (
-          <ul className="run-badges">
-            {receipt?.outcome === "new-best" ? (
-              <li className="run-badge is-gold">New best · was {receipt.previousPoints}</li>
-            ) : null}
-            {receipt?.outcome === "first-record" ? <li className="run-badge is-gold">First record</li> : null}
-            {score.fullCombo ? <li className="run-badge">Full combo</li> : null}
-          </ul>
-        ) : null}
-        <ol className="run-summary-scores" aria-label="Item scores">
-          {score.items.map((itemScore, index) => (
-            <li
-              key={itemScore.itemId}
-              data-tier={itemScore.tier ?? undefined}
-              style={settled ? undefined : { animationDelay: `${650 + index * 100}ms` }}
-            >
-              {itemScore.firstAccuracy !== null ? formatRunScore(itemScore.firstAccuracy) : "–"}
-            </li>
-          ))}
-        </ol>
-        <div className="run-tiles">
-          <div className="run-tile">
-            <span className="run-tile-label">Longest chain</span>
-            <span className="run-tile-value">
-              {score.longestChain} <span className="run-tile-of">/ {score.items.length}</span>
-            </span>
-          </div>
-          {receipt ? (
-            <div className="run-tile">
-              <span className="run-tile-label">
-                Best · <span className="run-ipa">{focusLabel(run)}</span>
+        {route ? (
+          <>
+            {/* Route leads with how much was practised; the game score stays below, smaller. */}
+            <p className="run-summary-practised">
+              <span className="run-summary-practised-n">
+                {props.practisedCount}
+                <span className="run-summary-practised-of"> / {run.config.length}</span>
               </span>
-              <span className="run-tile-value">
-                {receipt.previousPoints !== null ? receipt.previousPoints : "None yet"}
-              </span>
-            </div>
-          ) : null}
-        </div>
-        {revisit ? (
-          <div className="run-revisit">
-            <span className="run-revisit-text">
-              <span className="run-tile-label">One thing to revisit</span>
-              <span className="run-revisit-word">
-                {revisit.phoneme ? `/${revisit.phoneme}/ in “${revisit.word}”` : revisit.word}{" "}
-                <span className="run-revisit-score">
-                  {revisit.scoreSource === "phoneme" ? "sound" : "word"} {formatRunScore(revisit.accuracy)}
+              <span className="run-summary-practised-label">Practised</span>
+              {props.practisedCount < run.config.length ? (
+                <span className="run-status-sub">{run.config.length - props.practisedCount} not scored</span>
+              ) : null}
+            </p>
+            {revisitCard ??
+              (props.nextSoundPhoneme ? (
+                <div className="run-revisit">
+                  <span className="run-revisit-text">
+                    <span className="run-tile-label">Next step</span>
+                    <span className="run-revisit-word">Try the next sound, /{props.nextSoundPhoneme}/</span>
+                  </span>
+                </div>
+              ) : null)}
+            <div className="run-summary-facts">
+              <div className="run-tile">
+                <span className="run-tile-label">Points</span>
+                <span className="run-tile-value">
+                  <span aria-hidden="true">{Math.round(points ?? score.points)}</span>
+                  <span className="visually-hidden">{score.points}</span>
                 </span>
+              </div>
+              <div className="run-tile" data-rating={score.rated && score.rating ? score.rating : "none"}>
+                <span className="run-tile-label">Rating</span>
+                <span className="run-tile-value run-tile-rating">{score.rated && score.rating ? score.rating : "—"}</span>
+              </div>
+              <div className="run-tile">
+                <span className="run-tile-label">Chain</span>
+                <span className="run-tile-value">
+                  {score.longestChain} <span className="run-tile-of">/ {score.items.length}</span>
+                </span>
+              </div>
+            </div>
+            {!score.rated ? <p className="run-status-sub">{unratedLine}</p> : null}
+            {badges}
+            {cells}
+          </>
+        ) : (
+          <>
+            <div className="run-summary-ring">
+              <LiveRunRing {...ringProps(props, { phase: "summary", rating: score.rating, settled })} store={props.telemetryStore} />
+              {outOfHearts ? (
+                <span className="run-summary-cracked" aria-hidden="true">
+                  ♥
+                </span>
+              ) : null}
+            </div>
+            <p className="run-summary-points">
+              <span className="run-summary-total" aria-hidden="true">
+                {Math.round(points ?? score.points)}
               </span>
-            </span>
-            {revisitPrompt ? (
-              <button
-                type="button"
-                className="run-revisit-play"
-                aria-label={`Hear ${revisit.word}`}
-                onClick={() => props.onPlayRevisit(revisitPrompt)}
-              >
-                <span aria-hidden="true">▶</span>
-              </button>
-            ) : null}
-          </div>
-        ) : null}
+              <span className="visually-hidden">{score.points}</span>
+              <span className="run-summary-max">/ 1000</span>
+            </p>
+            <p className="run-status-main">{score.rated && score.rating ? RATING_LINES[score.rating] : unratedLine}</p>
+            {badges}
+            {cells}
+            <div className="run-tiles">
+              <div className="run-tile">
+                <span className="run-tile-label">Longest chain</span>
+                <span className="run-tile-value">
+                  {score.longestChain} <span className="run-tile-of">/ {score.items.length}</span>
+                </span>
+              </div>
+              {receipt ? (
+                <div className="run-tile">
+                  <span className="run-tile-label">
+                    Best · <span className="run-ipa">{focusLabel(run)}</span>
+                  </span>
+                  <span className="run-tile-value">
+                    {receipt.previousPoints !== null ? receipt.previousPoints : "None yet"}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+            {revisitCard}
+          </>
+        )}
       </div>
 
-      <footer className="run-thumb run-summary-actions">
-        <div className="run-summary-buttons">
-          <button type="button" className="run-secondary-v2" onClick={act(props.onOpenReview)}>
-            See review
+      {route && props.nextSoundPhoneme ? (
+        // Starter Route: See review | Play again, Next sound below, then the cost and Done.
+        <footer className="run-thumb run-summary-actions is-route">
+          <div className="run-summary-buttons">
+            {seeReview}
+            {playAgain}
+          </div>
+          <button type="button" className="run-next-sound" disabled={props.starting} onClick={act(props.onNextSound)}>
+            {props.starting && props.pendingRestart === "next-sound" ? "Starting…" : `Next sound /${props.nextSoundPhoneme}/`}
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
           </button>
-          <button type="button" className="run-primary-v2" disabled={props.starting} onClick={act(props.onPlayAgain)}>
-            {props.starting ? "Starting…" : "Play again"}
-          </button>
-        </div>
-        {props.replayFailed ? (
-          <p className="run-replay-error" role="alert">
-            {REPLAY_FAILED}
+          {restartError}
+          <div className="run-summary-foot">
+            <p className="run-summary-note">
+              Each new run uses up to {props.maxScores} scores{usage}
+            </p>
+            <button type="button" className="run-secondary" onClick={act(props.onDone)}>
+              Done
+            </button>
+          </div>
+        </footer>
+      ) : (
+        <footer className="run-thumb run-summary-actions">
+          <div className="run-summary-buttons">
+            {seeReview}
+            {playAgain}
+          </div>
+          {restartError}
+          <p className="run-summary-note">
+            Play again uses up to {props.maxScores} new scores{usage}
           </p>
-        ) : null}
-        <p className="run-summary-note">
-          Play again uses up to {playAgainCost} new scores
-          {props.scoresLeft !== null ? ` · ${props.scoresLeft} left today` : ""}
-        </p>
-        <button type="button" className="run-secondary" onClick={act(props.onDone)}>
-          Done
-        </button>
-      </footer>
+          <button type="button" className="run-secondary" onClick={act(props.onDone)}>
+            Done
+          </button>
+        </footer>
+      )}
 
       {outOfHearts && !settled ? <div className="run-crack" aria-hidden="true" style={{ pointerEvents: "none" }} /> : null}
     </>
   );
+}
+
+// Route's kicker names its sound; Challenge names its target instead.
+function focusSuffix(run: RunState): string {
+  const focus = run.items.find((candidate) => candidate.prompt.stage === "focus")?.prompt.targetPhoneme;
+  return focus ? ` · /${focus}/` : "";
 }
 
 function focusLabel(run: RunState): string {
@@ -879,6 +994,7 @@ function focusLabel(run: RunState): string {
 function announcement(
   run: RunState,
   score: RunScoreView,
+  practisedCount: number,
   autoStopState: AutoStopState,
   fresh: boolean,
   rejectionFresh: boolean,
@@ -928,7 +1044,11 @@ function announcement(
     case "summary": {
       if (!fresh) return "";
       const rating = score.rated && score.rating ? `Rating ${score.rating}.` : `Not rated${score.unratedReason ? `, ${score.unratedReason}` : ""}.`;
-      return `${summaryKicker(run)}. ${score.points} points. ${rating}`;
+      if (run.config.target === null) {
+        return `${summaryKicker(run)}. Practised ${practisedCount} of ${run.config.length}. ${score.points} points. ${rating}`;
+      }
+      const hearts = run.challengeOutcome === "cleared" && run.hearts ? ` ${run.hearts} of 2 hearts kept.` : "";
+      return `${summaryKicker(run)}, target ${run.config.target}.${hearts} ${score.points} points. ${rating}`;
     }
     default:
       return "";

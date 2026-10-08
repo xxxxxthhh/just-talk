@@ -1055,6 +1055,11 @@
   text-align: center;
 }
 
+/* Twelve cells wrap into two rows of six. */
+.run-summary-scores {
+  row-gap: 4px;
+}
+
 .run-summary-scores li {
   color: var(--g-tier-hi);
   animation: run-fade-in var(--g-dur-enter) var(--g-ease-enter) both;
@@ -1122,6 +1127,115 @@
 
 .run-revisit-score {
   color: var(--g-relisten-hi);
+  font-size: 14px;
+}
+
+/* Route Summary: Practised n/N leads; points, rating and chain sit below as three small tiles. */
+.run-summary-hearts-spent {
+  color: #7a4a44;
+}
+
+.run-summary-v2.is-route .run-summary-kicker {
+  color: var(--g-text-muted);
+}
+
+.run-summary-practised {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin: 4px 0 0;
+}
+
+.run-summary-practised-n {
+  color: var(--g-text);
+  font-family: var(--font-display);
+  font-size: 56px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-summary-practised-of {
+  color: var(--g-text-muted);
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.run-summary-practised-label {
+  color: var(--g-great-hi);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.run-summary-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.run-summary-facts .run-tile {
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.run-summary-facts .run-tile-value {
+  font-size: 19px;
+}
+
+.run-tile-rating {
+  color: var(--g-tier);
+}
+
+.run-next-sound {
+  width: 100%;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(251, 146, 60, 0.45);
+  border-radius: var(--g-radius-tile);
+  background: rgba(251, 146, 60, 0.08);
+  color: var(--g-accent-hi);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.run-next-sound:disabled {
+  opacity: 0.45;
+}
+
+.run-next-sound svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.run-summary-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.run-summary-foot .run-summary-note {
+  text-align: left;
+}
+
+.run-summary-foot .run-secondary {
+  flex: none;
+  min-height: 36px;
+  padding: 0 4px;
+  color: var(--g-text-soft);
   font-size: 14px;
 }
 

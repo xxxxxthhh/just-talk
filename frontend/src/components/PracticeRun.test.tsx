@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -100,6 +103,8 @@ function handlers() {
     onRecordNext: vi.fn(),
     onHearFirst: vi.fn(),
     onHearNextFirst: vi.fn(),
+    onNextSound: vi.fn(),
+    onRetryRestart: vi.fn(),
     onFinish: vi.fn(),
     onSkip: vi.fn(),
     onPlayReference: vi.fn(),
@@ -339,7 +344,8 @@ describe("PracticeRun", () => {
         expect(ended.phase).toBe("summary");
         expect(ended.items[ended.index].lastRejection).not.toBeNull();
         view.rerender(<PracticeRun {...practiceRunProps(ended, live)} />);
-        const expected = ending === "final skip" ? /^Route complete\. 0 points\. Not rated/ : /^Challenge incomplete\. 0 points\. Not rated/;
+        const expected = ending === "final skip" ? /^Route complete\. Practised 0 of 6\. 0 points\. Not rated/
+          : /^Challenge incomplete, target 60\. 0 points\. Not rated/;
         expect(liveRegion(view.container), `${kind}/${ending}`).toMatch(expected);
         // Its own event: the same summary does not change on a later render.
         const text = liveRegion(view.container);
@@ -552,7 +558,7 @@ describe("PracticeRun", () => {
     // Still a tap away from the review, and a quota stop never reads as running out of hearts.
     const quota = fail(advance(score(start("challenge"), 90)), { kind: "quota", message: "limit" });
     renderRun(quota, callbacks);
-    expect(screen.getByRole("heading", { name: "Challenge incomplete" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Challenge incomplete · Target 60" })).toBeInTheDocument();
     expect(screen.getByText(/Trial usage ran out/)).toBeInTheDocument();
     expect(screen.queryByText(/Out of hearts/)).not.toBeInTheDocument();
     expect(callbacks.onOpenReview).toHaveBeenCalledTimes(1);
@@ -570,7 +576,7 @@ describe("PracticeRun", () => {
     c.unmount();
 
     const unrated = renderRun(runV2Fixtures.summaryUnrated.run, { reducedMotion: true });
-    expect(screen.getByRole("heading", { name: "Out of hearts" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Out of hearts · Target 60" })).toBeInTheDocument();
     expect(screen.getByText("Not rated · Out of hearts")).toBeInTheDocument();
     expect(unrated.container.querySelector(".run-summary-total")).toHaveTextContent("126");
     expect(unrated.container.querySelector(".run-ring-rating")).toBeNull();
@@ -898,5 +904,162 @@ describe("PracticeRun", () => {
       expect(rejected.extraUsed).toBe(0);
     });
   });
-});
+  describe("Game Mode v3 summary", () => {
+    const routeSummary = (overrides: Parameters<typeof practiceRunProps>[1] = {}) =>
+      renderRun(runV3Fixtures.route12Complete.run, { reducedMotion: true, nextSoundPhoneme: "ð", ...overrides });
+    const tile = (label: string) => screen.getByText(label, { selector: ".run-tile-label" }).closest(".run-tile");
 
+    it("route_summary_prioritizes_practised_and_next_step", () => {
+      const view = routeSummary();
+      const middle = view.container.querySelector(".run-summary-v2");
+      expect(screen.getByRole("heading", { name: "Route complete · /θ/" })).toBeInTheDocument();
+      expect(middle?.querySelector(".run-summary-practised")).toHaveTextContent("12 / 12Practised");
+      // The large rating ring is gone; points, rating and chain are three small tiles.
+      expect(middle?.querySelector(".run-ring")).toBeNull();
+      expect(tile("Points")).toHaveTextContent("819");
+      expect(tile("Rating")).toHaveTextContent("B");
+      expect(tile("Chain")).toHaveTextContent("6 / 12");
+      expect(middle?.querySelectorAll(".run-summary-scores li")).toHaveLength(12);
+      // Practised comes before the next step, and the next step before the game facts.
+      const order = [".run-summary-practised", ".run-revisit", ".run-summary-facts", ".run-summary-scores"].map((selector) =>
+        Array.from(middle?.children ?? []).findIndex((child) => child.matches(selector))
+      );
+      expect(order).toEqual([...order].sort((a, b) => a - b));
+      expect(order.every((index) => index >= 0)).toBe(true);
+
+      // The approved footer: See review | Play again, Next sound below, then the cost and Done.
+      const footer = view.container.querySelector("footer");
+      expect(Array.from(footer?.querySelectorAll("button") ?? []).map((button) => button.textContent)).toEqual([
+        "See review",
+        "Play again",
+        "Next sound /ð/",
+        "Done"
+      ]);
+      expect(footer).toHaveTextContent("Each new run uses up to 16 scores");
+      view.unmount();
+
+      // No evidence: the next step is the labelled next sound, not an invented weakness.
+      const plain = routeSummary({ topRevisit: null });
+      expect(plain.container.querySelector(".run-revisit")).toHaveTextContent("Next stepTry the next sound, /ð/");
+      plain.unmount();
+
+      // A partial Route says what was not scored and why it is not rated.
+      const partial = renderRun(runV3Fixtures.route12Partial.run, { reducedMotion: true, nextSoundPhoneme: "ð" });
+      expect(partial.container.querySelector(".run-summary-practised")).toHaveTextContent("6 / 12Practised6 not scored");
+      expect(screen.getByRole("heading", { name: "Run ended · /θ/" })).toBeInTheDocument();
+      expect(tile("Rating")).toHaveTextContent("—");
+      expect(screen.getByText(/^Not rated/)).toBeInTheDocument();
+      expect(tile("Points")).toHaveTextContent("450");
+      partial.unmount();
+
+      // Without a Next sound (Challenge, My words) the v2 footer stays.
+      const plainRoute = routeSummary({ nextSoundPhoneme: null });
+      expect(screen.queryByRole("button", { name: /Next sound/ })).not.toBeInTheDocument();
+      expect(plainRoute.container.querySelector("footer")).toHaveTextContent("Play again uses up to 16 new scores");
+    });
+
+    it("n12_972_without_full_combo_shows_a", () => {
+      const fixture = runV3Fixtures.route12BrokenChain;
+      expect(fixture.score.points).toBe(972);
+      renderRun(fixture.run, { reducedMotion: true, receipt: { runId: fixture.run.runId, previousPoints: null, outcome: "first-record" } });
+      expect(tile("Points")).toHaveTextContent("972");
+      expect(tile("Rating")).toHaveTextContent("A");
+      expect(tile("Chain")).toHaveTextContent("11 / 12");
+      expect(screen.queryByText("Full combo")).not.toBeInTheDocument();
+      expect(screen.getByText("First record")).toBeInTheDocument();
+    });
+
+    it("summary_badge_start_follows_last_cell_start_with_v2_fades", () => {
+      const delays = (container: HTMLElement) =>
+        Array.from(container.querySelectorAll<HTMLElement>(".run-summary-scores li")).map((cell) => cell.style.animationDelay);
+      const twelve = renderRun(runV3Fixtures.route12Complete.run, { nextSoundPhoneme: "ð" });
+      const twelveDelays = delays(twelve.container);
+      expect(twelveDelays[0]).toBe("650ms");
+      expect(twelveDelays[11]).toBe("1150ms");
+      expect(twelveDelays.map((delay) => Number.parseInt(delay))).toEqual(
+        Array.from({ length: 12 }, (_, index) => Math.round(650 + (index * 500) / 11))
+      );
+      twelve.unmount();
+      // Six items keep v2's 100 ms step.
+      const six = renderRun(runV2Fixtures.summaryRated.run, { receipt: runV2Fixtures.summaryRated.receipt });
+      expect(delays(six.container)).toEqual(["650ms", "750ms", "850ms", "950ms", "1050ms", "1150ms"]);
+      six.unmount();
+
+      // v2 fades are unchanged: cells 240 ms, badges 300 ms starting at 1250 ms, after the last cell starts.
+      const css = readFileSync(resolve(process.cwd(), "src/game/game.css"), "utf8");
+      expect(css).toMatch(/--g-dur-enter: 240ms;/);
+      expect(css).toMatch(/\.run-summary-scores li \{[^}]*animation: run-fade-in var\(--g-dur-enter\)/);
+      expect(css).toMatch(/\.run-badges \{[^}]*animation: run-fade-in 300ms var\(--g-ease-enter\) 1250ms both;/);
+      expect(1250).toBeGreaterThan(Number.parseInt(twelveDelays[11]));
+    });
+
+    it("summary_uses_max_scores_without_legacy_constant", () => {
+      const route = routeSummary();
+      expect(route.container.querySelector("footer")).toHaveTextContent("Each new run uses up to 16 scores");
+      route.unmount();
+      const cleared = runV3Fixtures.target85Cleared;
+      const challenge = renderRun(cleared.run, { reducedMotion: true, scoresLeft: 14 });
+      expect(challenge.container.querySelector("footer")).toHaveTextContent("Play again uses up to 10 new scores · 14 left today");
+      challenge.unmount();
+      renderRun(runV2Fixtures.summaryRated.run, { reducedMotion: true });
+      expect(screen.getByText(/Play again uses up to 8 new scores/)).toBeInTheDocument();
+      const source = readFileSync(resolve(process.cwd(), "src/components/PracticeRun.tsx"), "utf8");
+      expect(source).not.toMatch(/MAX_EXTRA_ATTEMPTS/);
+    });
+
+    it("challenge_summary_leads_with_outcome_target_and_hearts", () => {
+      const cleared = runV3Fixtures.target85Cleared;
+      expect(cleared.score.points).toBe(876);
+      const view = renderRun(cleared.run, { reducedMotion: true });
+      expect(screen.getByRole("heading", { name: /^Challenge cleared · Target 85/ })).toBeInTheDocument();
+      expect(screen.getByLabelText("1 of 2 hearts kept")).toBeInTheDocument();
+      expect(view.container.querySelector(".run-ring-rating")).toHaveTextContent("A");
+      expect(screen.getByLabelText("3. think: first reading Good 80, one heart used")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Next sound/ })).not.toBeInTheDocument();
+      expect(liveRegion(view.container)).toBe("Challenge cleared, target 85. 1 of 2 hearts kept. 876 points. Rating A.");
+    });
+
+    it("summary_buttons_live_at_frame_zero_and_reduced_motion_final", () => {
+      const callbacks = handlers();
+      const view = renderRun(runV3Fixtures.route12Complete.run, { ...callbacks, nextSoundPhoneme: "ð" });
+      const middle = view.container.querySelector(".run-summary-v2");
+      expect(middle).not.toHaveClass("is-settled");
+      expect(liveRegion(view.container)).toBe("Route complete. Practised 12 of 12. 819 points. Rating B.");
+      fireEvent.click(screen.getByRole("button", { name: "Next sound /ð/" }));
+      expect(callbacks.onNextSound).toHaveBeenCalledTimes(1);
+      expect(callbacks.onPlayAgain).not.toHaveBeenCalled();
+      expect(middle).toHaveClass("is-settled");
+      view.unmount();
+
+      // Reduced motion: final from the first frame, no staggered cells.
+      const reduced = renderRun(runV3Fixtures.route12Complete.run, { reducedMotion: true, nextSoundPhoneme: "ð" });
+      expect(reduced.container.querySelector(".run-summary-v2")).toHaveClass("is-settled");
+      expect(reduced.container.querySelector<HTMLElement>(".run-summary-scores li")?.style.animationDelay).toBe("");
+      reduced.unmount();
+
+      // A pending Next sound labels only itself; both starts are blocked, Review and Done are not.
+      renderRun(runV3Fixtures.route12Complete.run, { ...callbacks, nextSoundPhoneme: "ð", starting: true, pendingRestart: "next-sound" });
+      expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Play again" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "See review" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
+    });
+
+    it("next_sound_failure_names_its_sound_and_retries_it", () => {
+      const callbacks = handlers();
+      renderRun(runV3Fixtures.route12Complete.run, {
+        ...callbacks,
+        reducedMotion: true,
+        nextSoundPhoneme: "ð",
+        restartFailed: "next-sound"
+      });
+      const alert = screen.getByRole("alert");
+      expect(alert).toHaveTextContent("Couldn't start /ð/. Your results are still here.");
+      fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+      expect(callbacks.onRetryRestart).toHaveBeenCalledTimes(1);
+      expect(callbacks.onPlayAgain).not.toHaveBeenCalled();
+      // The destination is unchanged.
+      expect(screen.getByRole("button", { name: "Next sound /ð/" })).toBeEnabled();
+    });
+  });
+});
