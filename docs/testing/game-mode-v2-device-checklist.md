@@ -23,8 +23,10 @@ Fill in one row per pilot session. Every result row below refers to a session he
 
 | Session | Date | Browser / OS | Viewport | Input device | Sound | Auto-stop | Build commit |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| S1 | | iOS Safari | | | | | |
-| S2 | | Desktop Chrome | | | | | |
+| S1 | 2026-10-08 | iOS Safari (via Tailscale Serve HTTPS) | | | | | 6caab28 |
+| S2 | 2026-10-08 | Desktop Chrome | | | | | 6caab28 |
+
+**Owner pilot result (S1, S2):** the owner played full runs end to end on both devices and reported no problems. That report covers the flow as a whole. The rows below were not checked individually, so they stay **Not verified** until a specific check is run.
 
 ## Auto-stop parameters in this build
 
