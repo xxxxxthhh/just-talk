@@ -293,3 +293,420 @@
   max-width: 100%;
   height: 32px;
 }
+
+/* ---- Game Mode v2: tokens ----
+   The run and its entry hero use a fixed dark palette regardless of the app theme. */
+
+.run,
+.run-hero {
+  --g-bg: linear-gradient(160deg, #1b1511 0%, #241b15 100%);
+  --g-panel: #251c16;
+  --g-ring-core: #2a1f18;
+  --g-surface: rgba(255, 255, 255, 0.04);
+  --g-line: rgba(255, 240, 220, 0.08);
+  --g-line-strong: rgba(255, 240, 220, 0.14);
+
+  --g-text: #faf5ee;
+  --g-text-soft: #cfc6ba;
+  --g-text-muted: #a89e92;
+  --g-text-faint: #6b6158;
+
+  --g-accent: #fb923c;
+  --g-accent-hi: #fdba74;
+  --g-on-accent: #1b1511;
+
+  /* Gold is reserved for Perfect and S. */
+  --g-perfect: #fbbf24;
+  --g-perfect-hi: #fde68a;
+  --g-great: #34d399;
+  --g-great-hi: #6ee7b7;
+  --g-good: #f5b544;
+  --g-good-hi: #f5b544;
+  --g-relisten: #f2836b;
+  --g-relisten-hi: #f2a08f;
+  --g-heart: #f87171;
+  --g-neutral: #a89e92;
+  --g-stone-empty: rgba(250, 245, 238, 0.22);
+
+  --g-tier: var(--g-accent);
+  --g-tier-hi: var(--g-accent-hi);
+
+  --g-gutter: 20px;
+  --g-radius-hero: 26px;
+  --g-radius-button: 18px;
+  --g-radius-tile: 16px;
+  --g-radius-card: 14px;
+  --g-primary-height: 60px;
+  --g-thumb-zone: 144px;
+
+  --g-ring-size: min(200px, 26dvh);
+  --g-ring-slot: calc(var(--g-ring-size) + 24px);
+  --g-stone-size: 28px;
+  --g-glow-opacity: 0.18;
+
+  --g-ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+  --g-ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --g-dur-enter: 240ms;
+  --g-dur-pop: 420ms;
+  --g-dur-exit: 160ms;
+}
+
+:is(.run, .run-hero) [data-tier="perfect"],
+:is(.run, .run-hero) [data-rating="S"] { --g-tier: var(--g-perfect); --g-tier-hi: var(--g-perfect-hi); }
+:is(.run, .run-hero) [data-tier="great"],
+:is(.run, .run-hero) [data-rating="A"] { --g-tier: var(--g-great); --g-tier-hi: var(--g-great-hi); }
+:is(.run, .run-hero) [data-tier="good"],
+:is(.run, .run-hero) [data-rating="B"] { --g-tier: var(--g-good); --g-tier-hi: var(--g-good-hi); }
+:is(.run, .run-hero) [data-tier="relisten"] { --g-tier: var(--g-relisten); --g-tier-hi: var(--g-relisten-hi); }
+:is(.run, .run-hero) [data-rating="C"],
+:is(.run, .run-hero) [data-rating="none"] { --g-tier: var(--g-neutral); --g-tier-hi: var(--g-text-soft); }
+
+/* ---- Ring ----
+   A fixed slot holding two layers: the SVG art takes every transform; the text face never moves. */
+
+.run-ring {
+  position: relative;
+  flex: none;
+  width: var(--g-ring-slot);
+  height: var(--g-ring-slot);
+  margin: 0 auto;
+  display: grid;
+  place-items: center;
+}
+
+.run-ring-glow {
+  position: absolute;
+  inset: -40%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--g-tier) 0%, transparent 100%);
+  opacity: var(--g-glow-opacity);
+  pointer-events: none;
+}
+
+.run-ring-art,
+.run-ring-face,
+.run-ring-stop {
+  grid-area: 1 / 1;
+  width: var(--g-ring-size);
+  height: var(--g-ring-size);
+}
+
+.run-ring-art {
+  overflow: visible;
+  transform-origin: 50% 50%;
+}
+
+.run-ring-art * {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+
+.run-ring-track {
+  fill: none;
+  stroke: rgba(250, 245, 238, 0.08);
+  stroke-width: 6;
+}
+
+.run-ring-edge {
+  fill: none;
+  stroke: var(--g-tier);
+  stroke-width: 4;
+}
+
+.run-ring[data-phase="ready"] .run-ring-edge,
+.run-ring[data-phase="recording"] .run-ring-edge,
+.run-ring[data-phase="scoring"] .run-ring-edge {
+  stroke: rgba(251, 146, 60, 0.45);
+  stroke-width: 2;
+}
+
+.run-ring[data-phase="verdict"] .run-ring-track,
+.run-ring[data-phase="rescue"] .run-ring-track,
+.run-ring[data-phase="summary"] .run-ring-track {
+  stroke: var(--g-tier);
+  opacity: 0.2;
+}
+
+.run-ring-core {
+  fill: var(--g-ring-core);
+}
+
+/* Functional: the dash is set directly from telemetry and never eased. */
+.run-ring-silence {
+  fill: none;
+  stroke: var(--g-accent);
+  stroke-width: 6;
+  stroke-linecap: round;
+  transition: none;
+}
+
+/* Its scale is set inline from the live level. */
+.run-ring-level {
+  fill: rgba(251, 146, 60, 0.1);
+}
+
+.run-ring-level-bar {
+  fill: var(--g-accent);
+  transform-origin: 0 50%;
+}
+
+.run-ring-orbit {
+  fill: none;
+  stroke: var(--g-accent);
+  stroke-width: 4;
+  stroke-linecap: round;
+  transform-box: view-box;
+  animation: run-ring-spin 1.4s linear infinite;
+}
+
+.run-ring-orbit.reverse {
+  stroke: var(--g-accent-hi);
+  opacity: 0.6;
+  animation-duration: 2.1s;
+  animation-direction: reverse;
+}
+
+.run-ring-sweep,
+.run-ring-sparks {
+  fill: none;
+  stroke: var(--g-perfect-hi);
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0;
+}
+
+.run-ring-sweep {
+  transform-box: view-box;
+  animation: run-ring-sweep 700ms var(--g-ease-enter) 120ms;
+}
+
+.run-ring-sparks {
+  animation: run-ring-sparks 600ms var(--g-ease-enter) 200ms;
+}
+
+.run-ring[data-phase="ready"] .run-ring-art {
+  animation: run-ring-breathe 2.8s ease-in-out infinite;
+}
+
+.run-ring[data-phase="verdict"] .run-ring-art,
+.run-ring[data-phase="summary"] .run-ring-art {
+  animation: run-ring-pop var(--g-dur-pop) var(--g-ease-pop);
+}
+
+.run-ring-face {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  pointer-events: none;
+  text-align: center;
+}
+
+.run-ring-time {
+  margin-top: 46%;
+  color: var(--g-text-soft);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-ring-score {
+  color: var(--g-tier-hi);
+  font-family: var(--font-display);
+  font-size: calc(var(--g-ring-size) * 0.44);
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-ring[data-phase="rescue"] .run-ring-score {
+  font-size: calc(var(--g-ring-size) * 0.22);
+  font-weight: 600;
+}
+
+.run-ring-tier {
+  color: var(--g-tier);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  animation: run-fade-in var(--g-dur-enter) var(--g-ease-enter) 200ms both;
+}
+
+.run-ring-rating {
+  color: var(--g-tier);
+  font-family: var(--font-display);
+  font-size: calc(var(--g-ring-size) * 0.56);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.run-ring-stop {
+  position: relative;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.run-ring-stop:focus-visible {
+  outline: 3px solid var(--g-accent);
+  outline-offset: 4px;
+}
+
+/* Reduced motion comes from the reducedMotion prop. The component drops the level scale, second orbit
+   and Perfect effects; CSS stops the remaining decorative animations. */
+.run-ring.is-reduced .run-ring-art,
+.run-ring.is-reduced .run-ring-art *,
+.run-ring.is-reduced .run-ring-tier {
+  animation: none;
+}
+
+@keyframes run-ring-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes run-ring-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.03); opacity: 1; }
+}
+
+@keyframes run-ring-pop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+
+@keyframes run-ring-sweep {
+  0% { opacity: 0; transform: rotate(0deg); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: rotate(360deg); }
+}
+
+@keyframes run-ring-sparks {
+  0% { opacity: 0; transform: scale(0.85); }
+  40% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.1); }
+}
+
+@keyframes run-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ---- Stones ----
+   Fill is the first valid reading's tier; status marks and the rescued outline sit on top of it. */
+
+.run-stones-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.run-stones-groups {
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.run-stones-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.run-stones-group > ol {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.run-stones-label {
+  color: var(--g-text-muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.run-stone {
+  flex: none;
+  width: var(--g-stone-size);
+  height: var(--g-stone-size);
+}
+
+.run-stone svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.run-stone-shape {
+  fill: transparent;
+  stroke: var(--g-stone-empty);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.run-stone[data-tier] .run-stone-shape {
+  fill: var(--g-tier);
+  stroke: var(--g-tier-hi);
+}
+
+.run-stone.is-pending .run-stone-shape,
+.run-stone.is-current .run-stone-shape {
+  stroke: var(--g-accent);
+}
+
+.run-stone.is-skipped .run-stone-shape {
+  stroke-dasharray: 3 3;
+}
+
+.run-stone-stripes {
+  stroke: none;
+}
+
+.run-stone-stripe {
+  stroke: var(--g-stone-empty);
+  stroke-width: 2;
+}
+
+.run-stone-halo {
+  fill: none;
+  stroke: var(--g-accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  opacity: 0;
+}
+
+.run-stone.is-current .run-stone-halo {
+  opacity: 0.3;
+}
+
+.run-stone.is-rescued .run-stone-halo {
+  opacity: 1;
+}
+
+.run-stone.is-current svg {
+  transform-origin: 50% 50%;
+  animation: run-stone-breathe 2.4s ease-in-out infinite;
+}
+
+.run-stones.is-reduced .run-stone svg {
+  animation: none;
+}
+
+@keyframes run-stone-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
