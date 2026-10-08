@@ -13,13 +13,13 @@ import { RunReview } from "../../components/RunReview";
 import { useReplay } from "../../components/useReplay";
 import { ScoredPassage } from "../../components/ScoredPassage";
 import { ScoreGrid } from "../../components/ScoreGrid";
+import { setRunChoice, useRunChoice } from "../../game/preferences";
 import { configForChoice, maxCountedScores } from "../../game/runConfig";
 import { selectRunScore } from "../../game/scoring";
 import { usePracticeRun } from "../../hooks/usePracticeRun";
 import { usePublicScoresLeft } from "../usePublicScoresLeft";
 import { PUBLIC_MODE } from "../../publicMode";
 import { scoreValue } from "../../scoreUtils";
-import type { RunChoice } from "../../types";
 import { usePracticeSession } from "../../usePracticeSession";
 
 type PracticeSessionState = ReturnType<typeof usePracticeSession>;
@@ -50,8 +50,8 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
   const [isResultSheetOpen, setIsResultSheetOpen] = useState(false);
   const reducedMotion = useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion);
   const scoresLeft = usePublicScoresLeft();
-  // The entry choice. A3's useRunChoice/setRunChoice replace this local state.
-  const [runChoice, setRunChoice] = useState<RunChoice>({ selection: "route", routeLength: 6 });
+  // The remembered entry choice; it never changes a starting or active run.
+  const runChoice = useRunChoice();
   // Owned here, above Summary and Review, so a replay failure survives switching between them.
   const replay = useReplay(run.playAgain, run.state?.runId ?? null);
   const leaveRun = () => {

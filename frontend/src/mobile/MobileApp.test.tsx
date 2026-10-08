@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { setRunPreference } from "../game/preferences";
+import { setRunChoice, setRunPreference } from "../game/preferences";
 import MobileApp from "./MobileApp";
 
 function mockApi(payloads: Record<string, unknown>) {
@@ -365,6 +365,51 @@ describe("MobileApp game run", () => {
     vi.unstubAllGlobals();
     Reflect.deleteProperty(navigator, "mediaDevices");
     Reflect.deleteProperty(document, "visibilityState");
+    // The entry choice is remembered across mounts; each test starts from the default.
+    setRunChoice({ selection: "route", routeLength: 6 });
+    window.localStorage.removeItem("jt.runConfig.v1");
+  });
+
+  test("entry_uses_shared_choice_without_mutating_active_config", async () => {
+    const user = userEvent.setup();
+    installRunApi();
+    const first = render(<MobileApp />);
+    await user.click(await screen.findByRole("radio", { name: "12 items" }));
+    await user.click(screen.getByRole("radio", { name: "Challenge, target 60" }));
+    expect(JSON.parse(window.localStorage.getItem("jt.runConfig.v1") ?? "null")).toEqual({
+      selection: "target60",
+      routeLength: 12
+    });
+    first.unmount();
+
+    // A new mount reads the same remembered choice, Route length included.
+    render(<MobileApp />);
+    expect(await screen.findByRole("radio", { name: "Challenge, target 60" })).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("button", { name: "Start Challenge" }));
+    const run = await screen.findByRole("region", { name: "Challenge run" });
+    const header = within(run).getByText(/^Challenge/, { selector: ".run-bar-title" }).textContent;
+
+    // Changing the remembered choice mid-run leaves the frozen run alone.
+    act(() => setRunChoice({ selection: "route", routeLength: 12 }));
+    expect(within(run).getByText(/^Challenge/, { selector: ".run-bar-title" })).toHaveTextContent(header ?? "");
+    expect(within(run).getByRole("img", { name: /of 2 hearts left/ })).toBeInTheDocument();
+    await quitRun(user);
+    await user.click(await screen.findByRole("button", { name: "Done" }));
+    expect(await screen.findByRole("radio", { name: "Route" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "12 items" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  test("entry_costs_are_8_16_8_10", async () => {
+    const user = userEvent.setup();
+    installRunApi();
+    render(<MobileApp />);
+    expect(await screen.findByText("6 items · no hearts · up to 8 scores")).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "12 items" }));
+    expect(screen.getByText("12 items · no hearts · up to 16 scores")).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Challenge, target 60" }));
+    expect(screen.getByText("6 items · target 60 · 2 hearts · up to 8 scores")).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Challenge, target 85" }));
+    expect(screen.getByText("6 items · target 85 · 2 hearts · up to 10 scores")).toBeInTheDocument();
   });
 
   test("run_result_never_opens_normal_sheet_but_history_still_does", async () => {

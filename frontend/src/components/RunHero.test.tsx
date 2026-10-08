@@ -165,4 +165,31 @@ describe("RunHero", () => {
     expect(screen.getByText("Up to 10 scores · 14 left today")).toBeInTheDocument();
     expect(screen.queryByText(/· up to 10 scores/)).not.toBeInTheDocument();
   });
+
+  it("entry_best_uses_selected_legacy_or_new_bucket", async () => {
+    const record = (points: number, rating: string) => ({ runId: `r${points}`, points, rating, updatedAt: 1, expiresAt: null });
+    window.localStorage.setItem(
+      "jt.runBest.v1",
+      JSON.stringify({
+        "route|θ|1": record(861, "A"),
+        "route|θ|1|12": record(927, "A"),
+        "challenge|θ|1": record(540, "C"),
+        "challenge|θ|1|85": record(876, "A")
+      })
+    );
+    const user = userEvent.setup();
+    render(<Controlled />);
+    const best = () => screen.getByText(/^Best · /).parentElement;
+
+    // Route 6 and Target 60 read the v2 key bytes; Route 12 and Target 85 their own buckets.
+    expect(await screen.findByText("Best · /θ/ · Route 6")).toBeInTheDocument();
+    expect(best()).toHaveTextContent("861A");
+    await user.click(screen.getByRole("radio", { name: "12 items" }));
+    expect(best()).toHaveTextContent("Route 12927A");
+    await user.click(screen.getByRole("radio", { name: "Challenge, target 60" }));
+    expect(best()).toHaveTextContent("Target 60540C");
+    await user.click(screen.getByRole("radio", { name: "Challenge, target 85" }));
+    expect(best()).toHaveTextContent("Target 85876A");
+  });
 });
+

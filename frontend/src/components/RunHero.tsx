@@ -4,6 +4,7 @@ import { fetchPhonemeStats } from "../api";
 import "../game/game.css";
 import { readBest } from "../game/personalBest";
 import type { RunPreferences } from "../game/preferences";
+import { configForChoice } from "../game/runConfig";
 import { chooseFocusPhoneme } from "../game/runDeck";
 import { RUN_RULES_VERSION } from "../game/scoring";
 import { STARTER_PACK } from "../game/starterPack";
@@ -80,8 +81,7 @@ export function RunHero({
     : [];
   const selected = SELECTIONS.find((option) => option.selection === choice.selection) ?? SELECTIONS[0];
   const isRoute = selected.target === null;
-  const mode = isRoute ? "route" : "challenge";
-  const best = focus ? readBest({ mode, focus, rulesVersion: RUN_RULES_VERSION }) : null;
+  const best = focus ? readBest({ config: configForChoice(choice), focus, rulesVersion: RUN_RULES_VERSION }) : null;
   const configName = isRoute ? `Route ${choice.routeLength}` : selected.name;
   const shape = isRoute
     ? `${choice.routeLength} items · no hearts`
