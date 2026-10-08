@@ -114,7 +114,7 @@ Several owner runs. Observations locate problems; they never lower 85 automatica
 | A narrower width (about 320) | Not verified | Not verified | | |
 | A long sentence prompt and large text: the middle scrolls, the thumb zone stays usable, the run title wraps instead of truncating | Not verified | Not verified | | |
 | No sideways scroll anywhere; every control is easy to tap (≥44 px) | Not verified | Not verified | | |
-| Review jump stones: record how hard they are to tap with twelve items (a known 20×44 px open issue) | Not verified | Not verified | | |
+| Review jump stones: 44×44 tap areas in rows of six; twelve items wrap 6+6, six items keep one row; each stone jumps to its reading | Not verified | Not verified | | |
 
 ### Motion and accessibility
 
@@ -122,7 +122,7 @@ Several owner runs. Observations locate problems; they never lower 85 automatica
 | --- | --- | --- | --- | --- |
 | Reduced motion: static decoration; the silence arc still works; final facts from the first frame | Not verified | Not verified | | |
 | Summary: badges start fading after the last score cell starts (240 ms cells, 300 ms badges) | Not verified | Not verified | | |
-| VoiceOver / keyboard: entry radio names and arrow keys; one announcement per change | Not verified | Not verified | | |
+| VoiceOver / keyboard: entry and Words-length radio names, arrow keys and one tab stop per group; one announcement per change | Not verified | Not verified | | |
 | VoiceOver: target vs tier wording (an 80 is Good, below the target); the heart-loss stone reads "one heart used" | Not verified | Not verified | | |
 | Quit dialog: focus stays inside; Escape and Keep paused return to the paused run | Not verified | Not verified | | |
 

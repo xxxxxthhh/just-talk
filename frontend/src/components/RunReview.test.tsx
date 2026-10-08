@@ -428,4 +428,3 @@ describe("Review jump stones", () => {
     }
   });
 });
-
