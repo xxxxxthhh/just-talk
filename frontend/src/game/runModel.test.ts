@@ -484,9 +484,9 @@ describe("run model", () => {
     let state = loadReference(play(start("challenge"), scored(40)));
     const firstLow = state.items[0].firstLowAttemptId;
     expect(firstLow).not.toBeNull();
-    let key: AttemptKey;
-    [state, key] = capture(state);
-    expect(state.phase).toBe("recording");
+    const [capturing, key] = capture(state);
+    expect(capturing.phase).toBe("recording");
+    state = capturing;
     state = reduce(state, { type: "LOCAL_REJECT", key, reason: "no-speech" });
     expect(state.phase).toBe("rescue");
     expect(state.extraUsed).toBe(0);
