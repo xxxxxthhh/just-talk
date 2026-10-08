@@ -1385,8 +1385,9 @@ button.run-toggle::before,
 
 .run-review-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 6px 14px;
   padding: 10px var(--g-gutter) 14px;
   border-bottom: 1px solid var(--g-line);
 }
@@ -1428,16 +1429,19 @@ button.run-toggle::before,
   font-weight: 500;
 }
 
+/* Jump stones take their own row under the headline, six per row (Route 12 wraps 6+6), each a
+   44x44 tap area. The row reaches half a gutter into each margin, so six fit at 260 px. */
 .run-review-stones {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  max-width: 120px;
+  flex: 0 0 calc(100% + var(--g-gutter));
+  display: grid;
+  grid-template-columns: repeat(6, 44px);
+  justify-content: center;
+  margin: 0 calc(var(--g-gutter) / -2);
 }
 
 .run-review-stone {
   position: relative;
-  width: 20px;
+  width: 44px;
   height: 44px;
   padding: 0;
   border: none;
@@ -1447,7 +1451,7 @@ button.run-toggle::before,
 .run-review-stone::before {
   content: "";
   position: absolute;
-  inset: 16px 4px;
+  inset: 16px;
   border: 2px solid var(--g-stone-empty);
   border-radius: 3px;
   transform: rotate(45deg);

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { act as flush, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -399,3 +402,30 @@ describe("RunReview for v3 runs", () => {
     expect(screen.queryByRole("button", { name: /Next sound/ })).not.toBeInTheDocument();
   });
 });
+
+describe("Review jump stones", () => {
+  it("review_jump_stones_are_44px_six_per_row", () => {
+    // jsdom has no layout, so this pins the CSS contract; the browser probe is in the acceptance evidence.
+    const css = readFileSync(resolve(process.cwd(), "src/game/game.css"), "utf8");
+    const block = (selector: string) => {
+      const start = css.indexOf(`\n${selector} {`);
+      return css.slice(start, css.indexOf("}", start));
+    };
+    expect(block(".run-review-stones")).toMatch(/grid-template-columns: repeat\(6, 44px\);/);
+    expect(block(".run-review-stone")).toMatch(/width: 44px;/);
+    expect(block(".run-review-stone")).toMatch(/height: 44px;/);
+
+    // Twelve items give twelve stones (two rows of six); six give one row.
+    for (const [fixture, count] of [
+      [runV3Fixtures.route12Complete, 12],
+      [runV3Fixtures.target85Cleared, 6]
+    ] as const) {
+      const ended = fixture.run;
+      const view = renderReview(step(ended, { type: "OPEN_REVIEW", runId: ended.runId }));
+      const nav = screen.getByRole("navigation", { name: "Jump to item" });
+      expect(within(nav).getAllByRole("button")).toHaveLength(count);
+      view.unmount();
+    }
+  });
+});
+
