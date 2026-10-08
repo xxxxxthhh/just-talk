@@ -281,7 +281,7 @@ export type RunItem = {
   verdict: Verdict | null;
   firstLowAttemptId: string | null;
   referenceLoad: "idle" | "pending" | "ready" | "failed";
-  lastRejection: { attemptId: string; message: string } | null;
+  lastRejection: { attemptId: string; message: string; localReason?: LocalRejectReason } | null;
 };
 
 export type RunState = {
@@ -314,3 +314,47 @@ export type RunAction =
   | { type: "REFERENCE_LOADED"; runId: string; itemId: string; ok: boolean }
   | { type: "SKIP" | "ADVANCE" | "CANNOT_CONFIRM"; runId: string; itemId: string }
   | { type: "PAUSE" | "RESUME" | "QUIT" | "OPEN_REVIEW" | "EXIT"; runId: string };
+
+// Game Mode v2 Day 1 contracts. RunAction gains LOCAL_REJECT together with its handler:
+// | { type: "LOCAL_REJECT"; key: AttemptKey; reason: LocalRejectReason }
+export type AutoStopState = "off" | "calibrating" | "listening" | "tail" | "fallback" | "stopping";
+export type LocalRejectReason = "too-short" | "no-speech";
+export type CaptureStopReason = "manual" | "silence" | "no-speech" | "short-voice"
+  | "auto-cap" | "hard-cap" | "cancel" | "pause" | "quit" | "exit" | "replaced";
+export type CaptureSummary = Readonly<{
+  captureId: string; // Equal to the owning attemptId; callback also closes over AttemptKey.
+  stopReason: CaptureStopReason;
+  durationMs: number; // Monotonic; recorder.start() to first accepted stop, not onstop delivery.
+  detectionValid: boolean;
+  speechSeen: boolean;
+  voicedMs: number;
+}>;
+export type RunCaptureOptions = Readonly<{
+  key: AttemptKey; kind: "word" | "sentence"; autoStop: boolean;
+}>;
+export type CaptureTelemetry = Readonly<{
+  captureId: string | null; level: number; silenceProgress: number;
+  autoStopState: AutoStopState; elapsedMs: number;
+}>;
+export type RunTier = "perfect" | "great" | "good" | "relisten";
+export type RunRating = "S" | "A" | "B" | "C";
+export type RunItemScore = Readonly<{
+  itemId: string; firstAccuracy: number | null; tier: RunTier | null;
+  chain: number; basePoints: number; chainPoints: number;
+}>;
+export type RunScoreView = Readonly<{
+  items: readonly RunItemScore[]; points: number; currentChain: number;
+  longestChain: number; rated: boolean; rating: RunRating | null;
+  unratedReason: string | null; fullCombo: boolean;
+}>;
+export type RevisitEvidence = Readonly<{
+  itemId: string; attemptId: string; word: string; phoneme: string | null;
+  accuracy: number; scoreSource: "word" | "phoneme";
+}>;
+export type RevisitSuggestion = Readonly<{
+  id: string; summary: string; evidence: readonly RevisitEvidence[];
+}>;
+export type RunBestReceipt = Readonly<{
+  runId: string; previousPoints: number | null;
+  outcome: "first-record" | "new-best" | "none";
+}>;
