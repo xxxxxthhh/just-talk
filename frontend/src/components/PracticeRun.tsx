@@ -15,21 +15,11 @@ import type {
   RunTier,
   ScoreResult
 } from "../types";
-import { formatRunScore, RunRing, useRolledNumber, type RunRingProps } from "./RunRing";
+import { formatRunScore, RunRing, TIER_LABELS, useRolledNumber, type RunRingProps } from "./RunRing";
 import { RunStones } from "./RunStones";
-
-// RunReview still imports these from here until its rebuild.
-export { latestValid, validAccuracy };
 
 export const SLOW_SCORE_MS = 5000;
 const SUMMARY_ROLL_DELAY_MS = 350;
-
-const TIER_LABELS: Record<RunTier, string> = {
-  perfect: "Perfect",
-  great: "Great",
-  good: "Good",
-  relisten: "Re-listen"
-};
 
 const TIER_LINES: Record<RunTier, string> = {
   perfect: "Clean.",

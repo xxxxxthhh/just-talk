@@ -1,142 +1,78 @@
+import { useEffect, useRef, useState } from "react";
+
 import "../game/game.css";
 import { judge } from "../game/runModel";
-import { normalizedWord, scoreTone, scoreValue } from "../scoreUtils";
-import type { Attempt, RunItem, RunPrompt, RunState, WordCandidate } from "../types";
-import { latestValid, validAccuracy } from "./PracticeRun";
+import { latestValid, tierForAccuracy, validAccuracy } from "../game/scoring";
+import type {
+  Attempt,
+  RevisitEvidence,
+  RevisitSuggestion,
+  RunItem,
+  RunPrompt,
+  RunScoreView,
+  RunState,
+  WordCandidate
+} from "../types";
+import { RunMiniPlayer, useYouPlayer, type CoachPlayback, type YouPlayer, type YouTake } from "./RunMiniPlayer";
+import { formatRunScore, TIER_LABELS } from "./RunRing";
 
-// Matches the Challenge pass line: a phoneme or word under it counts as low.
-const LOW = 60;
-const BORDERLINE = 80;
-const MAX_ACTIONS = 3;
+// usePracticeRun still imports this from here until it reads game/scoring directly.
+export { runWeakWords } from "../game/scoring";
+
 const MAX_EVIDENCE = 3;
 
-// What a suggestion rests on: the word (and phoneme) score returned for one
-// attempt, so the review can show that score beside its recording.
-export type Evidence = {
-  item: RunItem;
-  attempt: Attempt;
-  word: string;
-  phoneme: string | null;
-  accuracy: number;
+const STAGE_LABELS: Record<RunPrompt["stage"], string> = {
+  warmup: "Warm-up",
+  focus: "Focus",
+  context: "In context"
 };
 
-export type ReviewAction = { id: "phoneme" | "low" | "borderline"; summary: string; evidence: Evidence[] };
-
-function latestWords(run: RunState) {
-  return run.items.flatMap((item) => {
-    const latest = latestValid(item);
-    if (!latest) return [];
-    return (latest.attempt.result?.words ?? [])
-      .filter((word) => normalizedWord(word.word))
-      .map((word) => ({ item, attempt: latest.attempt, word }));
-  });
-}
-
-// The weakest reading of each distinct word in [min, max), weakest first.
-function wordEvidence(run: RunState, min: number, max: number): Evidence[] {
-  const weakest = new Map<string, Evidence>();
-  for (const { item, attempt, word } of latestWords(run)) {
-    if (typeof word.accuracy !== "number" || word.accuracy < min || word.accuracy >= max) continue;
-    const key = normalizedWord(word.word);
-    const existing = weakest.get(key);
-    if (!existing || word.accuracy < existing.accuracy) {
-      weakest.set(key, { item, attempt, word: word.word.trim(), phoneme: null, accuracy: word.accuracy });
-    }
-  }
-  return [...weakest.values()].sort((left, right) => left.accuracy - right.accuracy);
-}
-
-function lowAndBorderline(run: RunState): [Evidence[], Evidence[]] {
-  const low = wordEvidence(run, -Infinity, LOW);
-  const lowKeys = new Set(low.map((evidence) => normalizedWord(evidence.word)));
-  const borderline = wordEvidence(run, LOW, BORDERLINE).filter(
-    (evidence) => !lowKeys.has(normalizedWord(evidence.word))
-  );
-  return [low, borderline];
-}
-
-// Words from this run worth warming up with next time, weakest first.
-export function runWeakWords(run: RunState): string[] {
-  return lowAndBorderline(run)
-    .flat()
-    .map((evidence) => normalizedWord(evidence.word));
-}
-
-// The low phoneme seen in the most distinct items (at least two), with the
-// weakest occurrence from each item.
-function repeatedLowPhoneme(run: RunState): { phoneme: string; evidence: Evidence[] } | null {
-  const byPhoneme = new Map<string, Map<string, Evidence>>();
-  for (const { item, attempt, word } of latestWords(run)) {
-    for (const phoneme of word.phonemes) {
-      if (typeof phoneme.accuracy !== "number" || phoneme.accuracy >= LOW) continue;
-      const perItem = byPhoneme.get(phoneme.phoneme) ?? new Map<string, Evidence>();
-      const existing = perItem.get(item.prompt.itemId);
-      if (!existing || phoneme.accuracy < existing.accuracy) {
-        perItem.set(item.prompt.itemId, {
-          item,
-          attempt,
-          word: word.word.trim(),
-          phoneme: phoneme.phoneme,
-          accuracy: phoneme.accuracy,
-        });
-      }
-      byPhoneme.set(phoneme.phoneme, perItem);
-    }
-  }
-  let best: { phoneme: string; evidence: Evidence[] } | null = null;
-  for (const [phoneme, perItem] of byPhoneme) {
-    if (perItem.size >= 2 && (!best || perItem.size > best.evidence.length)) {
-      best = { phoneme, evidence: [...perItem.values()].sort((left, right) => left.accuracy - right.accuracy) };
-    }
-  }
-  return best;
-}
-
-export function reviewActions(run: RunState): ReviewAction[] {
-  const actions: ReviewAction[] = [];
-  const phoneme = repeatedLowPhoneme(run);
-  if (phoneme) {
-    actions.push({
-      id: "phoneme",
-      summary: `The /${phoneme.phoneme}/ sound was low in ${phoneme.evidence.length} items.`,
-      evidence: phoneme.evidence,
-    });
-  }
-  const [low, borderline] = lowAndBorderline(run);
-  if (low.length) actions.push({ id: "low", summary: "Re-listen and repeat these words.", evidence: low });
-  if (borderline.length) actions.push({ id: "borderline", summary: "Almost there.", evidence: borderline });
-  return actions.slice(0, MAX_ACTIONS);
-}
-
-function itemStatus(item: RunItem, reached: boolean): string {
+function itemStatus(item: RunItem): string | null {
   const practiced = latestValid(item) !== null;
-  if (!reached) return "Not reached";
-  if (item.resolution === "skipped") return practiced ? "Practiced · rescue skipped" : "Skipped";
-  if (item.resolution === "pending") return practiced ? "Practiced · score pending" : "Score pending";
-  if (item.resolution === "unjudged") {
-    const reason = item.verdict === "cannot-confirm" ? "not confirmed" : "unscored";
-    return practiced ? `Practiced · ${reason}` : reason[0].toUpperCase() + reason.slice(1);
-  }
-  if (item.resolution === "open") return practiced ? "Practiced · unresolved" : "Unresolved";
-  return "Practiced";
+  if (item.resolution === "skipped") return practiced ? "Rescue skipped" : "Skipped";
+  if (item.resolution === "pending") return "Score pending";
+  if (item.resolution === "unjudged") return item.verdict === "cannot-confirm" ? "Not confirmed" : "Unscored";
+  if (item.resolution === "open") return "Unresolved";
+  if (item.verdict === "saved") return "Rescued · heart kept";
+  if (item.verdict === "heart-lost") return "Heart used";
+  return null;
 }
 
 function attemptLabel(attempt: Attempt): string {
   if (attempt.status === "pending") return "Score pending";
   if (!attempt.result) return "Unscored";
   const judgment = judge(attempt.result);
-  if (judgment.kind === "valid") return scoreValue(judgment.accuracy);
+  if (judgment.kind === "valid") return formatRunScore(judgment.accuracy);
   return judgment.kind === "no-match" ? "No speech heard" : "Unscored";
+}
+
+function takesOf(item: RunItem, urls: Readonly<Record<string, string>>): YouTake[] {
+  return item.attempts.map((attempt, index) => ({
+    attemptId: attempt.key.attemptId,
+    label: `Take ${index + 1} · ${attemptLabel(attempt)}`,
+    url: urls[attempt.key.attemptId] ?? null
+  }));
+}
+
+function outcomeLabel(run: RunState): string {
+  if (run.mode === "challenge") {
+    if (run.challengeOutcome === "cleared") return "Challenge cleared";
+    if (run.challengeOutcome === "failed") return "Out of hearts";
+    return "Challenge incomplete";
+  }
+  if (run.endReason === "completed") return "Route complete";
+  if (run.endReason === "quota") return "Usage limit reached";
+  return "Route ended early";
 }
 
 const CANDIDATE_LABELS: Record<WordCandidate["status"], string> = {
   processed: "sent to word bank",
   unconfirmed: "not confirmed",
-  "save-manually": "save manually",
+  "save-manually": "save manually"
 };
 
 function CandidateStatus({ attempt }: { attempt: Attempt }) {
-  if (attempt.sync === "not-needed" || attempt.sync === "done" && attempt.candidates.length === 0) return null;
+  if (attempt.sync === "not-needed" || (attempt.sync === "done" && attempt.candidates.length === 0)) return null;
   if (attempt.sync === "pending") return <p className="run-note">Checking words…</p>;
   return (
     <div className="run-candidates">
@@ -154,13 +90,167 @@ function CandidateStatus({ attempt }: { attempt: Attempt }) {
   );
 }
 
+// Every word score of a sentence reading, then the sentence's own score, each labelled as such.
+function WordChips({ attempt }: { attempt: Attempt }) {
+  const words = attempt.result?.words.filter((word) => typeof word.accuracy === "number") ?? [];
+  const sentence = validAccuracy(attempt);
+  if (words.length === 0) return null;
+  return (
+    <ul className="run-word-chips" aria-label="Word scores">
+      {words.map((word, index) => (
+        <li key={`${word.word}-${index}`} className="run-word-chip" data-tier={tierForAccuracy(word.accuracy) ?? undefined}>
+          {word.word} {formatRunScore(word.accuracy ?? 0)}
+        </li>
+      ))}
+      {sentence !== null ? <li className="run-word-chip is-sentence">sentence {formatRunScore(sentence)}</li> : null}
+    </ul>
+  );
+}
+
+function evidenceLabel(evidence: RevisitEvidence): string {
+  return evidence.phoneme ? `/${evidence.phoneme}/ in “${evidence.word}”` : evidence.word;
+}
+
+type Shared = {
+  player: YouPlayer;
+  coach: CoachPlayback;
+  attemptAudioUrls: Readonly<Record<string, string>>;
+  onPlayReference: (prompt: RunPrompt) => void;
+  onStopReference: () => void;
+};
+
+function SuggestionCard({ run, suggestion, shared }: { run: RunState; suggestion: RevisitSuggestion; shared: Shared }) {
+  // One block per recording: a take backs one set of evidence and one player, never two.
+  const groups = new Map<string, RevisitEvidence[]>();
+  for (const evidence of suggestion.evidence.slice(0, MAX_EVIDENCE)) {
+    groups.set(evidence.attemptId, [...(groups.get(evidence.attemptId) ?? []), evidence]);
+  }
+  return (
+    <li className="run-suggestion" id={`run-suggestion-${suggestion.id}`}>
+      <p className="run-suggestion-summary">{suggestion.summary}</p>
+      {[...groups.entries()].map(([attemptId, evidence]) => {
+        const item = run.items.find((candidate) => candidate.prompt.itemId === evidence[0].itemId);
+        const attempt = item?.attempts.find((candidate) => candidate.key.attemptId === attemptId);
+        if (!item || !attempt) return null;
+        const url = shared.attemptAudioUrls[attemptId] ?? null;
+        return (
+          <div key={attemptId} className="run-suggestion-take">
+            <ul className="run-evidence-v2">
+              {evidence.map((entry) => (
+                <li key={`${entry.word}-${entry.phoneme ?? ""}`}>
+                  <span className="run-evidence-word">{evidenceLabel(entry)}</span>
+                  <span className="run-evidence-score">
+                    <strong data-tier={tierForAccuracy(entry.accuracy) ?? undefined}>{formatRunScore(entry.accuracy)}</strong>
+                    <span>{entry.scoreSource === "phoneme" ? "sound score" : "word score"}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {item.prompt.kind === "sentence" ? (
+              <>
+                <p className="run-evidence-sentence">{item.prompt.text}</p>
+                <WordChips attempt={attempt} />
+              </>
+            ) : null}
+            <RunMiniPlayer
+              player={shared.player}
+              takes={[{ attemptId, label: attemptLabel(attempt), url }]}
+              subject={evidence[0].word}
+              coachPrompt={item.prompt}
+              coach={shared.coach}
+              onPlayCoach={shared.onPlayReference}
+              onStopCoach={shared.onStopReference}
+            />
+          </div>
+        );
+      })}
+    </li>
+  );
+}
+
+function ReadingRow({
+  item,
+  index,
+  score,
+  featured,
+  shared
+}: {
+  item: RunItem;
+  index: number;
+  score: RunScoreView;
+  featured: ReadonlyMap<string, string>;
+  shared: Shared;
+}) {
+  const itemScore = score.items[index];
+  const status = itemStatus(item);
+  const takes = takesOf(item, shared.attemptAudioUrls);
+  // A take already playable in a suggestion card links there instead of getting a second player.
+  const ownTakes = takes.filter((take) => !featured.has(take.attemptId));
+  const featuredIn = takes.map((take) => featured.get(take.attemptId)).find((id) => id !== undefined) ?? null;
+
+  return (
+    <li className="run-reading" id={`run-reading-${item.prompt.itemId}`}>
+      <div className="run-reading-head">
+        <span className="run-reading-stone" data-tier={itemScore?.tier ?? undefined} aria-hidden="true" />
+        <span className="run-reading-text">
+          <span className="run-reading-stage">{STAGE_LABELS[item.prompt.stage]}</span>
+          <span className="run-prompt-text">{item.prompt.text}</span>
+        </span>
+        {itemScore?.tier && itemScore.firstAccuracy !== null ? (
+          <span className="run-reading-score" data-tier={itemScore.tier}>
+            <span className="run-reading-tier">{TIER_LABELS[itemScore.tier]}</span>
+            <strong>{formatRunScore(itemScore.firstAccuracy)}</strong>
+          </span>
+        ) : null}
+      </div>
+      {status ? <p className="run-review-status">{status}</p> : null}
+      {item.attempts.length ? (
+        <ol className="run-review-takes" aria-label={`Takes of ${item.prompt.text}`}>
+          {item.attempts.map((attempt, attemptIndex) => (
+            <li key={attempt.key.attemptId} className="run-review-attempt">
+              <span className="run-review-take">Take {attemptIndex + 1}</span>{" "}
+              <strong className="run-review-score" data-tier={tierForAccuracy(validAccuracy(attempt)) ?? undefined}>
+                {attemptLabel(attempt)}
+              </strong>
+              <CandidateStatus attempt={attempt} />
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {featuredIn ? (
+        <button
+          type="button"
+          className="run-link-button"
+          onClick={() => document.getElementById(`run-suggestion-${featuredIn}`)?.scrollIntoView?.({ block: "start" })}
+        >
+          Listen in What to practice next
+        </button>
+      ) : null}
+      <RunMiniPlayer
+        compact
+        player={shared.player}
+        takes={ownTakes}
+        subject={item.prompt.text}
+        coachPrompt={item.prompt}
+        coach={shared.coach}
+        onPlayCoach={shared.onPlayReference}
+        onStopCoach={shared.onStopReference}
+      />
+    </li>
+  );
+}
+
 type RunReviewProps = {
   run: RunState;
-  // Object URLs for retained attempt recordings, owned by the run hook.
+  score: RunScoreView;
+  suggestions: readonly RevisitSuggestion[];
+  // Object URLs for retained attempt recordings, owned and released by the run hook.
   attemptAudioUrls: Readonly<Record<string, string>>;
+  coach: CoachPlayback;
   publicMode: boolean;
   drillsEnabled: boolean;
   onPlayReference: (prompt: RunPrompt) => void;
+  onStopReference: () => void;
   onPlayAgain: () => void;
   onGenerateDrill?: (phoneme: string) => void;
   onExit: () => void;
@@ -168,140 +258,152 @@ type RunReviewProps = {
 
 export function RunReview({
   run,
+  score,
+  suggestions,
   attemptAudioUrls,
+  coach,
   publicMode,
   drillsEnabled,
   onPlayReference,
+  onStopReference,
   onPlayAgain,
   onGenerateDrill,
-  onExit,
+  onExit
 }: RunReviewProps) {
-  const reached = (index: number) => index <= run.index;
-  const practiced = run.items.filter((item) => latestValid(item) !== null).length;
-  const skipped = run.items.filter((item) => item.resolution === "skipped").length;
-  const unresolved = run.items.filter(
-    (item, index) => reached(index) && item.resolution !== "resolved" && item.resolution !== "skipped"
-  ).length;
-  const unreached = run.items.length - (run.index + 1);
-  const actions = reviewActions(run);
-  const weakWords = runWeakWords(run);
+  const [player, playerElement] = useYouPlayer(coach, onStopReference);
+  const [showUnreached, setShowUnreached] = useState(false);
+  const shared: Shared = { player, coach, attemptAudioUrls, onPlayReference, onStopReference };
+
+  // Leaving the review stops the Coach too; the recording element stops itself.
+  const stopReference = useRef(onStopReference);
+  useEffect(() => {
+    stopReference.current = onStopReference;
+  }, [onStopReference]);
+  useEffect(() => () => stopReference.current(), []);
+
+  const featured = new Map<string, string>();
+  for (const suggestion of suggestions) {
+    for (const evidence of suggestion.evidence.slice(0, MAX_EVIDENCE)) {
+      if (!featured.has(evidence.attemptId)) featured.set(evidence.attemptId, suggestion.id);
+    }
+  }
+  const reached = run.items.slice(0, run.index + 1);
+  const unreached = run.items.slice(run.index + 1);
   const drillPhoneme =
-    repeatedLowPhoneme(run)?.phoneme ??
+    suggestions.find((suggestion) => suggestion.id === "phoneme")?.evidence[0]?.phoneme ??
     run.items.find((item) => item.prompt.stage === "focus")?.prompt.targetPhoneme ??
     null;
+  const focus = run.items.find((item) => item.prompt.stage === "focus")?.prompt.targetPhoneme ?? null;
+  const subline = [
+    outcomeLabel(run),
+    run.hearts !== null ? `${run.hearts} of 2 hearts left` : null,
+    `chain ${score.longestChain}/${run.items.length}`
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const leave = (handler: () => void) => () => {
+    player.stop();
+    onStopReference();
+    handler();
+  };
+
+  const jumpTo = (itemId: string, index: number) => {
+    if (index > run.index) setShowUnreached(true);
+    // After the unreached group opens, so its rows exist.
+    setTimeout(() => document.getElementById(`run-reading-${itemId}`)?.scrollIntoView?.({ block: "start" }), 0);
+  };
 
   return (
     <section className="run run-review" aria-label="Run review">
-      <header className="run-review-header">
-        <h2>{run.mode === "challenge" ? "Challenge review" : "Route review"}</h2>
-        {run.mode === "challenge" && run.challengeOutcome ? (
-          <p>
-            {run.challengeOutcome === "cleared"
-              ? "Cleared"
-              : run.challengeOutcome === "failed"
-                ? "Out of hearts"
-                : "Incomplete"}
-            {run.hearts !== null ? ` · ${run.hearts} of 2 hearts left` : ""}
-          </p>
-        ) : null}
-        {run.endReason === "quota" ? <p>Trial usage ran out for today. Your results so far are kept.</p> : null}
-        <ul className="run-review-stats">
-          <li>
-            Practiced {practiced} of {run.items.length}
-          </li>
-          {skipped ? <li>Skipped {skipped}</li> : null}
-          {unresolved ? <li>Unresolved {unresolved}</li> : null}
-          {unreached > 0 ? <li>Not reached {unreached}</li> : null}
-        </ul>
+      <header className="run-review-bar">
+        <span className="run-review-rating" data-rating={score.rated && score.rating ? score.rating : "none"}>
+          {score.rated && score.rating ? score.rating : "–"}
+        </span>
+        <span className="run-review-headline">
+          <h2>
+            {score.points} <span className="run-review-of">/ 1000{focus ? ` · /${focus}/` : ""}</span>
+          </h2>
+          <span className="run-review-sub">{subline}</span>
+          {!score.rated ? (
+            <span className="run-review-sub">{score.unratedReason ? `Not rated · ${score.unratedReason}` : "Not rated"}</span>
+          ) : null}
+        </span>
+        <nav className="run-review-stones" aria-label="Jump to item">
+          {run.items.map((item, index) => (
+            <button
+              key={item.prompt.itemId}
+              type="button"
+              className="run-review-stone"
+              data-tier={score.items[index]?.tier ?? undefined}
+              aria-label={`Go to ${index + 1}. ${item.prompt.text}`}
+              onClick={() => jumpTo(item.prompt.itemId, index)}
+            />
+          ))}
+        </nav>
       </header>
 
-      {actions.length ? (
-        <ol className="run-review-actions" aria-label="What to practice next">
-          {actions.map((action) => (
-            <li key={action.id}>
-              <p>{action.summary}</p>
-              <ul className="run-evidence">
-                {action.evidence.slice(0, MAX_EVIDENCE).map((evidence) => {
-                  const url = attemptAudioUrls[evidence.attempt.key.attemptId];
-                  const label = evidence.phoneme
-                    ? `/${evidence.phoneme}/ in “${evidence.word}”`
-                    : `“${evidence.word}”`;
-                  return (
-                    <li key={`${evidence.attempt.key.attemptId}-${evidence.word}-${evidence.phoneme ?? ""}`}>
-                      <span>{label}</span>
-                      <strong className={`run-review-score ${scoreTone(evidence.accuracy)}`}>
-                        {scoreValue(evidence.accuracy)}
-                      </strong>
-                      {evidence.item.prompt.kind === "sentence" ? (
-                        <span className="run-note">{evidence.item.prompt.text}</span>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="m-small-button"
-                        onClick={() => onPlayReference(evidence.item.prompt)}
-                      >
-                        Hear it
-                      </button>
-                      {url ? (
-                        <audio controls preload="none" src={url} aria-label={`Your recording for ${label}`} />
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
-            </li>
-          ))}
-        </ol>
-      ) : null}
+      <div className="run-review-body">
+        {run.endReason === "quota" ? (
+          <p className="run-note">Trial usage ran out for today. Your results so far are kept.</p>
+        ) : null}
 
-      <ol className="run-review-items">
-        {run.items.map((item, index) => (
-          <li key={item.prompt.itemId} className="run-review-item">
-            <div className="run-review-item-head">
-              <span className="run-stage">{item.prompt.stage}</span>
-              <p className="run-prompt-text">{item.prompt.text}</p>
-              <span className="run-review-status">{itemStatus(item, reached(index))}</span>
-              <button type="button" className="m-small-button" onClick={() => onPlayReference(item.prompt)}>
-                Hear it
-              </button>
-            </div>
-            {item.attempts.map((attempt, attemptIndex) => {
-              const url = attemptAudioUrls[attempt.key.attemptId];
-              return (
-                <div key={attempt.key.attemptId} className="run-review-attempt">
-                  <strong className={`run-review-score ${scoreTone(validAccuracy(attempt))}`}>
-                    {attemptLabel(attempt)}
-                  </strong>
-                  {url ? (
-                    <audio
-                      controls
-                      preload="none"
-                      src={url}
-                      aria-label={`Your recording ${attemptIndex + 1} of “${item.prompt.text}”`}
-                    />
-                  ) : null}
-                  <CandidateStatus attempt={attempt} />
-                </div>
-              );
-            })}
-          </li>
-        ))}
-      </ol>
+        {suggestions.length ? (
+          <section className="run-review-section">
+            <h3 className="run-review-heading">What to practice next</h3>
+            <ol className="run-suggestions" aria-label="What to practice next">
+              {suggestions.map((suggestion) => (
+                <SuggestionCard key={suggestion.id} run={run} suggestion={suggestion} shared={shared} />
+              ))}
+            </ol>
+          </section>
+        ) : null}
 
-      <div className="run-actions">
-        <button type="button" className="run-primary" onClick={onPlayAgain}>
-          Play again
-        </button>
+        <section className="run-review-section">
+          <h3 className="run-review-heading">All readings</h3>
+          <ol className="run-reading-list" aria-label="All readings">
+            {reached.map((item, index) => (
+              <ReadingRow key={item.prompt.itemId} item={item} index={index} score={score} featured={featured} shared={shared} />
+            ))}
+          </ol>
+          {unreached.length ? (
+            <details
+              className="run-review-unreached"
+              open={showUnreached}
+              onToggle={(event) => setShowUnreached(event.currentTarget.open)}
+            >
+              <summary>Not reached · {unreached.length}</summary>
+              <ol className="run-reading-list">
+                {unreached.map((item) => (
+                  <li key={item.prompt.itemId} className="run-reading is-unreached" id={`run-reading-${item.prompt.itemId}`}>
+                    <span className="run-reading-stage">{STAGE_LABELS[item.prompt.stage]}</span>
+                    <span className="run-prompt-text">{item.prompt.text}</span>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          ) : null}
+        </section>
+      </div>
+
+      <footer className="run-review-actions-v2">
         {drillsEnabled && !publicMode && onGenerateDrill && drillPhoneme ? (
-          <button type="button" className="m-small-button" onClick={() => onGenerateDrill(drillPhoneme)}>
+          <button type="button" className="run-secondary" onClick={leave(() => onGenerateDrill(drillPhoneme))}>
             Generate a drill for /{drillPhoneme}/
           </button>
         ) : null}
-        <button type="button" className="m-small-button" onClick={onExit}>
-          Done
-        </button>
-      </div>
-      {weakWords.length ? <p className="run-note">Lowest words this run: {weakWords.slice(0, 2).join(", ")}</p> : null}
+        <div className="run-summary-buttons">
+          <button type="button" className="run-secondary-v2" onClick={leave(onExit)}>
+            Done
+          </button>
+          <button type="button" className="run-primary-v2" onClick={leave(onPlayAgain)}>
+            Play again
+          </button>
+        </div>
+      </footer>
+
+      {/* The one element that plays every recording in the review. */}
+      {playerElement}
     </section>
   );
 }

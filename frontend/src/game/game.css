@@ -6,159 +6,25 @@
   color: var(--text-main);
 }
 
-.run-stage,
 .run-note {
-  color: var(--text-muted);
+  margin: 0;
+  color: var(--g-text-muted);
   font-size: 12px;
-}
-
-.run-stage {
-  font-weight: 700;
-  text-transform: capitalize;
 }
 
 .run-prompt-text {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 22px;
+  font-size: 16px;
   font-weight: 700;
   overflow-wrap: anywhere;
 }
 
-.run-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.run-primary {
-  min-height: 48px;
-  padding: 0 20px;
-  border: none;
-  border-radius: 999px;
-  background: var(--accent-color);
-  color: #fff;
-  font-weight: 700;
-}
-
-.run-primary:disabled {
-  opacity: 0.45;
-}
-
-.run-review-header h2 {
-  margin: 0;
-  font-family: var(--font-display);
-}
-
-.run-review {
-  overflow-y: auto;
-}
-
-.run-review-header p {
-  margin: 4px 0;
-}
-
-.run-review-stats,
-.run-review-items {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.run-review-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.run-review-actions {
-  margin: 0;
-  padding-left: 20px;
-}
-
-.run-review-items {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.run-review-item {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--border-card);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-}
-
-.run-review-item-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 10px;
-}
-
-.run-review-item-head .run-prompt-text {
-  flex: 1 1 100%;
-  font-size: 16px;
-}
-
-.run-review-status {
-  flex: 1;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.run-review-attempt {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.run-review-attempt audio {
-  max-width: 100%;
-  height: 32px;
-}
-
-.run-review-score { min-width: 3ch; }
-.run-review-score.good { color: var(--color-good); }
-.run-review-score.watch { color: var(--color-watch); }
-.run-review-score.needs-work { color: var(--color-needs-work); }
-
 .run-candidates ul {
   margin: 0;
   padding-left: 18px;
+  color: var(--g-text-soft);
   font-size: 13px;
-}
-
-.run-review-actions > li > p {
-  margin: 0 0 4px;
-}
-
-.run-evidence {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0 0 10px;
-  padding: 0;
-  list-style: none;
-}
-
-.run-evidence li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 10px;
-}
-
-.run-evidence audio {
-  max-width: 100%;
-  height: 32px;
 }
 
 /* ---- Game Mode v2: tokens ----
@@ -1224,4 +1090,440 @@
   .run-prompt-v2.is-sentence { font-size: 22px; }
   .run-next-v2 { padding: 8px 12px; }
   .run-thumb { gap: 6px; }
+}
+
+/* ---- Review ----
+   A compact score bar, then suggestions and every reading over one shared recording player. */
+
+.run.run-review {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 0;
+  padding: 0;
+  background: var(--g-bg);
+  color: var(--g-text);
+  font-family: var(--font-body);
+}
+
+.run-review-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px var(--g-gutter) 14px;
+  border-bottom: 1px solid var(--g-line);
+}
+
+.run-review-rating {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border: 3px solid var(--g-tier);
+  border-radius: 50%;
+  color: var(--g-tier);
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.run-review-headline {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.run-review-headline h2 {
+  margin: 0;
+  color: var(--g-text);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.run-review-of,
+.run-review-sub {
+  color: var(--g-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.run-review-stones {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 120px;
+}
+
+.run-review-stone {
+  position: relative;
+  width: 20px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.run-review-stone::before {
+  content: "";
+  position: absolute;
+  inset: 16px 4px;
+  border: 2px solid var(--g-stone-empty);
+  border-radius: 3px;
+  transform: rotate(45deg);
+}
+
+.run-review-stone[data-tier]::before {
+  border-color: var(--g-tier);
+  background: var(--g-tier);
+}
+
+.run-review-body {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px var(--g-gutter) 12px;
+  overflow-y: auto;
+}
+
+.run-review-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.run-review-heading {
+  margin: 0;
+  color: var(--g-accent-hi);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.run-suggestions,
+.run-reading-list,
+.run-evidence-v2,
+.run-word-chips,
+.run-review-takes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.run-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.run-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(251, 146, 60, 0.3);
+  border-radius: var(--g-radius-button);
+  background: rgba(251, 146, 60, 0.08);
+}
+
+.run-suggestion-summary {
+  margin: 0;
+  color: var(--g-text-soft);
+  font-size: 13px;
+}
+
+.run-suggestion-take {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.run-suggestion-take + .run-suggestion-take {
+  padding-top: 12px;
+  border-top: 1px solid var(--g-line);
+}
+
+.run-evidence-v2 li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.run-evidence-word {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.run-evidence-score {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: var(--g-text-muted);
+  font-size: 11px;
+}
+
+.run-evidence-score strong {
+  color: var(--g-tier-hi);
+  font-family: var(--font-display);
+  font-size: 22px;
+}
+
+.run-evidence-sentence {
+  margin: 0;
+  color: var(--g-text-muted);
+  font-size: 12px;
+}
+
+.run-word-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.run-word-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--g-tier-hi);
+  font-size: 12px;
+}
+
+.run-word-chip[data-tier="relisten"] {
+  background: rgba(242, 131, 107, 0.18);
+  font-weight: 600;
+}
+
+.run-word-chip.is-sentence {
+  color: var(--g-text-muted);
+}
+
+.run-mini-player {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.run-take-picker {
+  display: flex;
+  gap: 6px;
+}
+
+.run-take {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--g-line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--g-text-muted);
+  font-size: 12px;
+}
+
+.run-take[aria-pressed="true"] {
+  border-color: var(--g-accent);
+  color: var(--g-text);
+}
+
+.run-mini-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.run-mini-button {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 1px solid var(--g-line-strong);
+  border-radius: var(--g-radius-card);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--g-text);
+  text-align: left;
+}
+
+.run-mini-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--g-accent);
+  border-radius: 50%;
+  color: var(--g-accent);
+  font-size: 11px;
+}
+
+.run-mini-button.is-you .run-mini-icon {
+  background: var(--g-accent);
+  color: var(--g-on-accent);
+}
+
+.run-mini-button.is-playing {
+  border-color: var(--g-accent);
+}
+
+.run-mini-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.run-mini-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.run-mini-meta {
+  color: var(--g-text-muted);
+  font-size: 11px;
+}
+
+.run-mini-player.is-compact .run-mini-buttons {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.run-mini-player.is-compact .run-mini-button {
+  min-height: 44px;
+  padding: 0 10px;
+}
+
+.run-mini-error {
+  margin: 0;
+  color: var(--g-relisten-hi);
+  font-size: 12px;
+}
+
+.run-reading-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--g-line);
+  border-radius: var(--g-radius-tile);
+  overflow: hidden;
+}
+
+.run-reading {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+}
+
+.run-reading + .run-reading {
+  border-top: 1px solid rgba(255, 240, 220, 0.06);
+}
+
+.run-reading-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.run-reading-stone {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--g-stone-empty);
+  border-radius: 3px;
+  transform: rotate(45deg);
+}
+
+.run-reading-stone[data-tier] {
+  border-color: var(--g-tier);
+  background: var(--g-tier);
+}
+
+.run-reading-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.run-reading-stage {
+  color: var(--g-text-muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.run-reading-score {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.run-reading-tier {
+  color: var(--g-tier-hi);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.run-reading-score strong {
+  font-family: var(--font-display);
+}
+
+.run-review-status {
+  margin: 0;
+  color: var(--g-text-muted);
+  font-size: 12px;
+}
+
+.run-review-takes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.run-review-attempt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--g-text-muted);
+  font-size: 12px;
+}
+
+.run-review-score {
+  color: var(--g-text);
+  font-family: var(--font-display);
+}
+
+.run-review-score[data-tier] {
+  color: var(--g-tier-hi);
+}
+
+.run-review-unreached summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--g-text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.run-reading.is-unreached {
+  color: var(--g-text-muted);
+}
+
+.run-review-actions-v2 {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px var(--g-gutter) calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(27, 21, 17, 0) 0%, #1f1813 30%);
 }

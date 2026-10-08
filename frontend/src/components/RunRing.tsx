@@ -30,7 +30,7 @@ export const RING_STOP_GUARD_MS = 400;
 export const SCORE_ROLL_MS = 450;
 const ROLL_FROM = 60;
 
-const TIER_LABELS: Record<RunTier, string> = {
+export const TIER_LABELS: Record<RunTier, string> = {
   perfect: "Perfect",
   great: "Great",
   good: "Good",

@@ -198,7 +198,11 @@ export default function PracticeScreen({ session, run }: PracticeScreenProps) {
         {run.state.phase === "review" ? (
           <RunReview
             run={run.state}
+            score={run.score ?? selectRunScore(run.state)}
+            suggestions={run.suggestions}
             attemptAudioUrls={run.attemptAudioUrls}
+            coach={run.reference}
+            onStopReference={run.stopReference}
             publicMode={PUBLIC_MODE}
             drillsEnabled={Boolean(session.health?.passage_check_configured)}
             onPlayReference={run.playReference}

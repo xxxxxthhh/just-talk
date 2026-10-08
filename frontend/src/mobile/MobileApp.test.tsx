@@ -306,9 +306,18 @@ async function quitRun(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("button", { name: "Quit run" }));
 }
 
+// Takes shorter than the manual minimum are rejected locally, so each take lasts 600 ms on the
+// capture's monotonic clock.
 async function recordAndStop(user: ReturnType<typeof userEvent.setup>, recordName = "Record") {
   await user.click(screen.getByRole("button", { name: recordName }));
-  await user.click(await screen.findByRole("button", { name: "Stop" }));
+  const stop = await screen.findByRole("button", { name: "Stop" });
+  const now = performance.now();
+  const clock = vi.spyOn(performance, "now").mockReturnValue(now + 600);
+  try {
+    await user.click(stop);
+  } finally {
+    clock.mockRestore();
+  }
 }
 
 describe("MobileApp game run", () => {
@@ -597,8 +606,9 @@ describe("MobileApp game run", () => {
     }
     await waitFor(() => expect(screen.getByRole("button", { name: "Finish" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Finish" }));
-    expect(await screen.findByRole("heading", { name: "Route review" })).toBeInTheDocument();
-    expect(screen.getByText("Practiced 6 of 6")).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Run review" })).toBeInTheDocument();
+    expect(screen.getByText(/^Route complete · chain \d\/6$/)).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "All readings" }).children).toHaveLength(6);
     expect(scored).toEqual(STARTER_TEXTS);
 
     await user.click(screen.getByRole("button", { name: "Play again" }));
@@ -618,7 +628,7 @@ describe("MobileApp game run", () => {
     await quitRun(user);
     expect(await screen.findByRole("heading", { name: "Challenge incomplete" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "See review" }));
-    const pendingItem = (await screen.findByText("thin", { selector: ".run-review-item .run-prompt-text" })).closest("li");
+    const pendingItem = (await screen.findByText("thin", { selector: ".run-reading .run-prompt-text" })).closest("li");
     expect(within(pendingItem as HTMLElement).getByText("Score pending", { selector: ".run-review-status" })).toBeInTheDocument();
     expect(scored).toHaveLength(8);
   });
