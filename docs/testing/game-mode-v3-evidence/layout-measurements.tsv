@@ -39,14 +39,14 @@ entry-v2-baseline	844	390	844	false	-	-	Auto-stop on(114x32); Sound on(94x32)	0	
 entry-v2-baseline	667	390	667	false	-	-	Auto-stop on(114x32); Sound on(94x32)	0	0	-	497	-
 entry-v2-baseline	320	320	568	false	-	-	Auto-stop on(114x32); Sound on(94x32)	0	7	-	529	-
 entry-v2-baseline	zoom130	300	649	false	-	-	Auto-stop on(114x32); Sound on(94x32)	0	0	-	529	-
-review-route12	844	390	844	false	-	-	Go to 1. thin(20x44); Go to 2. thick(20x44); Go to 3. thumb(20x44); Go to 4. thing(20x44); Go to 5. think(20x44); Go to 6. thank(20x44); Go to 7. three(20x44); Go to 8. teeth(20x44); Go to 9. I think we can walk home now.(20x44); Go to 10. The narrow path leads to our house.(20x44); Go to 11. We bought three tickets for the show.(20x44); Go to 12. Both cups of tea are still hot.(20x44)	0	1529	-	-	-
-review-route12	667	390	667	false	-	-	Go to 1. thin(20x44); Go to 2. thick(20x44); Go to 3. thumb(20x44); Go to 4. thing(20x44); Go to 5. think(20x44); Go to 6. thank(20x44); Go to 7. three(20x44); Go to 8. teeth(20x44); Go to 9. I think we can walk home now.(20x44); Go to 10. The narrow path leads to our house.(20x44); Go to 11. We bought three tickets for the show.(20x44); Go to 12. Both cups of tea are still hot.(20x44)	0	1706	-	-	-
-review-route12	320	320	568	false	-	-	Go to 1. thin(20x44); Go to 2. thick(20x44); Go to 3. thumb(20x44); Go to 4. thing(20x44); Go to 5. think(20x44); Go to 6. thank(20x44); Go to 7. three(20x44); Go to 8. teeth(20x44); Go to 9. I think we can walk home now.(20x44); Go to 10. The narrow path leads to our house.(20x44); Go to 11. We bought three tickets for the show.(20x44); Go to 12. Both cups of tea are still hot.(20x44)	0	1846	-	-	-
-review-route12	zoom130	300	649	false	-	-	Go to 1. thin(20x44); Go to 2. thick(20x44); Go to 3. thumb(20x44); Go to 4. thing(20x44); Go to 5. think(20x44); Go to 6. thank(20x44); Go to 7. three(20x44); Go to 8. teeth(20x44); Go to 9. I think we can walk home now.(20x44); Go to 10. The narrow path leads to our house.(20x44); Go to 11. We bought three tickets for the show.(20x44); Go to 12. Both cups of tea are still hot.(20x44)	0	1801	-	-	-
-review-target85	844	390	844	false	-	-	Go to 1. thin(20x44); Go to 2. thick(20x44); Go to 3. think(20x44); Go to 4. thank(20x44); Go to 5. I think we can walk home now.(20x44); Go to 6. The narrow path leads to our house.(20x44)	0	224	-	-	-
-review-target85	667	390	667	false	-	-	Go to 1. thin(20x44); Go to 2. thick(20x44); Go to 3. think(20x44); Go to 4. thank(20x44); Go to 5. I think we can walk home now.(20x44); Go to 6. The narrow path leads to our house.(20x44)	0	401	-	-	-
-review-target85	320	320	568	false	-	-	Go to 1. thin(20x44); Go to 2. thick(20x44); Go to 3. think(20x44); Go to 4. thank(20x44); Go to 5. I think we can walk home now.(20x44); Go to 6. The narrow path leads to our house.(20x44)	0	589	-	-	-
-review-target85	zoom130	300	649	false	-	-	Go to 1. thin(20x44); Go to 2. thick(20x44); Go to 3. think(20x44); Go to 4. thank(20x44); Go to 5. I think we can walk home now.(20x44); Go to 6. The narrow path leads to our house.(20x44)	0	523	-	-	-
+review-route12	844	390	844	false	-	-	-	0	1583	-	-	-
+review-route12	667	390	667	false	-	-	-	0	1760	-	-	-
+review-route12	320	320	568	false	-	-	-	0	1895	-	-	-
+review-route12	zoom130	300	649	false	-	-	-	0	1850	-	-	-
+review-target85	844	390	844	false	-	-	-	0	267	-	-	-
+review-target85	667	390	667	false	-	-	-	0	444	-	-	-
+review-target85	320	320	568	false	-	-	-	0	586	-	-	-
+review-target85	zoom130	300	649	false	-	-	-	0	505	-	-	-
 route12-feedback-b	844	390	844	false	-	-	-	0	0	false	-	200
 route12-feedback-b	667	390	667	false	-	-	-	0	33	false	-	173
 route12-feedback-b	320	320	568	false	-	-	-	0	99	false	-	148
