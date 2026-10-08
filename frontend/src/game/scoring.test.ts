@@ -3,26 +3,45 @@ import { describe, expect, it } from "vitest";
 import { configForChoice } from "./runConfig";
 import { nextCapture, runReducer } from "./runModel";
 import {
+  ratingForPoints,
   runWeakWords,
+  selectPractisedCount,
   selectReviewSuggestions,
   selectRunScore,
   selectTopRevisit,
   tierForAccuracy
 } from "./scoring";
-import type { AttemptKey, PhonemeResult, RunAction, RunMode, RunPrompt, RunState, ScoreResponse, WordResult } from "../types";
+import type {
+  AttemptKey,
+  PhonemeResult,
+  RunAction,
+  RunConfig,
+  RunMode,
+  RunPrompt,
+  RunState,
+  ScoreResponse,
+  WordResult
+} from "../types";
 
 const RUN = "run-1";
 
-function prompts(): RunPrompt[] {
-  return Array.from({ length: 6 }, (_, i) => ({
-    itemId: `item-${i}`,
-    stage: i < 2 ? "warmup" : i < 4 ? "focus" : "context",
-    kind: i < 4 ? "word" : "sentence",
-    text: i < 4 ? `word${i}` : `a short sentence number ${i}`,
-    targetPhoneme: "θ",
-    targetWord: `word${i}`,
-    source: "starter"
-  }));
+const ROUTE_12 = configForChoice({ selection: "route", routeLength: 12 });
+const TARGET_85 = configForChoice({ selection: "target85", routeLength: 6 });
+
+function prompts(length = 6): RunPrompt[] {
+  const perStage = length / 3;
+  return Array.from({ length }, (_, i) => {
+    const sentence = i >= 2 * perStage;
+    return {
+      itemId: `item-${i}`,
+      stage: i < perStage ? "warmup" : sentence ? "context" : "focus",
+      kind: sentence ? "sentence" : "word",
+      text: sentence ? `a short sentence number ${i}` : `word${i}`,
+      targetPhoneme: "θ",
+      targetWord: `word${i}`,
+      source: "starter"
+    };
+  });
 }
 
 function phoneme(symbol: string, accuracy: number): PhonemeResult {
@@ -52,9 +71,10 @@ function reduce(state: RunState | null, ...actions: RunAction[]): RunState {
   return next;
 }
 
-function start(mode: RunMode): RunState {
-  const config = configForChoice({ selection: mode === "route" ? "route" : "target60", routeLength: 6 });
-  return reduce(null, { type: "START", runId: RUN, config, prompts: prompts() });
+function start(choice: RunMode | RunConfig): RunState {
+  const config =
+    typeof choice === "string" ? configForChoice({ selection: choice === "route" ? "route" : "target60", routeLength: 6 }) : choice;
+  return reduce(null, { type: "START", runId: RUN, config, prompts: prompts(config.length) });
 }
 
 function itemId(state: RunState): string {
@@ -112,7 +132,7 @@ describe("run scoring", () => {
     expect(tierForAccuracy(Number.NaN)).toBeNull();
   });
 
-  it("design_examples_score_861_930_904_978_955_865_540", () => {
+  it("v2_examples_861_930_904_978_955_865_540_unchanged", () => {
     const examples: [number[], number, string][] = [
       [[100, 80, 95, 92, 86, 94], 861, "A"],
       [[100, 86, 95, 92, 86, 94], 930, "A"],
@@ -238,6 +258,102 @@ describe("run scoring", () => {
     // 150 + 142.5 + 6.67 = 299.17: rounding each item first would give 300, re-normalizing far more.
     expect(score.points).toBe(299);
     expect(score.items.slice(2).every((item) => item.basePoints === 0 && item.chainPoints === 0)).toBe(true);
+  });
+
+  it("n12_examples_1000_955_865_540_972_927_450_822", () => {
+    const route12 = (readings: readonly number[]) => route(readings, start(ROUTE_12));
+    const rated: [number[], number, string, boolean][] = [
+      [Array(12).fill(100), 1000, "S", true],
+      [Array(12).fill(95), 955, "S", true],
+      [Array(12).fill(85), 865, "A", true],
+      [Array(12).fill(60), 540, "C", false],
+      // Σq = 1184.9 and 55 of 66 chain steps: 972.008, but the broken chain keeps it at A.
+      [[...Array(11).fill(100), 84.9], 972, "A", false],
+      [[...Array(5).fill(100), 84.9, ...Array(6).fill(100)], 927, "A", false]
+    ];
+    for (const [readings, points, rating, fullCombo] of rated) {
+      const state = route12(readings);
+      expect(state.endReason).toBe("completed");
+      expect(selectRunScore(state)).toMatchObject({ points, rating, fullCombo, rated: true, unratedReason: null });
+    }
+    expect(selectRunScore(route12(Array(12).fill(100))).longestChain).toBe(12);
+
+    // Six 95, then the run ends: the six missing slots still count in N.
+    const quit = reduce(route12(Array(6).fill(95)), { type: "QUIT", runId: RUN });
+    expect(selectRunScore(quit)).toMatchObject({ points: 450, rated: false, rating: null, fullCombo: false });
+
+    // Five 95, a skipped slot, six 95: completed with a gap, so not rated.
+    let gap = route12(Array(5).fill(95));
+    gap = route(Array(6).fill(95), reduce(gap, { type: "SKIP", runId: RUN, itemId: itemId(gap) }));
+    expect(gap.endReason).toBe("completed");
+    expect(selectRunScore(gap)).toMatchObject({
+      points: 822,
+      rated: false,
+      rating: null,
+      unratedReason: "Not every item scored",
+      fullCombo: false
+    });
+  });
+
+  it("s_requires_full_combo", () => {
+    expect(ratingForPoints(972, false)).toBe("A");
+    expect(ratingForPoints(972, true)).toBe("S");
+    expect(ratingForPoints(950, false)).toBe("A");
+    expect(ratingForPoints(950, true)).toBe("S");
+    expect(ratingForPoints(949, true)).toBe("A");
+    expect(ratingForPoints(850, false)).toBe("A");
+    expect(ratingForPoints(849, true)).toBe("B");
+    expect(ratingForPoints(700, false)).toBe("B");
+    expect(ratingForPoints(699, true)).toBe("C");
+    // N=6 cannot reach 950 with a broken chain, so six-item ratings are unchanged.
+    expect(selectRunScore(route([100, 100, 100, 100, 100, 84.9]))).toMatchObject({ points: 944, rating: "A" });
+  });
+
+  it("partial_run_uses_config_length_and_rounds_once", () => {
+    // N=12: 0.75 × 195 + 100 × 1/66 = 147.77; dividing by the two readings instead would inflate it.
+    const quit = reduce(route([100, 95], start(ROUTE_12)), { type: "QUIT", runId: RUN });
+    const score = selectRunScore(quit);
+    expect(score.points).toBe(148);
+    expect(score.items).toHaveLength(12);
+    expect(score.items[0]).toMatchObject({ basePoints: 75, chainPoints: 0 });
+    expect(score.items[1].chainPoints).toBeCloseTo(100 / 66, 10);
+    expect(score.items.slice(2).every((item) => item.basePoints === 0 && item.chainPoints === 0)).toBe(true);
+    // A .5 total rounds up once: 0.75 × 122 = 91.5.
+    expect(selectRunScore(reduce(route([61, 61], start(ROUTE_12)), { type: "QUIT", runId: RUN })).points).toBe(92);
+  });
+
+  it("rescue_changes_neither_q_nor_chain", () => {
+    // Target 85: 80 → 88 keeps the heart, but the stone, points and chain use the 80.
+    let state = play(start(TARGET_85), scored(80));
+    state = advance(play(loadReference(state), scored(88)));
+    expect(state.items[0].verdict).toBe("saved");
+    state = route([95, 95, 95, 95, 95], state);
+    expect(state.challengeOutcome).toBe("cleared");
+    const score = selectRunScore(state);
+    expect(score.items[0]).toMatchObject({ firstAccuracy: 80, tier: "good", chain: 0, basePoints: 120 });
+    // 1.5 × (80 + 475) + 100/15 × (0+0+1+2+3+4) = 832.5 + 66.67
+    expect(score).toMatchObject({ points: 899, rating: "A", rated: true, longestChain: 5, fullCombo: false });
+  });
+
+  it("practised_counts_valid_items_once", () => {
+    let state = start("route");
+    expect(selectPractisedCount(state)).toBe(0);
+    // An unjudged take then a valid one: one practised item, not two.
+    state = advance(play(play(state, noMatch), scored(90)));
+    expect(selectPractisedCount(state)).toBe(1);
+    state = reduce(state, { type: "SKIP", runId: RUN, itemId: itemId(state) });
+    const [sent, key] = send(state);
+    state = advance(reduce(sent, { type: "SCORE_FAILED", key, failure: { kind: "unknown", message: "502" } }));
+    expect(selectPractisedCount(state)).toBe(1);
+    state = advance(play(state, noMatch));
+    expect(selectPractisedCount(state)).toBe(1);
+    state = route([70, 95], state);
+    expect(state.endReason).toBe("completed");
+    expect(selectPractisedCount(state)).toBe(3);
+
+    // A rescued item counts once.
+    const rescued = play(loadReference(play(start(TARGET_85), scored(80))), scored(88));
+    expect(selectPractisedCount(rescued)).toBe(1);
   });
 
   it("suggestions_are_deduplicated_and_label_score_source", () => {

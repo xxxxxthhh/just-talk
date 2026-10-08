@@ -13,15 +13,15 @@ import type {
 } from "../types";
 import { judge, PASS_ACCURACY } from "./runModel";
 
-// Game facts derived from RunState. Nothing here costs a heart: hearts stay on the reducer's 60 line.
+// Game facts derived from RunState. Nothing here costs a heart: hearts follow the reducer's run target.
 
 // Bumped when tiers, points or ratings change, so personal bests never compare across rules.
 export const RUN_RULES_VERSION = 1;
 export const PERFECT_ACCURACY = 95;
 export const GREAT_ACCURACY = 85;
-const BASE_PER_POINT = 1.5;
+// Full marks: 900 base (100 on every planned item) plus 100 for an unbroken chain.
+const BASE_TOTAL = 900;
 const CHAIN_BONUS = 100;
-const CHAIN_STEPS = 15;
 const BORDERLINE = 80;
 const MAX_SUGGESTIONS = 3;
 
@@ -34,8 +34,9 @@ export function tierForAccuracy(accuracy: number | null): RunTier | null {
   return "relisten";
 }
 
-export function ratingForPoints(points: number): RunRating {
-  if (points >= 950) return "S";
+// S also needs every first reading at Great or better; 950 with a broken chain is A.
+export function ratingForPoints(points: number, fullCombo: boolean): RunRating {
+  if (points >= 950 && fullCombo) return "S";
   if (points >= 850) return "A";
   if (points >= 700) return "B";
   return "C";
@@ -73,10 +74,14 @@ function unratedReason(run: RunState, complete: boolean): string {
   return complete ? "Incomplete" : "Not every item scored";
 }
 
-// Points are 1.5 × each first reading plus 100/15 per chain step past the first, rounded once over the
-// whole run. Missing slots add nothing, so a partial run is never re-normalized. While the run is live,
+// For planned length N: (9/N) × each first reading plus 100/(N(N−1)/2) per chain step past the first,
+// rounded once over the whole run. Missing slots add nothing and N stays the planned length, so a
+// partial run is never re-normalized. With N=6 this is v2's 1.5 and 100/15. While the run is live,
 // rated is false and unratedReason is null.
 export function selectRunScore(run: RunState): RunScoreView {
+  const planned = run.config.length;
+  const basePerPoint = BASE_TOTAL / 100 / planned;
+  const chainSteps = (planned * (planned - 1)) / 2;
   const ended = run.endReason !== null;
   const items: RunItemScore[] = [];
   let carry = 0;
@@ -103,27 +108,33 @@ export function selectRunScore(run: RunState): RunScoreView {
         firstAccuracy: accuracy,
         tier: tierForAccuracy(accuracy),
         chain: carry,
-        basePoints: BASE_PER_POINT * accuracy,
-        chainPoints: (CHAIN_BONUS * steps) / CHAIN_STEPS
+        basePoints: basePerPoint * accuracy,
+        chainPoints: (CHAIN_BONUS * steps) / chainSteps
       });
     }
     if (reached) currentChain = carry;
   });
   // Summed before dividing so .5 totals (860.5 → 861) cannot drift below the rounding edge.
-  const points = Math.round(BASE_PER_POINT * sumQ + (CHAIN_BONUS * sumSteps) / CHAIN_STEPS);
+  const points = Math.round(basePerPoint * sumQ + (CHAIN_BONUS * sumSteps) / chainSteps);
   const complete = items.every((item) => item.firstAccuracy !== null);
   const finished = run.mode === "route" ? run.endReason === "completed" : run.challengeOutcome === "cleared";
   const rated = ended && complete && finished;
+  const fullCombo = rated && items.every((item) => (item.firstAccuracy ?? 0) >= GREAT_ACCURACY);
   return {
     items,
     points,
     currentChain,
     longestChain,
     rated,
-    rating: rated ? ratingForPoints(points) : null,
+    rating: rated ? ratingForPoints(points, fullCombo) : null,
     unratedReason: rated || !ended ? null : unratedReason(run, complete),
-    fullCombo: rated && items.every((item) => (item.firstAccuracy ?? 0) >= GREAT_ACCURACY)
+    fullCombo
   };
+}
+
+// Planned items with a first valid reading; retries and rescues never count twice.
+export function selectPractisedCount(run: RunState): number {
+  return run.items.filter((item) => firstValid(item) !== null).length;
 }
 
 type WordReading = { item: RunItem; attempt: Attempt; word: WordResult };

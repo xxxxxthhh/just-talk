@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { RunScoreView } from "../types";
+import { configForChoice } from "./runConfig";
+import { nextCapture, runReducer } from "./runModel";
+import { selectRunScore, tierForAccuracy, validAccuracy } from "./scoring";
+import type { RunAction, RunConfig, RunPrompt, RunScoreView, RunState, ScoreResponse } from "../types";
 
 class FakeParam {
   value = 0;
@@ -41,6 +44,60 @@ class FakeAudioContext {
   constructor() {
     FakeAudioContext.last = this;
   }
+}
+
+function prompts(length: number): RunPrompt[] {
+  const perStage = length / 3;
+  return Array.from({ length }, (_, i) => {
+    const stage = (["warmup", "focus", "context"] as const)[Math.floor(i / perStage)];
+    return {
+      itemId: `item-${i}`,
+      stage,
+      kind: stage === "context" ? "sentence" : "word",
+      text: `text ${i}`,
+      targetPhoneme: stage === "warmup" ? null : "θ",
+      targetWord: null,
+      source: "starter"
+    };
+  });
+}
+
+function scored(accuracy: number): ScoreResponse {
+  const scores = { accuracy, fluency: null, completeness: null, prosody: null, pronunciation: null };
+  const words = [{ word: "w", accuracy, bucket: "watch", error_type: "None", offset_ms: 0, duration_ms: 1, phonemes: [] }];
+  return { result: { transcript: "", recognition_status: "success", scores, words, raw: {} }, session: null };
+}
+
+function reduce(state: RunState | null, ...actions: RunAction[]): RunState {
+  const next = actions.reduce<RunState | null>((current, action) => runReducer(current, action), state);
+  if (!next) throw new Error("run ended");
+  return next;
+}
+
+let attempts = 0;
+// Scores one take on the current item and returns the run with the take's own cue inputs.
+function play(state: RunState, accuracy: number): RunState {
+  const slot = nextCapture(state);
+  if (!slot) throw new Error("no slot");
+  const key = { runId: state.runId, itemId: state.items[state.index].prompt.itemId, attemptId: `a-${++attempts}` };
+  return reduce(
+    state,
+    { type: "BEGIN_CAPTURE", key, ...slot },
+    { type: "BLOB_READY", key, blob: new Blob(["audio"]) },
+    { type: "SCORE_SENT", key },
+    { type: "SCORE_RECEIVED", key, response: scored(accuracy) }
+  );
+}
+
+function start(config: RunConfig): RunState {
+  return reduce(null, { type: "START", runId: "run", config, prompts: prompts(config.length) });
+}
+
+// The cue the controller would choose for the current item's latest take.
+function cueInputs(state: RunState) {
+  const item = state.items[state.index];
+  const latest = item.attempts.at(-1);
+  return [item.verdict, tierForAccuracy(latest ? validAccuracy(latest) : null)] as const;
 }
 
 // Fresh modules per case so preferences, consumed events and microphone holds start clean.
@@ -150,5 +207,40 @@ describe("sound effects", () => {
     expect(sfx.cueForSummary(view(true, "B"))).toBe("clear-short");
     expect(sfx.cueForSummary(view(true, "C"))).toBe("clear-short");
     expect(sfx.cueForSummary(view(false, null))).toBeNull();
+  });
+
+  it("target85_cues_follow_verdict_not_tier", async () => {
+    const { sfx } = await load();
+    const target85 = configForChoice({ selection: "target85", routeLength: 6 });
+    const reference = (state: RunState) =>
+      reduce(
+        state,
+        { type: "REFERENCE_CLICKED", runId: state.runId, itemId: state.items[state.index].prompt.itemId },
+        { type: "REFERENCE_LOADED", runId: state.runId, itemId: state.items[state.index].prompt.itemId, ok: true }
+      );
+
+    // A first 80 is Good but below the target: its relisten verdict stays quiet.
+    const first = play(start(target85), 80);
+    expect(cueInputs(first)).toEqual(["relisten", "good"]);
+    expect(sfx.cueForVerdict(...cueInputs(first))).toBeNull();
+
+    // 80 → 82: still Good, but the heart cue plays. 80 → 88: the rescue cue, not Great.
+    const lost = play(reference(first), 82);
+    expect(cueInputs(lost)).toEqual(["heart-lost", "good"]);
+    expect(sfx.cueForVerdict(...cueInputs(lost))).toBe("heart");
+    const saved = play(reference(first), 88);
+    expect(cueInputs(saved)).toEqual(["saved", "great"]);
+    expect(sfx.cueForVerdict(...cueInputs(saved))).toBe("rescue-saved");
+
+    // A 972 Route 12 is rated A, so it gets the full fanfare that A always had.
+    const route12 = configForChoice({ selection: "route", routeLength: 12 });
+    let run = start(route12);
+    for (const accuracy of [...Array(11).fill(100), 84.9]) {
+      run = play(run, accuracy);
+      run = reduce(run, { type: "ADVANCE", runId: run.runId, itemId: run.items[run.index].prompt.itemId });
+    }
+    const score = selectRunScore(run);
+    expect(score).toMatchObject({ points: 972, rating: "A", fullCombo: false });
+    expect(sfx.cueForSummary(score)).toBe("clear");
   });
 });
