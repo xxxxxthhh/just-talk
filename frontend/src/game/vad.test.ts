@@ -49,6 +49,25 @@ describe("vad", () => {
     expect(sentence.snapshot().voicedMs).toBe(1475);
   });
 
+  it("early_onsets_inside_calibration_keep_auto_stop", () => {
+    // Speech starting at frame 3, 7 or 8 is onset, not calibration noise: one silence stop, no fallback.
+    for (const onset of [75, 175, 200]) {
+      const vad = auto("word");
+      const level = between(onset, onset + 500, -36);
+      expect(feed(vad, level, 250)).toEqual([]);
+      expect(vad.snapshot()).toMatchObject({ autoStopState: "listening", speechSeen: true });
+      expect(feed(vad, level, 6000, 275)).toEqual([{ reason: "silence", tMs: onset + 500 + 650 - STEP }]);
+      // Opening frames are replayed once: voiced time is exactly the 500 ms spoken.
+      expect(vad.snapshot().voicedMs).toBe(500);
+    }
+
+    // Alternating −40/−60 now satisfies 3-of-5 onset; it runs to the cap and submits once.
+    const alternating = auto("word");
+    expect(feed(alternating, (tMs) => ((tMs / STEP) % 2 === 0 ? -40 : ROOM), 20000)).toEqual([
+      { reason: "auto-cap", tMs: 6000 }
+    ]);
+  });
+
   it("rolling_floor_obeys_percentile_and_drift", () => {
     expect(percentile([-60, -50, -45, -40, -30, -30, -30, -30, -30, -30], 0.1)).toBe(-60);
     expect(percentile([-60, -50, -45, -40, -30, -30, -30, -30, -30, -30, -30], 0.1)).toBe(-50);
@@ -96,10 +115,12 @@ describe("vad", () => {
   });
 
   it("noisy_spread_falls_back_and_steady_noise_has_bounded_cap", () => {
-    // Wide spread over the first eight frames: auto-stop is off for this take, nothing is rejected.
+    // Wide spread over the first eight frames with no 3-of-5 onset: auto-stop is off for this take,
+    // so even the no-speech timeout never rejects.
+    const opening = [-60, -42, -60, -60, -60, -60, -42, -60];
     const noisy = auto("word");
-    expect(feed(noisy, (tMs) => ((tMs / STEP) % 2 === 0 ? -40 : -60), 20000)).toEqual([]);
-    expect(noisy.snapshot().autoStopState).toBe("fallback");
+    expect(feed(noisy, (tMs) => opening[tMs / STEP - 1] ?? ROOM, 20000)).toEqual([]);
+    expect(noisy.snapshot()).toMatchObject({ autoStopState: "fallback", speechSeen: false });
     expect(classifyCapture(summary(noisy, "manual", 3000), "word")).toBe("submit");
     expect(classifyCapture(summary(noisy, "hard-cap", 30000), "word")).toBe("submit");
 

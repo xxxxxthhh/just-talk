@@ -79,6 +79,8 @@ export function createVad(kind: VadKind, options: { autoStop: boolean }): Vad {
   let floor = INITIAL_FLOOR_DBFS;
   const history: number[] = [];
   const spread: number[] = [];
+  let spreadDecided = false;
+  let immediate = false;
   let opening: { dbfs: number; dt: number; tMs: number }[] | null = [];
   const recent: { above: boolean; dt: number }[] = [];
   let speechSeen = false;
@@ -136,20 +138,14 @@ export function createVad(kind: VadKind, options: { autoStop: boolean }): Vad {
     if (gap <= 0) return null;
     const dt = Math.min(gap, MAX_FRAME_CREDIT_MS);
 
-    if (spread.length < SPREAD_FRAMES) {
-      insertSorted(spread, dbfs);
-      if (spread.length === SPREAD_FRAMES && percentile(spread, 0.9) - percentile(spread, 0.1) > MAX_SPREAD_DB) {
-        state = "fallback";
-        return null;
-      }
-    }
+    if (spread.length < SPREAD_FRAMES) insertSorted(spread, dbfs);
     if (opening) {
       if (frame.tMs < OPENING_MS) {
         opening.push({ dbfs, dt, tMs: frame.tMs });
         return null;
       }
       // Speech from t=0 keeps the floor at its start instead of learning from the voice.
-      const immediate = opening.length > 0 && opening.every((buffered) => buffered.dbfs > IMMEDIATE_SPEECH_DBFS);
+      immediate = opening.length > 0 && opening.every((buffered) => buffered.dbfs > IMMEDIATE_SPEECH_DBFS);
       const buffered = opening;
       opening = null;
       for (const replayed of buffered) {
@@ -158,7 +154,18 @@ export function createVad(kind: VadKind, options: { autoStop: boolean }): Vad {
       }
     }
     const stop = analyse(dbfs, dt, frame.tMs, true);
-    return stop ? finish(stop) : null;
+    if (stop) return finish(stop);
+    decideSpread();
+    return null;
+  }
+
+  // The spread measures noise, not speech: it is decided once, after the opening has been analysed,
+  // and only when no onset (or immediate speech) came first.
+  function decideSpread() {
+    if (spreadDecided || spread.length < SPREAD_FRAMES || state === "fallback") return;
+    spreadDecided = true;
+    if (speechSeen || immediate) return;
+    if (percentile(spread, 0.9) - percentile(spread, 0.1) > MAX_SPREAD_DB) state = "fallback";
   }
 
   function finish(stop: VadStopReason): VadStopReason {
