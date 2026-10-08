@@ -22,7 +22,8 @@ const MAX_EVIDENCE = 3;
 const STAGE_LABELS: Record<RunPrompt["stage"], string> = {
   warmup: "Warm-up",
   focus: "Focus",
-  context: "In context"
+  context: "In context",
+  words: "My words"
 };
 
 function itemStatus(item: RunItem): string | null {

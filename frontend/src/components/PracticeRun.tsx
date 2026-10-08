@@ -41,7 +41,8 @@ const RATING_LINES: Record<RunRating, string> = {
 const STAGE_LABELS: Record<RunItem["prompt"]["stage"], string> = {
   warmup: "Warm-up",
   focus: "Focus",
-  context: "In context"
+  context: "In context",
+  words: "My words"
 };
 
 export type PracticeRunProps = {
