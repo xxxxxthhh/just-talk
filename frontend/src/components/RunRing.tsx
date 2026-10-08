@@ -66,9 +66,14 @@ function useRolledScore(target: number | null, rollKey: string | null, enabled: 
 export function RunRing({ phase, telemetry, accuracy, tier, rating, reducedMotion, feedbackId, onStop }: RunRingProps) {
   const captureStart = useRef<{ captureId: string | null; at: number }>({ captureId: null, at: 0 });
 
+  // Anchored to when the capture began, not when the ring mounted; a late telemetry sample only
+  // estimates a later start, so the earliest estimate for the capture wins.
   useEffect(() => {
-    captureStart.current = { captureId: telemetry.captureId, at: performance.now() };
-  }, [telemetry.captureId]);
+    const at = performance.now() - telemetry.elapsedMs;
+    const known = captureStart.current;
+    captureStart.current =
+      known.captureId === telemetry.captureId ? { ...known, at: Math.min(known.at, at) } : { captureId: telemetry.captureId, at };
+  }, [telemetry.captureId, telemetry.elapsedMs]);
 
   const showsScore = (phase === "verdict" || phase === "rescue") && accuracy !== null;
   const rolls = showsScore && phase === "verdict" && !reducedMotion && (accuracy ?? 0) >= ROLL_FROM;

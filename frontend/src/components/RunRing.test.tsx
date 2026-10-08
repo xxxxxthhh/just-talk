@@ -17,6 +17,12 @@ function shape(element: Element): string {
   return `<${element.tagName.toLowerCase()} class="${element.getAttribute("class") ?? ""}">${children}</>`;
 }
 
+// A take that has just started, so the ring's guard window is still open.
+const freshTake: RunRingProps = {
+  ...runV2Fixtures.recording.ring,
+  telemetry: { ...runV2Fixtures.recording.ring.telemetry, elapsedMs: 0 }
+};
+
 function score(container: HTMLElement): string | null {
   return container.querySelector(".run-ring-score")?.textContent ?? null;
 }
@@ -36,8 +42,7 @@ describe("RunRing", () => {
     expect(ringOf(container)).toHaveAttribute("aria-hidden", "true");
     expect(screen.queryByRole("button")).toBeNull();
 
-    const recording = runV2Fixtures.recording.ring;
-    rerender(<RunRing {...recording} onStop={onStop} />);
+    rerender(<RunRing {...freshTake} onStop={onStop} />);
     const stop = screen.getByRole("button", { name: "Stop recording" });
     expect(ringOf(container)).not.toHaveAttribute("aria-hidden");
 
@@ -46,21 +51,40 @@ describe("RunRing", () => {
     act(() => vi.advanceTimersByTime(RING_STOP_GUARD_MS));
     fireEvent.click(stop);
     expect(onStop).toHaveBeenCalledTimes(1);
+  });
 
-    // A new take restarts the guard.
-    rerender(<RunRing {...recording} telemetry={{ ...recording.telemetry, captureId: "next-take" }} onStop={onStop} />);
+  it("ring_mount_during_existing_capture_does_not_restart_guard", () => {
+    const onStop = vi.fn();
+    const recording = runV2Fixtures.recording.ring;
+    expect(recording.telemetry.elapsedMs).toBe(1200);
+    const { rerender } = render(<RunRing {...recording} onStop={onStop} />);
     fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
     expect(onStop).toHaveBeenCalledTimes(1);
-    act(() => vi.advanceTimersByTime(RING_STOP_GUARD_MS));
+
+    // A later, stale sample for the same capture does not push its start forward.
+    act(() => vi.advanceTimersByTime(1000));
+    rerender(<RunRing {...recording} telemetry={{ ...recording.telemetry, elapsedMs: 1300 }} onStop={onStop} />);
     fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
     expect(onStop).toHaveBeenCalledTimes(2);
+  });
+
+  it("ring_new_capture_reenters_guard", () => {
+    const onStop = vi.fn();
+    const recording = runV2Fixtures.recording.ring;
+    const { rerender } = render(<RunRing {...recording} onStop={onStop} />);
+    rerender(<RunRing {...recording} telemetry={{ ...recording.telemetry, captureId: "next-take", elapsedMs: 0 }} onStop={onStop} />);
+    fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+    expect(onStop).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(RING_STOP_GUARD_MS));
+    fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+    expect(onStop).toHaveBeenCalledTimes(1);
   });
 
   it("ring_guard_never_disables_bottom_stop", () => {
     const onStop = vi.fn();
     render(
       <>
-        <RunRing {...runV2Fixtures.recording.ring} onStop={onStop} />
+        <RunRing {...freshTake} onStop={onStop} />
         <button type="button" onClick={onStop}>
           Stop
         </button>
