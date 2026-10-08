@@ -306,6 +306,7 @@ export type RunAction =
   | { type: "BEGIN_CAPTURE"; key: AttemptKey; purpose: AttemptPurpose; slot: "main" | "extra" }
   | { type: "BLOB_READY"; key: AttemptKey; blob: Blob }
   | { type: "CANCEL_CAPTURE"; key: AttemptKey }
+  | { type: "LOCAL_REJECT"; key: AttemptKey; reason: LocalRejectReason }
   | { type: "SCORE_SENT"; key: AttemptKey }
   | { type: "SCORE_RECEIVED"; key: AttemptKey; response: ScoreResponse }
   | { type: "SCORE_FAILED"; key: AttemptKey; failure: ScoreFailure }
@@ -315,8 +316,7 @@ export type RunAction =
   | { type: "SKIP" | "ADVANCE" | "CANNOT_CONFIRM"; runId: string; itemId: string }
   | { type: "PAUSE" | "RESUME" | "QUIT" | "OPEN_REVIEW" | "EXIT"; runId: string };
 
-// Game Mode v2 Day 1 contracts. RunAction gains LOCAL_REJECT together with its handler:
-// | { type: "LOCAL_REJECT"; key: AttemptKey; reason: LocalRejectReason }
+// Game Mode v2 contracts.
 export type AutoStopState = "off" | "calibrating" | "listening" | "tail" | "fallback" | "stopping";
 export type LocalRejectReason = "too-short" | "no-speech";
 export type CaptureStopReason = "manual" | "silence" | "no-speech" | "short-voice"

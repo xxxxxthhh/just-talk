@@ -68,6 +68,15 @@ function send(state: RunState): [RunState, AttemptKey] {
   return [next, key];
 }
 
+// Begins one capture on the current item with its blob ready but not yet sent.
+function capture(state: RunState): [RunState, AttemptKey] {
+  const slot = nextCapture(state);
+  if (!slot) throw new Error("no slot");
+  const key = { runId: state.runId, itemId: state.items[state.index].prompt.itemId, attemptId: `a-${++counter}` };
+  const next = reduce(state, { type: "BEGIN_CAPTURE", key, ...slot }, { type: "BLOB_READY", key, blob: new Blob(["audio"]) });
+  return [next, key];
+}
+
 function play(state: RunState, response: ScoreResponse): RunState {
   const [sent, key] = send(state);
   const next = reduce(sent, { type: "SCORE_RECEIVED", key, response });
@@ -448,5 +457,61 @@ describe("run model", () => {
     expect(state.extraUsed).toBe(0);
     expect(state.challengeIncomplete).toBe(true);
     expect(canAdvance(state)).toBe(true);
+  });
+
+  it("local_reject_keeps_main_budget_zero", () => {
+    let [state, key] = capture(start("challenge"));
+    state = reduce(state, { type: "LOCAL_REJECT", key, reason: "too-short" });
+    expect(state.budgetUsed).toBe(0);
+    expect(state.mainItemIdsUsed).toEqual([]);
+    expect(state.activeAttemptId).toBeNull();
+    expect(state.phase).toBe("ready");
+    expect(state.items[0].attempts).toEqual([]);
+    expect(state.items[0].verdict).toBeNull();
+    expect(state.items[0].lastRejection).toMatchObject({ attemptId: key.attemptId, localReason: "too-short" });
+    expect(nextCapture(state)).toEqual({ purpose: "initial", slot: "main" });
+    expect(canRecord(state)).toBe(true);
+
+    [state, key] = capture(state);
+    expect(state.items[0].lastRejection).toBeNull();
+    state = reduce(state, { type: "LOCAL_REJECT", key, reason: "no-speech" });
+    expect(state.items[0].lastRejection?.localReason).toBe("no-speech");
+    expect(state.budgetUsed).toBe(0);
+    expectBudgetInvariant(state);
+  });
+
+  it("rescue_local_reject_preserves_extra_and_first_low", () => {
+    let state = loadReference(play(start("challenge"), scored(40)));
+    const firstLow = state.items[0].firstLowAttemptId;
+    expect(firstLow).not.toBeNull();
+    let key: AttemptKey;
+    [state, key] = capture(state);
+    expect(state.phase).toBe("recording");
+    state = reduce(state, { type: "LOCAL_REJECT", key, reason: "no-speech" });
+    expect(state.phase).toBe("rescue");
+    expect(state.extraUsed).toBe(0);
+    expect(state.budgetUsed).toBe(1);
+    expect(state.hearts).toBe(2);
+    expect(state.items[0].firstLowAttemptId).toBe(firstLow);
+    expect(state.items[0].verdict).toBe("relisten");
+    expect(state.items[0].referenceLoad).toBe("ready");
+    expect(nextCapture(state)).toEqual({ purpose: "rescue", slot: "extra" });
+    expect(canRecord(state)).toBe(true);
+    expectBudgetInvariant(state);
+  });
+
+  it("duplicate_stale_and_submitted_local_reject_are_noops", () => {
+    const [capturing, key] = capture(start("route"));
+    const rejected = reduce(capturing, { type: "LOCAL_REJECT", key, reason: "too-short" });
+    expect(reduce(rejected, { type: "LOCAL_REJECT", key, reason: "too-short" })).toBe(rejected);
+    expect(reduce(capturing, { type: "LOCAL_REJECT", key: { ...key, runId: "other" }, reason: "too-short" })).toBe(capturing);
+    expect(reduce(capturing, { type: "LOCAL_REJECT", key: { ...key, attemptId: "other" }, reason: "too-short" })).toBe(
+      capturing
+    );
+
+    const [sent, sentKey] = send(start("route"));
+    expect(reduce(sent, { type: "LOCAL_REJECT", key: sentKey, reason: "too-short" })).toBe(sent);
+    const paused = reduce(capturing, { type: "PAUSE", runId: RUN });
+    expect(reduce(paused, { type: "LOCAL_REJECT", key, reason: "no-speech" })).toBe(paused);
   });
 });

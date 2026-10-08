@@ -2,6 +2,7 @@ import type {
   Attempt,
   AttemptKey,
   AttemptPurpose,
+  LocalRejectReason,
   RunAction,
   RunItem,
   RunPhase,
@@ -16,6 +17,10 @@ export const PASS_ACCURACY = 60;
 export const MAX_EXTRA_ATTEMPTS = 2;
 // Sentence words at or under this accuracy are collected; 71–85 stay review hints.
 export const SENTENCE_COLLECT_MAX = 70;
+const LOCAL_REJECT_MESSAGES: Record<LocalRejectReason, string> = {
+  "too-short": "Too short · try once more",
+  "no-speech": "Didn't catch anything"
+};
 
 export type Judgment = { kind: "valid"; accuracy: number } | { kind: "no-match" | "unjudged" };
 
@@ -256,6 +261,20 @@ export function runReducer(state: RunState | null, action: RunAction): RunState 
       const attempt = activeAttempt(state, action.key, "capturing");
       if (!attempt || !item) return state;
       const remaining = withoutAttempt(item, attempt.key.attemptId);
+      return { ...replaceItem(state, state.index, remaining), activeAttemptId: null, phase: settledPhase(remaining) };
+    }
+    case "LOCAL_REJECT": {
+      // Discarded before sending, so no slot was reserved and nothing is refunded.
+      const attempt = activeAttempt(state, action.key, "capturing");
+      if (!attempt || !item) return state;
+      const remaining: RunItem = {
+        ...withoutAttempt(item, attempt.key.attemptId),
+        lastRejection: {
+          attemptId: attempt.key.attemptId,
+          message: LOCAL_REJECT_MESSAGES[action.reason],
+          localReason: action.reason
+        }
+      };
       return { ...replaceItem(state, state.index, remaining), activeAttemptId: null, phase: settledPhase(remaining) };
     }
     case "SCORE_SENT": {
