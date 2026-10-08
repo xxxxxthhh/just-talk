@@ -673,8 +673,8 @@ describe("usePracticeRun", () => {
       act(() => h.run().finish());
     }
     expect(h.run().receipt?.outcome).toBe("first-record");
-    expect(readBest({ mode: "route", focus: "v", rulesVersion: RUN_RULES_VERSION })?.points).toBe(955);
-    expect(readBest({ mode: "route", focus: "θ", rulesVersion: RUN_RULES_VERSION })).toBeNull();
+    expect(readBest({ config: ROUTE, focus: "v", rulesVersion: RUN_RULES_VERSION })?.points).toBe(955);
+    expect(readBest({ config: ROUTE, focus: "θ", rulesVersion: RUN_RULES_VERSION })).toBeNull();
   });
 
   it("quit_exit_play_again_drop_late_capture_and_cues", async () => {

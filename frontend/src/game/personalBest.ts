@@ -1,5 +1,5 @@
 import { PUBLIC_MODE } from "../publicMode";
-import type { RunBestReceipt, RunMode, RunRating, RunScoreView, RunState } from "../types";
+import type { RunBestReceipt, RunRating, RunScoreView, RunState, StarterRunConfig } from "../types";
 import { RUN_RULES_VERSION } from "./scoring";
 
 // A game record kept only in this browser, not a skill measure: warm-ups vary between runs.
@@ -7,7 +7,7 @@ export const RUN_BEST_KEY = "jt.runBest.v1";
 const PUBLIC_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const RATINGS: readonly string[] = ["S", "A", "B", "C"];
 
-export type RunBestBucket = Readonly<{ mode: RunMode; focus: string | null; rulesVersion: number }>;
+export type RunBestBucket = Readonly<{ config: StarterRunConfig; focus: string | null; rulesVersion: number }>;
 export type RunBestRecord = Readonly<{
   runId: string;
   points: number;
@@ -18,13 +18,21 @@ export type RunBestRecord = Readonly<{
 type StoreOptions = { publicMode?: boolean; now?: number };
 
 // The focus phoneme comes from the frozen deck, so stats that change after the run never move it.
-export function bestBucketForRun(run: RunState): RunBestBucket {
+// My words runs keep no best: null means no read, write, or receipt.
+export function bestBucketForRun(run: RunState): RunBestBucket | null {
+  const { config } = run;
+  if (config.source !== "starter") return null;
   const focus = run.items.find((item) => item.prompt.stage === "focus")?.prompt.targetPhoneme ?? null;
-  return { mode: run.mode, focus, rulesVersion: RUN_RULES_VERSION };
+  return { config, focus, rulesVersion: RUN_RULES_VERSION };
 }
 
+// Route 6 and Target 60 keep v2's key bytes, so their existing records stay visible; Route 12 and
+// Target 85 add a suffix.
 export function bestBucketKey(bucket: RunBestBucket): string {
-  return `${bucket.mode}|${bucket.focus ?? ""}|${bucket.rulesVersion}`;
+  const base = `${bucket.config.mode}|${bucket.focus ?? ""}|${bucket.rulesVersion}`;
+  if (bucket.config.length === 12) return `${base}|12`;
+  if (bucket.config.target === 85) return `${base}|85`;
+  return base;
 }
 
 function isRecord(value: unknown): value is RunBestRecord {

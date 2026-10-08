@@ -147,7 +147,9 @@ export function usePracticeRun(session: RunSession) {
     if (next.endReason === null || previous?.endReason !== null || receiptRunRef.current === next.runId) return;
     receiptRunRef.current = next.runId;
     const score = selectRunScore(next);
-    setReceipt(finalizeRunBest(bestBucketForRun(next), next.runId, score));
+    // A run without a bucket (My words) is still settled once, without touching storage.
+    const bucket = bestBucketForRun(next);
+    setReceipt(bucket ? finalizeRunBest(bucket, next.runId, score) : null);
     if (audible) playCue(cueForSummary(score), `summary-${next.runId}`);
   }
 
