@@ -760,4 +760,26 @@ describe("usePracticeRun", () => {
     expect(h.run().consumedFeedbackIds).not.toBe(ids);
     expect(h.run().consumedFeedbackIds.size).toBe(0);
   });
+
+  it("take_cancelled_during_permission_settles_its_lock_once", async () => {
+    const h = await setup("challenge");
+    const permission = deferred<boolean>();
+    h.session.startRunCapture.mockImplementationOnce(() => permission.promise);
+    h.session.cancelRunCapture.mockImplementationOnce(() => undefined);
+    let recording!: Promise<void>;
+    act(() => {
+      recording = h.run().record();
+    });
+    act(() => h.run().cancelTake());
+    expect(h.run().state).toMatchObject({ phase: "ready", activeAttemptId: null, budgetUsed: 0 });
+    // The session reports the obsolete capture as never started, with no blob to follow.
+    await act(async () => {
+      permission.resolve(false);
+      await recording;
+    });
+    expect(h.run().state).toMatchObject({ phase: "ready", budgetUsed: 0 });
+    await attempt(h, scored(90));
+    expect(h.session.startRunCapture).toHaveBeenCalledTimes(2);
+    expect(scoreRecording).toHaveBeenCalledTimes(1);
+  });
 });
